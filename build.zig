@@ -1,4 +1,5 @@
 const std = @import("std");
+const _ = @import("src/ecs.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -60,8 +61,14 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // Creates a step for unit testing.
+    // TODO(mason): add all source files here?
     const exe_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    const ecs_tests = b.addTest(.{
+        .root_source_file = .{ .path = "src/ecs.zig" },
         .target = target,
         .optimize = optimize,
     });
@@ -71,4 +78,5 @@ pub fn build(b: *std.Build) void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);
+    test_step.dependOn(&ecs_tests.step);
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c.zig");
 const panic = std.debug.panic;
 const builtin = @import("builtin");
+const _ = @import("ecs.zig");
 
 pub fn main() !void {
     if (!(c.SDL_SetHintWithPriority(
