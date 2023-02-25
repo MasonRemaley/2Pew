@@ -1,0 +1,10 @@
+.{
+    .name = "2Pew",
+    .version = "0.0.0",
+    .dependencies = .{
+        .zig_sdl = .{
+            .url = "https://github.com/andrewrk/zig-sdl/archive/ffdd2141c7f2cfc5ae0734db4937e2cde2d9719d.tar.gz",
+            .hash = "122049bf7f97dd897f64c71e969519605c8d23a66603d87d39afaf049523e4ba52df",
+        },
+    },
+}
