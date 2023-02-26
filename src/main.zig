@@ -80,10 +80,10 @@ pub fn main() !void {
         }
     }
 
-    const star_small = try assets.sprite("img/star/small.png");
-    const star_large = try assets.sprite("img/star/large.png");
-    const ship_sprite = try assets.sprite("img/ship/ranger0.png");
-    const bullet_small = try assets.sprite("img/bullet/small.png");
+    const star_small = try assets.loadSprite("img/star/small.png");
+    const star_large = try assets.loadSprite("img/star/large.png");
+    const ship_sprite = try assets.loadSprite("img/ship/ranger0.png");
+    const bullet_small = try assets.loadSprite("img/bullet/small.png");
 
     var ships = [_]Ship{
         .{
@@ -205,10 +205,10 @@ pub fn main() !void {
         sdlAssertZero(c.SDL_RenderClear(renderer));
 
         for (stars) |star| {
-            const sprite = switch (star.kind) {
+            const sprite = assets.sprite(switch (star.kind) {
                 .small => star_small,
                 .large => star_large,
-            };
+            });
             const dst_rect: c.SDL_Rect = .{
                 .x = star.x,
                 .y = star.y,
@@ -224,11 +224,12 @@ pub fn main() !void {
         }
 
         for (ships) |ship| {
+            const sprite = assets.sprite(ship.sprite);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
-                ship.sprite.texture,
+                sprite.texture,
                 null, // source rectangle
-                &toSdlRect(ship.pos, ship.sprite),
+                &sprite.toSdlRect(ship.pos),
                 // The ship asset images point up instead of to the right.
                 toDegrees(ship.rotation + math.pi / 2.0),
                 null, // center of rotation
@@ -237,11 +238,12 @@ pub fn main() !void {
         }
 
         for (bullets.items) |bullet| {
+            const sprite = assets.sprite(bullet.sprite);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
-                bullet.sprite.texture,
+                sprite.texture,
                 null, // source rectangle
-                &toSdlRect(bullet.pos, bullet.sprite),
+                &sprite.toSdlRect(bullet.pos),
                 // The bullet asset images point up instead of to the right.
                 toDegrees(bullet.vel.angle() + math.pi / 2.0),
                 null, // center of rotation
@@ -264,7 +266,7 @@ const Player = struct {
 };
 
 const Bullet = struct {
-    sprite: Sprite,
+    sprite: Sprite.Index,
     /// pixels
     pos: V,
     /// pixels per second
@@ -276,7 +278,7 @@ const Bullet = struct {
 };
 
 const Ship = struct {
-    sprite: Sprite,
+    sprite: Sprite.Index,
     /// pixels
     pos: V,
     /// pixels per second
@@ -313,12 +315,27 @@ const Ship = struct {
 const Sprite = struct {
     texture: *c.SDL_Texture,
     rect: c.SDL_Rect,
+
+    /// Index into the sprites array.
+    const Index = enum(u32) {
+        _,
+    };
+
+    fn toSdlRect(sprite: Sprite, pos: V) c.SDL_Rect {
+        return .{
+            .x = @floatToInt(i32, @floor(pos.x)),
+            .y = @floatToInt(i32, @floor(pos.y)),
+            .w = sprite.rect.w,
+            .h = sprite.rect.h,
+        };
+    }
 };
 
 const Assets = struct {
     gpa: Allocator,
     renderer: *c.SDL_Renderer,
     dir: std.fs.Dir,
+    sprites: std.ArrayListUnmanaged(Sprite),
 
     fn init(gpa: Allocator, renderer: *c.SDL_Renderer) !Assets {
         const self_exe_dir_path = try std.fs.selfExeDirPathAlloc(gpa);
@@ -334,21 +351,28 @@ const Assets = struct {
             .gpa = gpa,
             .renderer = renderer,
             .dir = dir,
+            .sprites = .{},
         };
     }
 
     fn deinit(a: *Assets) void {
         a.dir.close();
+        a.sprites.deinit(a.gpa);
         a.* = undefined;
     }
 
-    fn sprite(a: *Assets, name: []const u8) !Sprite {
-        const png_bytes = try a.dir.readFileAlloc(a.gpa, name, 50 * 1024 * 1024);
-        defer a.gpa.free(png_bytes);
-        return spriteBytes(png_bytes, a.renderer);
+    fn sprite(a: Assets, index: Sprite.Index) Sprite {
+        return a.sprites.items[@enumToInt(index)];
     }
 
-    fn spriteBytes(png_data: []const u8, renderer: *c.SDL_Renderer) Sprite {
+    fn loadSprite(a: *Assets, name: []const u8) !Sprite.Index {
+        const png_bytes = try a.dir.readFileAlloc(a.gpa, name, 50 * 1024 * 1024);
+        defer a.gpa.free(png_bytes);
+        try a.sprites.append(a.gpa, spriteFromBytes(png_bytes, a.renderer));
+        return @intToEnum(Sprite.Index, a.sprites.items.len - 1);
+    }
+
+    fn spriteFromBytes(png_data: []const u8, renderer: *c.SDL_Renderer) Sprite {
         var width: c_int = undefined;
         var height: c_int = undefined;
         const channel_count = 4;
@@ -406,13 +430,4 @@ fn generateStars(stars: []Star) void {
 /// SDL uses degrees (🤮), but at least it also uses clockwise rotation.
 fn toDegrees(radians: f32) f32 {
     return 360.0 * (radians / (2 * math.pi));
-}
-
-fn toSdlRect(pos: V, sprite: Sprite) c.SDL_Rect {
-    return .{
-        .x = @floatToInt(i32, @floor(pos.x)),
-        .y = @floatToInt(i32, @floor(pos.y)),
-        .w = sprite.rect.w,
-        .h = sprite.rect.h,
-    };
 }
