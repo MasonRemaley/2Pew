@@ -3,6 +3,8 @@ const c = @import("c.zig");
 const panic = std.debug.panic;
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const math = std.math;
+const V = @import("Vec2d.zig");
 
 const display_width = 1920;
 const display_height = 1080;
@@ -48,16 +50,56 @@ pub fn main() !void {
     var assets = try Assets.init(gpa, renderer);
     defer assets.deinit();
 
+    var players: [2]Player = .{
+        .{
+            .controller = null,
+            .ship = 0,
+        },
+        .{
+            .controller = null,
+            .ship = 1,
+        },
+    };
+
+    {
+        var player_index: u32 = 0;
+        for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
+            const i = @intCast(u31, i_usize);
+            if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
+                const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
+                    panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
+                };
+                if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
+                    players[player_index].controller = sdl_controller;
+                    player_index += 1;
+                    if (player_index >= players.len) break;
+                } else {
+                    c.SDL_GameControllerClose(sdl_controller);
+                }
+            }
+        }
+    }
+
     const star_small = try assets.sprite("img/star/small.png");
     const star_large = try assets.sprite("img/star/large.png");
 
-    var ship: Ship = .{
-        .sprite = try assets.sprite("img/ship/ranger0.png"),
-        .x = 500,
-        .y = 500,
-        .vel_x = 0,
-        .vel_y = 0,
-        .rotation = 0,
+    var ships = [_]Ship{
+        .{
+            .sprite = try assets.sprite("img/ship/ranger0.png"),
+            .pos = .{ .x = 500, .y = 500 },
+            .vel = .{ .x = 0, .y = 0 },
+            .rotation = 0,
+            .rotation_speed = math.pi * 1.1,
+            .thrust = 100,
+        },
+        .{
+            .sprite = try assets.sprite("img/ship/ranger0.png"),
+            .pos = .{ .x = 1000, .y = 500 },
+            .vel = .{ .x = 0, .y = 0 },
+            .rotation = 0,
+            .rotation_speed = math.pi * 1.1,
+            .thrust = 100,
+        },
     };
 
     // sdlAssertZero(c.TTF_Init());
@@ -76,6 +118,46 @@ pub fn main() !void {
                 },
                 else => {},
             }
+        }
+
+        for (players) |player| {
+            const ship = &ships[player.ship];
+            ship.input = .{};
+            if (player.controller) |controller| {
+                // left/right on the left joystick
+                const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
+                // up/down on the left joystick
+                //const y_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTY);
+
+                const dead_zone = 10000;
+                ship.input.left = ship.input.left or x_axis < -dead_zone;
+                ship.input.right = ship.input.right or x_axis > dead_zone;
+                ship.input.forward = ship.input.forward or
+                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
+                ship.input.fire = ship.input.fire or
+                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
+                //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
+                //std.debug.print("input: {any}\n", .{ship.input});
+            }
+        }
+
+        const dx = 1.0 / 60.0;
+
+        for (&ships) |*ship| {
+            ship.pos.add(ship.vel.scaled(dx));
+
+            const rotate_input = // convert to 1.0 or -1.0
+                @intToFloat(f32, @boolToInt(ship.input.right)) -
+                @intToFloat(f32, @boolToInt(ship.input.left));
+            ship.rotation = @mod(
+                ship.rotation + rotate_input * ship.rotation_speed * dx,
+                2 * math.pi,
+            );
+
+            // convert to 1.0 or 0.0
+            const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
+            const thrust = V.unit(ship.rotation);
+            ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dx));
         }
 
         sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
@@ -100,12 +182,16 @@ pub fn main() !void {
             ));
         }
 
-        {
-            sdlAssertZero(c.SDL_RenderCopy(
+        for (ships) |ship| {
+            sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 ship.sprite.texture,
-                null,
+                null, // source rectangle
                 &ship.toSdlRect(),
+                // The ship asset images point up instead of to the right.
+                toDegrees(ship.rotation + math.pi / 2.0),
+                null, // center of rotation
+                c.SDL_FLIP_NONE,
             ));
         }
 
@@ -118,21 +204,38 @@ pub fn sdlAssertZero(ret: c_int) void {
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
 
+const Player = struct {
+    controller: ?*c.SDL_GameController,
+    ship: u32,
+};
+
 const Ship = struct {
     sprite: Sprite,
     /// pixels
-    x: f32,
-    y: f32,
+    pos: V,
     /// pixels per second
-    vel_x: f32,
-    vel_y: f32,
+    vel: V,
     /// radians
     rotation: f32,
 
+    /// radians per second
+    rotation_speed: f32,
+    /// pixels per second squared
+    thrust: f32,
+
+    input: Input = .{},
+
+    const Input = packed struct {
+        fire: bool = false,
+        forward: bool = false,
+        left: bool = false,
+        right: bool = false,
+    };
+
     fn toSdlRect(s: Ship) c.SDL_Rect {
         return .{
-            .x = @floatToInt(i32, @floor(s.x)),
-            .y = @floatToInt(i32, @floor(s.y)),
+            .x = @floatToInt(i32, @floor(s.pos.x)),
+            .y = @floatToInt(i32, @floor(s.pos.y)),
             .w = s.sprite.rect.w,
             .h = s.sprite.rect.h,
         };
@@ -227,4 +330,12 @@ fn generateStars(stars: []Star) void {
             .kind = std.crypto.random.enumValue(Star.Kind),
         };
     }
+}
+
+/// In this game we use (1, 0) as the 0-rotation vector.
+/// In other words, 0 radians means pointing directly to the right.
+/// (PI / 2) radians means (0, 1), or pointing directly down to the bottom of the screen.
+/// SDL uses degrees (🤮), but at least it also uses clockwise rotation.
+fn toDegrees(radians: f32) f32 {
+    return 360.0 * (radians / (2 * math.pi));
 }
