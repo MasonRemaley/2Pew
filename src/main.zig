@@ -51,6 +51,15 @@ pub fn main() !void {
     const star_small = try assets.sprite("img/star/small.png");
     const star_large = try assets.sprite("img/star/large.png");
 
+    var ship: Ship = .{
+        .sprite = try assets.sprite("img/ship/ranger0.png"),
+        .x = 500,
+        .y = 500,
+        .vel_x = 0,
+        .vel_y = 0,
+        .rotation = 0,
+    };
+
     // sdlAssertZero(c.TTF_Init());
 
     var stars: [100]Star = undefined;
@@ -91,6 +100,15 @@ pub fn main() !void {
             ));
         }
 
+        {
+            sdlAssertZero(c.SDL_RenderCopy(
+                renderer,
+                ship.sprite.texture,
+                null,
+                &ship.toSdlRect(),
+            ));
+        }
+
         c.SDL_RenderPresent(renderer);
     }
 }
@@ -99,6 +117,27 @@ pub fn sdlAssertZero(ret: c_int) void {
     if (ret == 0) return;
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
+
+const Ship = struct {
+    sprite: Sprite,
+    /// pixels
+    x: f32,
+    y: f32,
+    /// pixels per second
+    vel_x: f32,
+    vel_y: f32,
+    /// radians
+    rotation: f32,
+
+    fn toSdlRect(s: Ship) c.SDL_Rect {
+        return .{
+            .x = @floatToInt(i32, @floor(s.x)),
+            .y = @floatToInt(i32, @floor(s.y)),
+            .w = s.sprite.rect.w,
+            .h = s.sprite.rect.h,
+        };
+    }
+};
 
 const Sprite = struct {
     texture: *c.SDL_Texture,
