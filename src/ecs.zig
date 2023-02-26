@@ -16,20 +16,6 @@ pub const EntityHandle = struct {
 };
 
 pub fn Entities(comptime components: anytype) type {
-    // Make sure all components are unique
-    {
-        var l = 0;
-        inline while (l < components.len) : (l += 1) {
-            var r = l + 1;
-            while (r < components.len) : (r += 1) {
-                if (components[r] == components[l]) {
-                    @compileError("duplicate components registered");
-                }
-            }
-        }
-    }
-
-    // Create the type
     return struct {
         const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(@TypeOf(components)).Struct.fields.len);
 
@@ -111,17 +97,17 @@ pub fn Entities(comptime components: anytype) type {
             self.removeEntityChecked(entity) catch unreachable;
         }
 
-        fn componentMask(comptime Component: type) Archetype {
+        fn componentMask(comptime component: []const u8) Archetype {
             comptime var i = 0;
-            inline for (components) |c| {
-                if (c == Component) {
+            inline for (@typeInfo(@TypeOf(components)).Struct.fields) |c| {
+                if (std.mem.eql(u8, c.name, component)) {
                     comptime var mask = Archetype.initEmpty();
                     mask.set(i);
                     return mask;
                 }
                 i += 1;
             }
-            @compileError("component type not registered");
+            @compileError("component " ++ component ++ " not registered");
         }
 
         fn archetype(comptime archetypeComponents: anytype) Archetype {
@@ -226,17 +212,17 @@ test "safety checks" {
 }
 
 test "archetype masks" {
-    var entities = try Entities(.{ u32, u8 }).init();
+    var entities = try Entities(.{ .x = u32, .y = u8 }).init();
     defer entities.deinit();
 
     var archetype = @TypeOf(entities).Archetype.initEmpty();
     try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{}));
-    try std.testing.expect(!archetype.eql(comptime @TypeOf(entities).archetype(.{u8})));
+    try std.testing.expect(!archetype.eql(comptime @TypeOf(entities).archetype(.{"y"})));
     archetype.set(0);
-    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{u32}));
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{"x"}));
     archetype.set(1);
-    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ u32, u8 }));
-    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ u8, u32 }));
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ "x", "y" }));
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ "y", "x" }));
     archetype.unset(0);
-    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{u8}));
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{"y"}));
 }
