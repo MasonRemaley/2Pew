@@ -82,12 +82,49 @@ pub fn main() !void {
 
     const star_small = try assets.loadSprite("img/star/small.png");
     const star_large = try assets.loadSprite("img/star/large.png");
-    const ship_sprite = try assets.loadSprite("img/ship/ranger0.png");
     const bullet_small = try assets.loadSprite("img/bullet/small.png");
+
+    const ship_sprites = [_]Sprite.Index{
+        try assets.loadSprite("img/ship/ranger0.png"),
+        try assets.loadSprite("img/ship/ranger1.png"),
+        try assets.loadSprite("img/ship/ranger2.png"),
+        try assets.loadSprite("img/ship/ranger3.png"),
+    };
+    const ship_still = try assets.addAnimation(&.{
+        ship_sprites[0],
+    }, null);
+    const ship_steady_thrust = try assets.addAnimation(&.{
+        ship_sprites[2],
+        ship_sprites[2],
+        ship_sprites[2],
+        ship_sprites[2],
+        ship_sprites[2],
+        ship_sprites[3],
+        ship_sprites[3],
+        ship_sprites[3],
+        ship_sprites[3],
+        ship_sprites[3],
+    }, null);
+    const ship_accel = try assets.addAnimation(&.{
+        ship_sprites[0],
+        ship_sprites[0],
+        ship_sprites[0],
+        ship_sprites[0],
+        ship_sprites[0],
+        ship_sprites[1],
+        ship_sprites[1],
+        ship_sprites[1],
+        ship_sprites[1],
+        ship_sprites[1],
+    }, ship_steady_thrust);
 
     var ships = [_]Ship{
         .{
-            .sprite = ship_sprite,
+            .input = .{},
+            .prev_input = .{},
+            .still = ship_still,
+            .accel = ship_accel,
+            .anim = .{ .index = ship_still, .frame = 0 },
             .pos = .{ .x = 500, .y = 500 },
             .vel = .{ .x = 0, .y = 0 },
             .rotation = 0,
@@ -95,11 +132,15 @@ pub fn main() !void {
             .thrust = 100,
             .cooldown = 0,
             .cooldown_amount = 0.2,
-            .bullet_speed = 400,
+            .bullet_speed = 500,
             .bullet_duration = 0.5,
         },
         .{
-            .sprite = ship_sprite,
+            .input = .{},
+            .prev_input = .{},
+            .still = ship_still,
+            .accel = ship_accel,
+            .anim = .{ .index = ship_still, .frame = 0 },
             .pos = .{ .x = 1000, .y = 500 },
             .vel = .{ .x = 0, .y = 0 },
             .rotation = 0,
@@ -107,7 +148,7 @@ pub fn main() !void {
             .thrust = 100,
             .cooldown = 0,
             .cooldown_amount = 0.2,
-            .bullet_speed = 400,
+            .bullet_speed = 500,
             .bullet_duration = 0.5,
         },
     };
@@ -152,6 +193,12 @@ pub fn main() !void {
                 //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
                 //std.debug.print("input: {any}\n", .{ship.input});
             }
+            if (!ship.prev_input.forward and ship.input.forward) {
+                ship.setAnimation(ship.accel);
+            } else if (ship.prev_input.forward and !ship.input.forward) {
+                ship.setAnimation(ship.still);
+            }
+            ship.prev_input = ship.input;
         }
 
         const dt = 1.0 / 60.0;
@@ -223,8 +270,8 @@ pub fn main() !void {
             ));
         }
 
-        for (ships) |ship| {
-            const sprite = assets.sprite(ship.sprite);
+        for (&ships) |*ship| {
+            const sprite = assets.animate(&ship.anim);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
@@ -277,8 +324,31 @@ const Bullet = struct {
     radius: f32,
 };
 
+const Animation = struct {
+    /// Index into frames array
+    start: u32,
+    /// Number of frames elements used in this animation.
+    len: u32,
+    /// After finishing, will jump to this next animation (which may be
+    /// itself, in which case it will loop).
+    next: Index,
+
+    /// Index into animations array.
+    const Index = enum(u32) {
+        _,
+    };
+
+    const Playback = struct {
+        index: Index,
+        /// offset from Animation start
+        frame: u32,
+    };
+};
+
 const Ship = struct {
-    sprite: Sprite.Index,
+    still: Animation.Index,
+    accel: Animation.Index,
+    anim: Animation.Playback,
     /// pixels
     pos: V,
     /// pixels per second
@@ -292,7 +362,10 @@ const Ship = struct {
     thrust: f32,
 
     /// Player or AI decisions on what they want the ship to do.
-    input: Input = .{},
+    input: Input,
+    /// Keeps track of the input from last frame so that the game logic can
+    /// notice when a button is first pressed.
+    prev_input: Input,
 
     /// Seconds until ready. Less than or equal to 0 means ready.
     cooldown: f32,
@@ -310,6 +383,13 @@ const Ship = struct {
         left: bool = false,
         right: bool = false,
     };
+
+    fn setAnimation(ship: *Ship, animation: Animation.Index) void {
+        ship.anim = .{
+            .index = animation,
+            .frame = 0,
+        };
+    }
 };
 
 const Sprite = struct {
@@ -336,6 +416,8 @@ const Assets = struct {
     renderer: *c.SDL_Renderer,
     dir: std.fs.Dir,
     sprites: std.ArrayListUnmanaged(Sprite),
+    frames: std.ArrayListUnmanaged(Sprite.Index),
+    animations: std.ArrayListUnmanaged(Animation),
 
     fn init(gpa: Allocator, renderer: *c.SDL_Renderer) !Assets {
         const self_exe_dir_path = try std.fs.selfExeDirPathAlloc(gpa);
@@ -352,13 +434,45 @@ const Assets = struct {
             .renderer = renderer,
             .dir = dir,
             .sprites = .{},
+            .frames = .{},
+            .animations = .{},
         };
     }
 
     fn deinit(a: *Assets) void {
         a.dir.close();
         a.sprites.deinit(a.gpa);
+        a.frames.deinit(a.gpa);
+        a.animations.deinit(a.gpa);
         a.* = undefined;
+    }
+
+    fn animate(a: Assets, anim: *Animation.Playback) Sprite {
+        const animation = a.animations.items[@enumToInt(anim.index)];
+        const frame = animation.start + anim.frame;
+        const frame_sprite = a.sprite(a.frames.items[frame]);
+        anim.frame += 1;
+        if (anim.frame >= animation.len) {
+            anim.frame = 0;
+            anim.index = animation.next;
+        }
+        return frame_sprite;
+    }
+
+    /// null next_animation means to loop.
+    fn addAnimation(
+        a: *Assets,
+        frames: []const Sprite.Index,
+        next_animation: ?Animation.Index,
+    ) !Animation.Index {
+        try a.frames.appendSlice(a.gpa, frames);
+        const result = @intToEnum(Animation.Index, a.animations.items.len);
+        try a.animations.append(a.gpa, .{
+            .start = @intCast(u32, a.frames.items.len - frames.len),
+            .len = @intCast(u32, frames.len),
+            .next = next_animation orelse result,
+        });
+        return result;
     }
 
     fn sprite(a: Assets, index: Sprite.Index) Sprite {
