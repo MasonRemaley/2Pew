@@ -37,9 +37,17 @@ pub fn build(b: *std.Build) void {
         exe.linkLibrary(zig_sdl.artifact("SDL2"));
     }
 
-    // This declares intent for the executable to be installed into the
-    // standard location when the user invokes the "install" step (the default
-    // step when running `zig build`).
+    // TODO extract this into a proper zig package
+    exe.addCSourceFile("src/stb_image.c", &.{"-std=c99"});
+    exe.addIncludePath("src");
+
+    b.installDirectory(.{
+        .source_dir = "assets",
+        .install_dir = .prefix,
+        .install_subdir = "assets",
+    });
+
+    exe.override_dest_dir = .prefix;
     exe.install();
 
     // This *creates* a RunStep in the build graph, to be executed when another
