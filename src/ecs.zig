@@ -15,91 +15,130 @@ pub const EntityHandle = struct {
     index: EntityIndex,
 };
 
-pub const Entities = struct {
-    entities: []EntityGeneration,
-    free: []EntityIndex,
-
-    fn init() !Entities {
-        return .{
-            .entities = entities: {
-                var entities = try std.heap.page_allocator.alloc(EntityGeneration, max_entities);
-                entities.len = 0;
-                break :entities entities;
-            },
-            .free = free: {
-                var free = try std.heap.page_allocator.alloc(EntityIndex, max_entities);
-                free.len = 0;
-                break :free free;
-            },
-        };
-    }
-
-    fn deinit(self: *Entities) void {
-        std.heap.page_allocator.free(self.entities);
-        std.heap.page_allocator.free(self.free);
-    }
-
-    fn createEntityChecked(self: *Entities) ?EntityHandle {
-        const index = index: {
-            if (self.free.len > 0) {
-                // Pop an id from the free list
-                const top = self.free.len - 1;
-                const index = self.free[top];
-                self.free.len = top;
-                break :index index;
-            } else if (self.entities.len < max_entities) {
-                // Add a new entity to the end of the list
-                const top = self.entities.len;
-                self.entities.len += 1;
-                self.entities[top] = 0;
-                break :index @intCast(EntityIndex, top);
-            } else {
-                return null;
+pub fn Entities(comptime components: anytype) type {
+    // Make sure all components are unique
+    {
+        var l = 0;
+        inline while (l < components.len) : (l += 1) {
+            var r = l + 1;
+            while (r < components.len) : (r += 1) {
+                if (components[r] == components[l]) {
+                    @compileError("duplicate components registered");
+                }
             }
-        };
-        return EntityHandle{
-            .index = index,
-            .generation = self.entities[index],
-        };
-    }
-
-    fn createEntity(self: *Entities) EntityHandle {
-        return self.createEntityChecked() orelse
-            std.debug.panic("out of entities", .{});
-    }
-
-    fn removeEntityChecked(self: *Entities, entity: EntityHandle) !void {
-        // Check that the entity is valid. These should be assertions, but I've made them error
-        // codes for easier unit testing.
-        if (entity.index >= self.entities.len) {
-            return error.BadIndex;
         }
-        if (self.entities[entity.index] != entity.generation) {
-            return error.BadGeneration;
-        }
-        if (self.free.len == max_entities) {
-            return error.FreelistFull;
-        }
-
-        // Increment this entity slot's generation so future uses will fail
-        self.entities[entity.index] +%= 1;
-
-        // Add the entity to the free list
-        const top = self.free.len;
-        self.free.len += 1;
-        self.free[top] = entity.index;
     }
 
-    fn removeEntity(self: *Entities, entity: EntityHandle) void {
-        self.removeEntityChecked(entity) catch unreachable;
-    }
-};
+    // Create the type
+    return struct {
+        const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(@TypeOf(components)).Struct.fields.len);
+
+        entities: []EntityGeneration,
+        free: []EntityIndex,
+
+        fn init() !@This() {
+            return .{
+                .entities = entities: {
+                    var entities = try std.heap.page_allocator.alloc(EntityGeneration, max_entities);
+                    entities.len = 0;
+                    break :entities entities;
+                },
+                .free = free: {
+                    var free = try std.heap.page_allocator.alloc(EntityIndex, max_entities);
+                    free.len = 0;
+                    break :free free;
+                },
+            };
+        }
+
+        fn deinit(self: *@This()) void {
+            std.heap.page_allocator.free(self.entities);
+            std.heap.page_allocator.free(self.free);
+        }
+
+        fn createEntityChecked(self: *@This()) ?EntityHandle {
+            const index = index: {
+                if (self.free.len > 0) {
+                    // Pop an id from the free list
+                    const top = self.free.len - 1;
+                    const index = self.free[top];
+                    self.free.len = top;
+                    break :index index;
+                } else if (self.entities.len < max_entities) {
+                    // Add a new entity to the end of the list
+                    const top = self.entities.len;
+                    self.entities.len += 1;
+                    self.entities[top] = 0;
+                    break :index @intCast(EntityIndex, top);
+                } else {
+                    return null;
+                }
+            };
+            return EntityHandle{
+                .index = index,
+                .generation = self.entities[index],
+            };
+        }
+
+        pub fn createEntity(self: *@This()) EntityHandle {
+            return self.createEntityChecked() orelse
+                std.debug.panic("out of entities", .{});
+        }
+
+        fn removeEntityChecked(self: *@This(), entity: EntityHandle) !void {
+            // Check that the entity is valid. These should be assertions, but I've made them error
+            // codes for easier unit testing.
+            if (entity.index >= self.entities.len) {
+                return error.BadIndex;
+            }
+            if (self.entities[entity.index] != entity.generation) {
+                return error.BadGeneration;
+            }
+            if (self.free.len == max_entities) {
+                return error.FreelistFull;
+            }
+
+            // Increment this entity slot's generation so future uses will fail
+            self.entities[entity.index] +%= 1;
+
+            // Add the entity to the free list
+            const top = self.free.len;
+            self.free.len += 1;
+            self.free[top] = entity.index;
+        }
+
+        pub fn removeEntity(self: *@This(), entity: EntityHandle) void {
+            self.removeEntityChecked(entity) catch unreachable;
+        }
+
+        fn componentMask(comptime Component: type) Archetype {
+            comptime var i = 0;
+            inline for (components) |c| {
+                if (c == Component) {
+                    comptime var mask = Archetype.initEmpty();
+                    mask.set(i);
+                    return mask;
+                }
+                i += 1;
+            }
+            @compileError("component type not registered");
+        }
+
+        fn archetype(comptime archetypeComponents: anytype) Archetype {
+            comptime var result = Archetype.initEmpty();
+            inline for (archetypeComponents) |component| {
+                result = result.unionWith(componentMask(component));
+            }
+            return result;
+        }
+    };
+}
 
 test "limits" {
     // The max entity id should be considered invalid
     std.debug.assert(max_entities < std.math.maxInt(EntityIndex));
 
-    var entities = try Entities.init();
+    var entities = try Entities(.{}).init();
     defer entities.deinit();
     var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
     defer created.deinit();
@@ -149,7 +188,7 @@ test "limits" {
 }
 
 test "create destroy" {
-    var entities = try Entities.init();
+    var entities = try Entities(.{}).init();
     defer entities.deinit();
 
     const entity_0_0 = entities.createEntity();
@@ -174,7 +213,7 @@ test "create destroy" {
 }
 
 test "safety checks" {
-    var entities = try Entities.init();
+    var entities = try Entities(.{}).init();
     defer entities.deinit();
 
     const entity = entities.createEntity();
@@ -184,4 +223,20 @@ test "safety checks" {
         .index = 1,
         .generation = 0,
     }));
+}
+
+test "archetype masks" {
+    var entities = try Entities(.{ u32, u8 }).init();
+    defer entities.deinit();
+
+    var archetype = @TypeOf(entities).Archetype.initEmpty();
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{}));
+    try std.testing.expect(!archetype.eql(comptime @TypeOf(entities).archetype(.{u8})));
+    archetype.set(0);
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{u32}));
+    archetype.set(1);
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ u32, u8 }));
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ u8, u32 }));
+    archetype.unset(0);
+    try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{u8}));
 }
