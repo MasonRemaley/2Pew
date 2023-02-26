@@ -82,30 +82,43 @@ pub fn main() !void {
 
     const star_small = try assets.sprite("img/star/small.png");
     const star_large = try assets.sprite("img/star/large.png");
+    const ship_sprite = try assets.sprite("img/ship/ranger0.png");
+    const bullet_small = try assets.sprite("img/bullet/small.png");
 
     var ships = [_]Ship{
         .{
-            .sprite = try assets.sprite("img/ship/ranger0.png"),
+            .sprite = ship_sprite,
             .pos = .{ .x = 500, .y = 500 },
             .vel = .{ .x = 0, .y = 0 },
             .rotation = 0,
             .rotation_speed = math.pi * 1.1,
             .thrust = 100,
+            .cooldown = 0,
+            .cooldown_amount = 0.2,
+            .bullet_speed = 400,
+            .bullet_duration = 0.5,
         },
         .{
-            .sprite = try assets.sprite("img/ship/ranger0.png"),
+            .sprite = ship_sprite,
             .pos = .{ .x = 1000, .y = 500 },
             .vel = .{ .x = 0, .y = 0 },
             .rotation = 0,
             .rotation_speed = math.pi * 1.1,
             .thrust = 100,
+            .cooldown = 0,
+            .cooldown_amount = 0.2,
+            .bullet_speed = 400,
+            .bullet_duration = 0.5,
         },
     };
 
     // sdlAssertZero(c.TTF_Init());
 
-    var stars: [100]Star = undefined;
+    var stars: [150]Star = undefined;
     generateStars(&stars);
+
+    var bullets = std.ArrayList(Bullet).init(gpa);
+    defer bullets.deinit();
 
     while (true) {
         var event: c.SDL_Event = undefined;
@@ -141,23 +154,51 @@ pub fn main() !void {
             }
         }
 
-        const dx = 1.0 / 60.0;
+        const dt = 1.0 / 60.0;
+
+        {
+            var i: usize = 0;
+            while (i < bullets.items.len) {
+                const bullet = &bullets.items[i];
+
+                bullet.pos.add(bullet.vel.scaled(dt));
+
+                bullet.duration -= dt;
+                if (bullet.duration <= 0) {
+                    _ = bullets.swapRemove(i);
+                    continue;
+                }
+                i += 1;
+            }
+        }
 
         for (&ships) |*ship| {
-            ship.pos.add(ship.vel.scaled(dx));
+            ship.pos.add(ship.vel.scaled(dt));
 
             const rotate_input = // convert to 1.0 or -1.0
                 @intToFloat(f32, @boolToInt(ship.input.right)) -
                 @intToFloat(f32, @boolToInt(ship.input.left));
             ship.rotation = @mod(
-                ship.rotation + rotate_input * ship.rotation_speed * dx,
+                ship.rotation + rotate_input * ship.rotation_speed * dt,
                 2 * math.pi,
             );
 
             // convert to 1.0 or 0.0
             const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
             const thrust = V.unit(ship.rotation);
-            ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dx));
+            ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
+
+            ship.cooldown -= dt;
+            if (ship.input.fire and ship.cooldown <= 0) {
+                ship.cooldown = ship.cooldown_amount;
+                try bullets.append(.{
+                    .sprite = bullet_small,
+                    .pos = ship.pos,
+                    .vel = V.unit(ship.rotation).scaled(ship.bullet_speed).plus(ship.vel),
+                    .duration = ship.bullet_duration,
+                    .radius = 2,
+                });
+            }
         }
 
         sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
@@ -187,9 +228,22 @@ pub fn main() !void {
                 renderer,
                 ship.sprite.texture,
                 null, // source rectangle
-                &ship.toSdlRect(),
+                &toSdlRect(ship.pos, ship.sprite),
                 // The ship asset images point up instead of to the right.
                 toDegrees(ship.rotation + math.pi / 2.0),
+                null, // center of rotation
+                c.SDL_FLIP_NONE,
+            ));
+        }
+
+        for (bullets.items) |bullet| {
+            sdlAssertZero(c.SDL_RenderCopyEx(
+                renderer,
+                bullet.sprite.texture,
+                null, // source rectangle
+                &toSdlRect(bullet.pos, bullet.sprite),
+                // The bullet asset images point up instead of to the right.
+                toDegrees(bullet.vel.angle() + math.pi / 2.0),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -209,6 +263,18 @@ const Player = struct {
     ship: u32,
 };
 
+const Bullet = struct {
+    sprite: Sprite,
+    /// pixels
+    pos: V,
+    /// pixels per second
+    vel: V,
+    /// seconds
+    duration: f32,
+    /// pixels
+    radius: f32,
+};
+
 const Ship = struct {
     sprite: Sprite,
     /// pixels
@@ -223,7 +289,18 @@ const Ship = struct {
     /// pixels per second squared
     thrust: f32,
 
+    /// Player or AI decisions on what they want the ship to do.
     input: Input = .{},
+
+    /// Seconds until ready. Less than or equal to 0 means ready.
+    cooldown: f32,
+    /// Seconds until ready. Cooldown is set to this after firing.
+    cooldown_amount: f32,
+
+    /// pixels per second
+    bullet_speed: f32,
+    /// seconds
+    bullet_duration: f32,
 
     const Input = packed struct {
         fire: bool = false,
@@ -231,15 +308,6 @@ const Ship = struct {
         left: bool = false,
         right: bool = false,
     };
-
-    fn toSdlRect(s: Ship) c.SDL_Rect {
-        return .{
-            .x = @floatToInt(i32, @floor(s.pos.x)),
-            .y = @floatToInt(i32, @floor(s.pos.y)),
-            .w = s.sprite.rect.w,
-            .h = s.sprite.rect.h,
-        };
-    }
 };
 
 const Sprite = struct {
@@ -338,4 +406,13 @@ fn generateStars(stars: []Star) void {
 /// SDL uses degrees (🤮), but at least it also uses clockwise rotation.
 fn toDegrees(radians: f32) f32 {
     return 360.0 * (radians / (2 * math.pi));
+}
+
+fn toSdlRect(pos: V, sprite: Sprite) c.SDL_Rect {
+    return .{
+        .x = @floatToInt(i32, @floor(pos.x)),
+        .y = @floatToInt(i32, @floor(pos.y)),
+        .w = sprite.rect.w,
+        .h = sprite.rect.h,
+    };
 }
