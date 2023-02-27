@@ -127,6 +127,7 @@ pub fn main() !void {
         .cooldown_amount = 0.2,
         .bullet_speed = 500,
         .bullet_duration = 0.5,
+        .bullet_damage = 10,
     };
 
     var ships = [_]Ship{
@@ -143,6 +144,8 @@ pub fn main() !void {
             .thrust = 100,
             .turret = ship_turret,
             .radius = ship_radius,
+            .hp = 100,
+            .max_hp = 100,
         },
         .{
             .input = .{},
@@ -157,6 +160,8 @@ pub fn main() !void {
             .thrust = 100,
             .turret = ship_turret,
             .radius = ship_radius,
+            .hp = 100,
+            .max_hp = 100,
         },
     };
 
@@ -253,6 +258,7 @@ pub fn main() !void {
                         .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
                         .duration = turret.bullet_duration,
                         .radius = 2,
+                        .damage = turret.bullet_damage,
                     });
                 }
             }
@@ -292,6 +298,28 @@ pub fn main() !void {
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
+
+            // HP bar
+            if (ship.hp < ship.max_hp) {
+                const health_bar_size: V = .{ .x = 32, .y = 4 };
+                var start = ship.pos.minus(health_bar_size.scaled(0.5)).floored();
+                start.y -= ship.radius + health_bar_size.y;
+                sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
+                sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
+                    start.minus(.{ .x = 1, .y = 1 }),
+                    health_bar_size.plus(.{ .x = 2, .y = 2 }),
+                )));
+                const hp_percent = ship.hp / ship.max_hp;
+                if (hp_percent > 0.45) {
+                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
+                } else {
+                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
+                }
+                sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
+                    start,
+                    .{ .x = health_bar_size.x * hp_percent, .y = health_bar_size.y },
+                )));
+            }
         }
 
         for (bullets.items) |bullet| {
@@ -332,6 +360,8 @@ const Bullet = struct {
     duration: f32,
     /// pixels
     radius: f32,
+    /// Amount of HP the bullet removes on hit.
+    damage: f32,
 };
 
 const Animation = struct {
@@ -371,6 +401,8 @@ const Turret = struct {
     bullet_speed: f32,
     /// seconds
     bullet_duration: f32,
+    /// Amount of HP the bullet removes upon landing a hit.
+    bullet_damage: f32,
 };
 
 const Ship = struct {
@@ -398,6 +430,9 @@ const Ship = struct {
 
     turret: Turret,
 
+    hp: f32,
+    max_hp: f32,
+
     const Input = packed struct {
         fire: bool = false,
         forward: bool = false,
@@ -424,11 +459,14 @@ const Sprite = struct {
 
     /// Assumes the pos points to the center of the sprite.
     fn toSdlRect(sprite: Sprite, pos: V) c.SDL_Rect {
+        const sprite_size = sprite.size();
+        return sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
+    }
+
+    fn size(sprite: Sprite) V {
         return .{
-            .x = @floatToInt(i32, @floor(pos.x - @intToFloat(f32, sprite.rect.w) / 2.0)),
-            .y = @floatToInt(i32, @floor(pos.y - @intToFloat(f32, sprite.rect.h) / 2.0)),
-            .w = sprite.rect.w,
-            .h = sprite.rect.h,
+            .x = @intToFloat(f32, sprite.rect.w),
+            .y = @intToFloat(f32, sprite.rect.h),
         };
     }
 };
@@ -566,4 +604,15 @@ fn generateStars(stars: []Star) void {
 /// SDL uses degrees (🤮), but at least it also uses clockwise rotation.
 fn toDegrees(radians: f32) f32 {
     return 360.0 * (radians / (2 * math.pi));
+}
+
+fn sdlRect(top_left_pos: V, size: V) c.SDL_Rect {
+    const pos = top_left_pos.floored();
+    const size_floored = size.floored();
+    return .{
+        .x = @floatToInt(i32, pos.x),
+        .y = @floatToInt(i32, pos.y),
+        .w = @floatToInt(i32, size_floored.x),
+        .h = @floatToInt(i32, size_floored.y),
+    };
 }

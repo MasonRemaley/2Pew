@@ -27,6 +27,20 @@ pub fn plus(v: Vec2d, other: Vec2d) Vec2d {
     };
 }
 
+pub fn minus(v: Vec2d, other: Vec2d) Vec2d {
+    return .{
+        .x = v.x - other.x,
+        .y = v.y - other.y,
+    };
+}
+
+pub fn floored(v: Vec2d) Vec2d {
+    return .{
+        .x = @floor(v.x),
+        .y = @floor(v.y),
+    };
+}
+
 pub fn angle(v: Vec2d) f32 {
     if (v.lengthSqrd() == 0) {
         return 0;
