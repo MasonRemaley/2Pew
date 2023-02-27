@@ -85,6 +85,17 @@ pub fn main() !void {
     const star_large = try assets.loadSprite("img/star/large.png");
     const bullet_small = try assets.loadSprite("img/bullet/small.png");
 
+    const shrapnel_sprites = [_]Sprite.Index{
+        try assets.loadSprite("img/shrapnel/01.png"),
+        try assets.loadSprite("img/shrapnel/02.png"),
+        try assets.loadSprite("img/shrapnel/03.png"),
+    };
+    const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
+        try assets.addAnimation(&.{shrapnel_sprites[0]}, null, 30),
+        try assets.addAnimation(&.{shrapnel_sprites[1]}, null, 30),
+        try assets.addAnimation(&.{shrapnel_sprites[2]}, null, 30),
+    };
+
     const ship_sprites = [_]Sprite.Index{
         try assets.loadSprite("img/ship/ranger0.png"),
         try assets.loadSprite("img/ship/ranger1.png"),
@@ -139,12 +150,12 @@ pub fn main() !void {
         .pos = .{ .x = 0, .y = 0 },
         .vel = .{ .x = 0, .y = 0 },
         .rotation = -math.pi / 2.0,
-        .rotation_speed = math.pi * 1.1,
+        .rotation_vel = math.pi * 1.1,
         .thrust = 150,
         .turret = ship_turret,
         .radius = ship_radius,
-        .hp = 100,
-        .max_hp = 100,
+        .hp = 80,
+        .max_hp = 80,
     };
 
     var ships = std.ArrayList(Ship).init(gpa);
@@ -233,6 +244,22 @@ pub fn main() !void {
                     {
                         ship.hp -= bullet.damage;
                         _ = bullets.swapRemove(i);
+
+                        // spawn shrapnel here
+                        const shrapnel_animation = shrapnel_animations[
+                            std.crypto.random.uintLessThanBiased(usize, shrapnel_animations.len)
+                        ];
+                        const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                            .scaled(bullet.vel.length() * 0.2);
+                        try decorations.append(.{
+                            .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
+                            .pos = ship.pos,
+                            .vel = ship.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
+                            .rotation = 2 * math.pi * std.crypto.random.float(f32),
+                            .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                            .duration = 2,
+                        });
+
                         continue;
                     }
                 }
@@ -251,6 +278,9 @@ pub fn main() !void {
                     .anim_playback = .{ .index = explosion_animation, .time_passed = 0 },
                     .pos = ship.pos,
                     .vel = ship.vel,
+                    .rotation = 0,
+                    .rotation_vel = 0,
+                    .duration = 100,
                 });
                 // delete ship and spawn it somewhere else
                 ship.* = ranger_template;
@@ -270,7 +300,7 @@ pub fn main() !void {
                 @intToFloat(f32, @boolToInt(ship.input.right)) -
                 @intToFloat(f32, @boolToInt(ship.input.left));
             ship.rotation = @mod(
-                ship.rotation + rotate_input * ship.rotation_speed * dt,
+                ship.rotation + rotate_input * ship.rotation_vel * dt,
                 2 * math.pi,
             );
 
@@ -300,11 +330,16 @@ pub fn main() !void {
             var i: usize = 0;
             while (i < decorations.items.len) {
                 const decoration = &decorations.items[i];
-                if (decoration.anim_playback.index == .none) {
+                decoration.duration -= dt;
+                if (decoration.anim_playback.index == .none or decoration.duration <= 0) {
                     _ = decorations.swapRemove(i);
                     continue;
                 }
                 decoration.pos.add(decoration.vel.scaled(dt));
+                decoration.rotation = @mod(
+                    decoration.rotation + decoration.rotation_vel * dt,
+                    2 * math.pi,
+                );
                 i += 1;
             }
         }
@@ -395,11 +430,14 @@ pub fn main() !void {
 
         for (decorations.items) |*decoration| {
             const sprite = assets.animate(&decoration.anim_playback, dt);
-            sdlAssertZero(c.SDL_RenderCopy(
+            sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
                 null, // source rectangle
                 &sprite.toSdlRect(decoration.pos),
+                toDegrees(decoration.rotation),
+                null, // center of rotation
+                c.SDL_FLIP_NONE,
             ));
         }
 
@@ -437,6 +475,12 @@ const Decoration = struct {
     pos: V,
     /// pixels per second
     vel: V,
+    /// radians
+    rotation: f32,
+    /// radians per second
+    rotation_vel: f32,
+    /// seconds
+    duration: f32,
 };
 
 const Animation = struct {
@@ -496,7 +540,7 @@ const Ship = struct {
     radius: f32,
 
     /// radians per second
-    rotation_speed: f32,
+    rotation_vel: f32,
     /// pixels per second squared
     thrust: f32,
 
@@ -673,8 +717,8 @@ const Star = struct {
 fn generateStars(stars: []Star) void {
     for (stars) |*star| {
         star.* = .{
-            .x = std.crypto.random.uintAtMostBiased(u31, display_width),
-            .y = std.crypto.random.uintAtMostBiased(u31, display_height),
+            .x = std.crypto.random.uintLessThanBiased(u31, display_width),
+            .y = std.crypto.random.uintLessThanBiased(u31, display_height),
             .kind = std.crypto.random.enumValue(Star.Kind),
         };
     }
