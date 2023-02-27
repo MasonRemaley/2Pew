@@ -401,10 +401,11 @@ const Sprite = struct {
         _,
     };
 
+    /// Assumes the pos points to the center of the sprite.
     fn toSdlRect(sprite: Sprite, pos: V) c.SDL_Rect {
         return .{
-            .x = @floatToInt(i32, @floor(pos.x)),
-            .y = @floatToInt(i32, @floor(pos.y)),
+            .x = @floatToInt(i32, @floor(pos.x - @intToFloat(f32, sprite.rect.w) / 2.0)),
+            .y = @floatToInt(i32, @floor(pos.y - @intToFloat(f32, sprite.rect.h) / 2.0)),
             .w = sprite.rect.w,
             .h = sprite.rect.h,
         };
