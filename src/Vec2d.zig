@@ -53,10 +53,23 @@ pub fn lengthSqrd(v: Vec2d) f32 {
     return v.x * v.x + v.y * v.y;
 }
 
+pub fn length(v: Vec2d) f32 {
+    return @sqrt(v.lengthSqrd());
+}
+
 pub fn distanceSqrd(v: Vec2d, other: Vec2d) f32 {
     var dx = other.x - v.x;
     var dy = other.y - v.y;
     return dx * dx + dy * dy;
+}
+
+pub fn normalized(v: Vec2d) Vec2d {
+    const len = v.length();
+    if (len == 0) {
+        return v;
+    } else {
+        return v.scaled(1.0 / len);
+    }
 }
 
 const Vec2d = @This();

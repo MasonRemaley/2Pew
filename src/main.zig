@@ -80,6 +80,7 @@ pub fn main() !void {
         }
     }
 
+    const ring_bg = try assets.loadSprite("img/ring.png");
     const star_small = try assets.loadSprite("img/star/small.png");
     const star_large = try assets.loadSprite("img/star/large.png");
     const bullet_small = try assets.loadSprite("img/bullet/small.png");
@@ -163,6 +164,12 @@ pub fn main() !void {
     var bullets = std.ArrayList(Bullet).init(gpa);
     defer bullets.deinit();
 
+    const display_center: V = .{
+        .x = display_width / 2.0,
+        .y = display_height / 2.0,
+    };
+    const display_radius = display_height / 2.0;
+
     while (true) {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event) != 0) {
@@ -239,9 +246,15 @@ pub fn main() !void {
             if (ship.hp <= 0) {
                 ship.* = ranger_template;
                 const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                const center: V = .{ .x = display_width / 2.0, .y = display_height / 2.0 };
-                ship.pos = center.plus(V.unit(new_angle).scaled(500));
+                ship.pos = display_center.plus(V.unit(new_angle).scaled(500));
                 continue;
+            }
+
+            // gravity if the ship is outside the ring
+            if (ship.pos.distanceSqrd(display_center) > display_radius * display_radius) {
+                const gravity = 200;
+                const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
+                ship.vel.add(gravity_v);
             }
 
             const rotate_input = // convert to 1.0 or -1.0
@@ -295,6 +308,16 @@ pub fn main() !void {
                 sprite.texture,
                 null,
                 &dst_rect,
+            ));
+        }
+
+        {
+            const sprite = assets.sprite(ring_bg);
+            sdlAssertZero(c.SDL_RenderCopy(
+                renderer,
+                sprite.texture,
+                null,
+                &sprite.toSdlRect(display_center),
             ));
         }
 
