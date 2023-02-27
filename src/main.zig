@@ -118,6 +118,17 @@ pub fn main() !void {
         ship_sprites[1],
     }, ship_steady_thrust);
 
+    const ship_radius = @intToFloat(f32, assets.sprite(ship_sprites[0]).rect.w) / 2.0;
+
+    const ship_turret: Turret = .{
+        .radius = ship_radius,
+        .angle = 0,
+        .cooldown = 0,
+        .cooldown_amount = 0.2,
+        .bullet_speed = 500,
+        .bullet_duration = 0.5,
+    };
+
     var ships = [_]Ship{
         .{
             .input = .{},
@@ -130,10 +141,8 @@ pub fn main() !void {
             .rotation = 0,
             .rotation_speed = math.pi * 1.1,
             .thrust = 100,
-            .cooldown = 0,
-            .cooldown_amount = 0.2,
-            .bullet_speed = 500,
-            .bullet_duration = 0.5,
+            .turret = ship_turret,
+            .radius = ship_radius,
         },
         .{
             .input = .{},
@@ -146,10 +155,8 @@ pub fn main() !void {
             .rotation = 0,
             .rotation_speed = math.pi * 1.1,
             .thrust = 100,
-            .cooldown = 0,
-            .cooldown_amount = 0.2,
-            .bullet_speed = 500,
-            .bullet_duration = 0.5,
+            .turret = ship_turret,
+            .radius = ship_radius,
         },
     };
 
@@ -235,16 +242,19 @@ pub fn main() !void {
             const thrust = V.unit(ship.rotation);
             ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
 
-            ship.cooldown -= dt;
-            if (ship.input.fire and ship.cooldown <= 0) {
-                ship.cooldown = ship.cooldown_amount;
-                try bullets.append(.{
-                    .sprite = bullet_small,
-                    .pos = ship.pos,
-                    .vel = V.unit(ship.rotation).scaled(ship.bullet_speed).plus(ship.vel),
-                    .duration = ship.bullet_duration,
-                    .radius = 2,
-                });
+            const turret = &ship.turret;
+            {
+                turret.cooldown -= dt;
+                if (ship.input.fire and turret.cooldown <= 0) {
+                    turret.cooldown = turret.cooldown_amount;
+                    try bullets.append(.{
+                        .sprite = bullet_small,
+                        .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
+                        .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
+                        .duration = turret.bullet_duration,
+                        .radius = 2,
+                    });
+                }
             }
         }
 
@@ -345,6 +355,24 @@ const Animation = struct {
     };
 };
 
+const Turret = struct {
+    /// Together with angle, this is the location of the turret from the center
+    /// of the containing object. Pixels.
+    radius: f32,
+    /// Together with radius, this is the location of the turret from the
+    /// center of the containing object. Radians.
+    angle: f32,
+    /// Seconds until ready. Less than or equal to 0 means ready.
+    cooldown: f32,
+    /// Seconds until ready. Cooldown is set to this after firing.
+    cooldown_amount: f32,
+
+    /// pixels per second
+    bullet_speed: f32,
+    /// seconds
+    bullet_duration: f32,
+};
+
 const Ship = struct {
     still: Animation.Index,
     accel: Animation.Index,
@@ -355,6 +383,7 @@ const Ship = struct {
     vel: V,
     /// radians
     rotation: f32,
+    radius: f32,
 
     /// radians per second
     rotation_speed: f32,
@@ -367,15 +396,7 @@ const Ship = struct {
     /// notice when a button is first pressed.
     prev_input: Input,
 
-    /// Seconds until ready. Less than or equal to 0 means ready.
-    cooldown: f32,
-    /// Seconds until ready. Cooldown is set to this after firing.
-    cooldown_amount: f32,
-
-    /// pixels per second
-    bullet_speed: f32,
-    /// seconds
-    bullet_duration: f32,
+    turret: Turret,
 
     const Input = packed struct {
         fire: bool = false,
