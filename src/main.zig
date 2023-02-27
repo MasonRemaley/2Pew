@@ -130,42 +130,32 @@ pub fn main() !void {
         .bullet_damage = 10,
     };
 
-    var ships = [_]Ship{
-        .{
-            .input = .{},
-            .prev_input = .{},
-            .still = ship_still,
-            .accel = ship_accel,
-            .anim = .{ .index = ship_still, .frame = 0 },
-            .pos = .{ .x = 500, .y = 500 },
-            .vel = .{ .x = 0, .y = 0 },
-            .rotation = 0,
-            .rotation_speed = math.pi * 1.1,
-            .thrust = 150,
-            .turret = ship_turret,
-            .radius = ship_radius,
-            .hp = 100,
-            .max_hp = 100,
-        },
-        .{
-            .input = .{},
-            .prev_input = .{},
-            .still = ship_still,
-            .accel = ship_accel,
-            .anim = .{ .index = ship_still, .frame = 0 },
-            .pos = .{ .x = 1000, .y = 500 },
-            .vel = .{ .x = 0, .y = 0 },
-            .rotation = 0,
-            .rotation_speed = math.pi * 1.1,
-            .thrust = 150,
-            .turret = ship_turret,
-            .radius = ship_radius,
-            .hp = 100,
-            .max_hp = 100,
-        },
+    const ranger_template: Ship = .{
+        .input = .{},
+        .prev_input = .{},
+        .still = ship_still,
+        .accel = ship_accel,
+        .anim = .{ .index = ship_still, .frame = 0 },
+        .pos = .{ .x = 0, .y = 0 },
+        .vel = .{ .x = 0, .y = 0 },
+        .rotation = -math.pi / 2.0,
+        .rotation_speed = math.pi * 1.1,
+        .thrust = 150,
+        .turret = ship_turret,
+        .radius = ship_radius,
+        .hp = 100,
+        .max_hp = 100,
     };
 
-    // sdlAssertZero(c.TTF_Init());
+    var ships = std.ArrayList(Ship).init(gpa);
+    defer ships.deinit();
+    for (players, 0..) |_, i| {
+        try ships.append(ranger_template);
+        ships.items[ships.items.len - 1].pos = .{
+            .x = 500 + 500 * @intToFloat(f32, i),
+            .y = 500,
+        };
+    }
 
     var stars: [150]Star = undefined;
     generateStars(&stars);
@@ -187,7 +177,7 @@ pub fn main() !void {
         }
 
         for (players) |player| {
-            const ship = &ships[player.ship];
+            const ship = &ships.items[player.ship];
             ship.input = .{};
             if (player.controller) |controller| {
                 // left/right on the left joystick
@@ -227,12 +217,32 @@ pub fn main() !void {
                     _ = bullets.swapRemove(i);
                     continue;
                 }
+
+                for (ships.items) |*ship| {
+                    if (ship.pos.distanceSqrd(bullet.pos) <
+                        ship.radius * ship.radius + bullet.radius * bullet.radius)
+                    {
+                        ship.hp -= bullet.damage;
+                        _ = bullets.swapRemove(i);
+                        continue;
+                    }
+                }
+
                 i += 1;
             }
         }
 
-        for (&ships) |*ship| {
+        for (ships.items) |*ship| {
             ship.pos.add(ship.vel.scaled(dt));
+
+            // explode ships that reach 0 hp
+            if (ship.hp <= 0) {
+                ship.* = ranger_template;
+                const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                const center: V = .{ .x = display_width / 2.0, .y = display_height / 2.0 };
+                ship.pos = center.plus(V.unit(new_angle).scaled(500));
+                continue;
+            }
 
             const rotate_input = // convert to 1.0 or -1.0
                 @intToFloat(f32, @boolToInt(ship.input.right)) -
@@ -264,6 +274,8 @@ pub fn main() !void {
             }
         }
 
+        // Display
+
         sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
         sdlAssertZero(c.SDL_RenderClear(renderer));
 
@@ -286,7 +298,7 @@ pub fn main() !void {
             ));
         }
 
-        for (&ships) |*ship| {
+        for (ships.items) |*ship| {
             const sprite = assets.animate(&ship.anim);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,

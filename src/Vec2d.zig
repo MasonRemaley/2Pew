@@ -53,6 +53,12 @@ pub fn lengthSqrd(v: Vec2d) f32 {
     return v.x * v.x + v.y * v.y;
 }
 
+pub fn distanceSqrd(v: Vec2d, other: Vec2d) f32 {
+    var dx = other.x - v.x;
+    var dy = other.y - v.y;
+    return dx * dx + dy * dy;
+}
+
 const Vec2d = @This();
 const std = @import("std");
 const math = std.math;
