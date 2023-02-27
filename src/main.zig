@@ -93,31 +93,30 @@ pub fn main() !void {
     };
     const ship_still = try assets.addAnimation(&.{
         ship_sprites[0],
-    }, null);
+    }, null, 30);
     const ship_steady_thrust = try assets.addAnimation(&.{
         ship_sprites[2],
-        ship_sprites[2],
-        ship_sprites[2],
-        ship_sprites[2],
-        ship_sprites[2],
         ship_sprites[3],
-        ship_sprites[3],
-        ship_sprites[3],
-        ship_sprites[3],
-        ship_sprites[3],
-    }, null);
+    }, null, 10);
     const ship_accel = try assets.addAnimation(&.{
         ship_sprites[0],
-        ship_sprites[0],
-        ship_sprites[0],
-        ship_sprites[0],
-        ship_sprites[0],
         ship_sprites[1],
-        ship_sprites[1],
-        ship_sprites[1],
-        ship_sprites[1],
-        ship_sprites[1],
-    }, ship_steady_thrust);
+    }, ship_steady_thrust, 10);
+
+    const explosion_animation = try assets.addAnimation(&.{
+        try assets.loadSprite("img/explosion/01.png"),
+        try assets.loadSprite("img/explosion/02.png"),
+        try assets.loadSprite("img/explosion/03.png"),
+        try assets.loadSprite("img/explosion/04.png"),
+        try assets.loadSprite("img/explosion/05.png"),
+        try assets.loadSprite("img/explosion/06.png"),
+        try assets.loadSprite("img/explosion/07.png"),
+        try assets.loadSprite("img/explosion/08.png"),
+        try assets.loadSprite("img/explosion/09.png"),
+        try assets.loadSprite("img/explosion/10.png"),
+        try assets.loadSprite("img/explosion/11.png"),
+        try assets.loadSprite("img/explosion/12.png"),
+    }, .none, 30);
 
     const ship_radius = @intToFloat(f32, assets.sprite(ship_sprites[0]).rect.w) / 2.0;
 
@@ -136,7 +135,7 @@ pub fn main() !void {
         .prev_input = .{},
         .still = ship_still,
         .accel = ship_accel,
-        .anim = .{ .index = ship_still, .frame = 0 },
+        .anim_playback = .{ .index = ship_still, .time_passed = 0 },
         .pos = .{ .x = 0, .y = 0 },
         .vel = .{ .x = 0, .y = 0 },
         .rotation = -math.pi / 2.0,
@@ -163,6 +162,9 @@ pub fn main() !void {
 
     var bullets = std.ArrayList(Bullet).init(gpa);
     defer bullets.deinit();
+
+    var decorations = std.ArrayList(Decoration).init(gpa);
+    defer decorations.deinit();
 
     const display_center: V = .{
         .x = display_width / 2.0,
@@ -244,6 +246,13 @@ pub fn main() !void {
 
             // explode ships that reach 0 hp
             if (ship.hp <= 0) {
+                // spawn explosion here
+                try decorations.append(.{
+                    .anim_playback = .{ .index = explosion_animation, .time_passed = 0 },
+                    .pos = ship.pos,
+                    .vel = ship.vel,
+                });
+                // delete ship and spawn it somewhere else
                 ship.* = ranger_template;
                 const new_angle = math.pi * 2 * std.crypto.random.float(f32);
                 ship.pos = display_center.plus(V.unit(new_angle).scaled(500));
@@ -287,6 +296,19 @@ pub fn main() !void {
             }
         }
 
+        {
+            var i: usize = 0;
+            while (i < decorations.items.len) {
+                const decoration = &decorations.items[i];
+                if (decoration.anim_playback.index == .none) {
+                    _ = decorations.swapRemove(i);
+                    continue;
+                }
+                decoration.pos.add(decoration.vel.scaled(dt));
+                i += 1;
+            }
+        }
+
         // Display
 
         sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
@@ -322,7 +344,7 @@ pub fn main() !void {
         }
 
         for (ships.items) |*ship| {
-            const sprite = assets.animate(&ship.anim);
+            const sprite = assets.animate(&ship.anim_playback, dt);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
@@ -371,6 +393,16 @@ pub fn main() !void {
             ));
         }
 
+        for (decorations.items) |*decoration| {
+            const sprite = assets.animate(&decoration.anim_playback, dt);
+            sdlAssertZero(c.SDL_RenderCopy(
+                renderer,
+                sprite.texture,
+                null, // source rectangle
+                &sprite.toSdlRect(decoration.pos),
+            ));
+        }
+
         c.SDL_RenderPresent(renderer);
     }
 }
@@ -399,6 +431,14 @@ const Bullet = struct {
     damage: f32,
 };
 
+const Decoration = struct {
+    anim_playback: Animation.Playback,
+    /// pixels
+    pos: V,
+    /// pixels per second
+    vel: V,
+};
+
 const Animation = struct {
     /// Index into frames array
     start: u32,
@@ -407,16 +447,19 @@ const Animation = struct {
     /// After finishing, will jump to this next animation (which may be
     /// itself, in which case it will loop).
     next: Index,
+    /// frames per second
+    fps: f32,
 
     /// Index into animations array.
     const Index = enum(u32) {
+        none = math.maxInt(u32),
         _,
     };
 
     const Playback = struct {
         index: Index,
-        /// offset from Animation start
-        frame: u32,
+        /// number of seconds passed since Animation start.
+        time_passed: f32,
     };
 };
 
@@ -443,7 +486,7 @@ const Turret = struct {
 const Ship = struct {
     still: Animation.Index,
     accel: Animation.Index,
-    anim: Animation.Playback,
+    anim_playback: Animation.Playback,
     /// pixels
     pos: V,
     /// pixels per second
@@ -476,9 +519,9 @@ const Ship = struct {
     };
 
     fn setAnimation(ship: *Ship, animation: Animation.Index) void {
-        ship.anim = .{
+        ship.anim_playback = .{
             .index = animation,
-            .frame = 0,
+            .time_passed = 0,
         };
     }
 };
@@ -542,13 +585,15 @@ const Assets = struct {
         a.* = undefined;
     }
 
-    fn animate(a: Assets, anim: *Animation.Playback) Sprite {
+    fn animate(a: Assets, anim: *Animation.Playback, dt: f32) Sprite {
         const animation = a.animations.items[@enumToInt(anim.index)];
-        const frame = animation.start + anim.frame;
+        const frame_index = @floatToInt(u32, @floor(anim.time_passed * animation.fps));
+        const frame = animation.start + frame_index;
         const frame_sprite = a.sprite(a.frames.items[frame]);
-        anim.frame += 1;
-        if (anim.frame >= animation.len) {
-            anim.frame = 0;
+        anim.time_passed += dt;
+        const end_time = @intToFloat(f32, animation.len) / animation.fps;
+        if (anim.time_passed >= end_time) {
+            anim.time_passed -= end_time;
             anim.index = animation.next;
         }
         return frame_sprite;
@@ -559,6 +604,7 @@ const Assets = struct {
         a: *Assets,
         frames: []const Sprite.Index,
         next_animation: ?Animation.Index,
+        fps: f32,
     ) !Animation.Index {
         try a.frames.appendSlice(a.gpa, frames);
         const result = @intToEnum(Animation.Index, a.animations.items.len);
@@ -566,6 +612,7 @@ const Assets = struct {
             .start = @intCast(u32, a.frames.items.len - frames.len),
             .len = @intCast(u32, frames.len),
             .next = next_animation orelse result,
+            .fps = fps,
         });
         return result;
     }
