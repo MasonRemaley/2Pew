@@ -56,10 +56,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
         const Archetype: type = std.bit_set.IntegerBitSet(std.meta.fields(Entity).len);
 
         // TODO: pack this tightly, maybe use index instead of ptr for page
-        const EntitySlot = struct {
-            generation: EntityGeneration,
+        const EntityLocation = struct {
             page: *Page,
             index_in_page: u32,
+        };
+        const EntitySlot = struct {
+            generation: EntityGeneration,
+            location: EntityLocation,
         };
 
         // TODO: pack this tightly, cache right data
@@ -68,6 +71,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             archetype: Archetype,
             capacity: EntityIndex,
             entity_size: usize,
+            len: usize,
         };
         // TODO: make sure exactly one page size, make sure ordered correctly, may need to store everything
         // in byte array
@@ -97,32 +101,38 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         .archetype = archetype,
                         .capacity = capacity,
                         .entity_size = entity_size,
+                        .len = 0,
                     },
                     .data = undefined,
                 };
             }
 
-            // TODO: maybe have an internal free list or such to accelerate this and early out when it's full etc
+            // TODO: should probably have an internal free list to accelerate this
             // TODO: make sure this cast is always safe at comptime?
             // TODO: return type
             fn createEntity(self: *@This()) ?EntityIndex {
+                if (self.header.len >= self.header.capacity) {
+                    return null;
+                }
                 // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
                 const start = (self.header.entity_size - 1) * self.header.capacity;
                 for (self.data[start..(start + self.header.capacity)], 0..) |*b, i| {
                     if (!@ptrCast(*bool, b).*) {
                         // TODO: make assertions in get component that it exists first
                         @ptrCast(*bool, b).* = true;
+                        self.header.len += 1;
                         return @intCast(EntityIndex, i);
                     }
                 }
-                return null;
+                unreachable;
             }
 
             // TODO: i was previously thinking i needed a reference to the handle here--is that correct or no? maybe
             // required for the iterator?
-            fn getExists(self: *Page, index: usize) *bool {
+            fn remove(self: *Page, index: usize) void {
                 // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
-                return @ptrCast(*bool, &self.data[(self.header.entity_size - 1) * self.header.capacity + index]);
+                self.header.len -= 1;
+                @ptrCast(*bool, &self.data[(self.header.entity_size - 1) * self.header.capacity + index]).* = false;
             }
 
             // TODO: usize as index?
@@ -192,8 +202,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     self.entities[top] = .{
                         .generation = 0,
                         // TODO: ...
-                        .page = undefined,
-                        .index_in_page = undefined,
+                        .location = undefined,
                     };
                     break :index @intCast(EntityIndex, top);
                 } else {
@@ -201,34 +210,55 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
             };
 
-            // TODO: don't ignore errors here...just trying things out
-            // TODO: allocate pages up front in pool when possible
-            // Find or allocate a page for this entity
             var archetype = @This().getArchetype(@TypeOf(entity));
-            var entry = self.pageLists.getOrPut(
-                std.heap.page_allocator,
-                archetype,
-            ) catch unreachable;
-            if (!entry.found_existing) {
-                var page = (std.heap.page_allocator.create(Page) catch unreachable);
-                page.init(archetype);
-                self.pagePool.append(std.heap.page_allocator, page) catch unreachable;
-                entry.value_ptr.* = page;
-            }
 
-            // TODO: assumes there's room in this page for now, never creates a new one
-            // TODO: cache array lookup?
-            // Populate the entity
-            self.entities[index].index_in_page = entry.value_ptr.*.createEntity().?;
-            self.entities[index].page = entry.value_ptr.*;
+            // TODO: don't ignore errors in this function...just trying things out
+            // Get the page list for this archetype
+            var pageListCurrent: *Page = page: {
+                // TODO: allocate pages up front in pool when possible
+                // Find or allocate a page for this entity
+                var entry = self.pageLists.getOrPut(
+                    std.heap.page_allocator,
+                    archetype,
+                ) catch unreachable;
+                if (!entry.found_existing) {
+                    var head = (std.heap.page_allocator.create(Page) catch unreachable);
+                    head.init(archetype);
+                    self.pagePool.append(std.heap.page_allocator, head) catch unreachable;
+                    entry.value_ptr.* = head;
+                }
+                break :page entry.value_ptr.*;
+            };
 
+            // TODO: ideally use an intenal free list ine ach, at least store the current size though!
+            // Iterate over the page list until we find one with space for a new entity, and then
+            // create the entity there
+            self.entities[index].location = while (true) {
+                if (pageListCurrent.createEntity()) |index_in_page| {
+                    break EntityLocation{
+                        .page = pageListCurrent,
+                        .index_in_page = index_in_page,
+                    };
+                }
+
+                if (pageListCurrent.header.next == null) {
+                    // XXX: dup init code...
+                    var newPage = (std.heap.page_allocator.create(Page) catch unreachable);
+                    newPage.init(archetype);
+                    self.pagePool.append(std.heap.page_allocator, newPage) catch unreachable;
+                    pageListCurrent.header.next = newPage;
+                }
+
+                pageListCurrent = pageListCurrent.header.next.?;
+            };
+
+            // Initialize the new entity
             // TODO: loop fastest or can cache math?
             // TODO: error handling for fields that don't match...
-            var page: *Page = entry.value_ptr.*;
             inline for (std.meta.fields(@TypeOf(entity))) |f| {
-                page.getComponent(
+                pageListCurrent.getComponent(
                     @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?),
-                    self.entities[index].index_in_page,
+                    self.entities[index].location.index_in_page,
                 ).* = @field(entity, f.name);
             }
 
@@ -259,7 +289,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: dup index?
             // TODO: have a setter and assert not already set? or just add assert?
             // Unset the exists bit
-            self.entities[entity.index].page.getExists(self.entities[entity.index].index_in_page).* = false;
+            self.entities[entity.index].location.page.remove(self.entities[entity.index].location.index_in_page);
 
             // Increment this entity slot's generation so future uses will fail
             self.entities[entity.index].generation +%= 1;
@@ -289,10 +319,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // TODO: repeatedly searching for index of type...store as that.. or doesn't matter cause comptime?
             var slot = self.entities[entity.index];
-            if (!Archetype.subsetOf(@This().componentMask_(component), slot.page.header.archetype)) {
+            if (!Archetype.subsetOf(@This().componentMask_(component), slot.location.page.header.archetype)) {
                 return null;
             }
-            return slot.page.getComponent(component, slot.index_in_page);
+            return slot.location.page.getComponent(component, slot.location.index_in_page);
         }
 
         // TODO: const vs non const?
@@ -342,58 +372,58 @@ pub fn Entities(comptime componentTypes: anytype) type {
 }
 
 // TODO: put back once we can make multiple pages...
-// test "limits" {
-//     // The max entity id should be considered invalid
-//     std.debug.assert(max_entities < std.math.maxInt(EntityIndex));
+test "limits" {
+    // The max entity id should be considered invalid
+    std.debug.assert(max_entities < std.math.maxInt(EntityIndex));
 
-//     var entities = try Entities(.{}).init();
-//     defer entities.deinit();
-//     var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
-//     defer created.deinit();
+    var entities = try Entities(.{}).init();
+    defer entities.deinit();
+    var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
+    defer created.deinit();
 
-//     // Add the max number of entities
-//     {
-//         var i: EntityIndex = 0;
-//         while (i < max_entities) : (i += 1) {
-//             const entity = entities.createEntity(.{});
-//             try std.testing.expectEqual(EntityHandle{ .index = i, .generation = 0 }, entity);
-//             try created.append(entity);
-//         }
-//         try std.testing.expect(entities.createEntityChecked(.{}) == null);
-//     }
+    // Add the max number of entities
+    {
+        var i: EntityIndex = 0;
+        while (i < max_entities) : (i += 1) {
+            const entity = entities.createEntity(.{});
+            try std.testing.expectEqual(EntityHandle{ .index = i, .generation = 0 }, entity);
+            try created.append(entity);
+        }
+        try std.testing.expect(entities.createEntityChecked(.{}) == null);
+    }
 
-//     // Remove all the entities
-//     {
-//         var i: EntityIndex = max_entities - 1;
-//         while (true) {
-//             entities.removeEntity(created.items[i]);
-//             if (i == 0) break else i -= 1;
-//         }
-//     }
+    // Remove all the entities
+    {
+        var i: EntityIndex = max_entities - 1;
+        while (true) {
+            entities.removeEntity(created.items[i]);
+            if (i == 0) break else i -= 1;
+        }
+    }
 
-//     // Create a bunch of entities again
-//     {
-//         var i: EntityIndex = 0;
-//         while (i < max_entities) : (i += 1) {
-//             try std.testing.expectEqual(
-//                 EntityHandle{ .index = i, .generation = 1 },
-//                 entities.createEntity(.{}),
-//             );
-//         }
-//         try std.testing.expect(entities.createEntityChecked(.{}) == null);
-//     }
+    // Create a bunch of entities again
+    {
+        var i: EntityIndex = 0;
+        while (i < max_entities) : (i += 1) {
+            try std.testing.expectEqual(
+                EntityHandle{ .index = i, .generation = 1 },
+                entities.createEntity(.{}),
+            );
+        }
+        try std.testing.expect(entities.createEntityChecked(.{}) == null);
+    }
 
-//     // Wrap a generation counter
-//     {
-//         var entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
-//         entities.entities[entity.index].generation = entity.generation;
-//         entities.removeEntity(entity);
-//         try std.testing.expectEqual(
-//             EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
-//             entities.createEntity(.{}),
-//         );
-//     }
-// }
+    // Wrap a generation counter
+    {
+        var entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
+        entities.entities[entity.index].generation = entity.generation;
+        entities.removeEntity(entity);
+        try std.testing.expectEqual(
+            EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
+            entities.createEntity(.{}),
+        );
+    }
+}
 
 // TODO: test the page indices too?
 test "free list" {
@@ -405,10 +435,10 @@ test "free list" {
     const entity_2_0 = entities.createEntity(.{});
     const entity_3_0 = entities.createEntity(.{});
 
-    try std.testing.expectEqual(entities.entities[entity_0_0.index].index_in_page, 0);
+    try std.testing.expectEqual(entities.entities[entity_0_0.index].location.index_in_page, 0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
     entities.removeEntity(entity_1_0);
-    try std.testing.expectEqual(entities.entities[entity_3_0.index].index_in_page, 3);
+    try std.testing.expectEqual(entities.entities[entity_3_0.index].location.index_in_page, 3);
     try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 0 }, entity_3_0);
     entities.removeEntity(entity_3_0);
 
@@ -416,11 +446,11 @@ test "free list" {
     const entity_1_1 = entities.createEntity(.{});
     const entity_4_0 = entities.createEntity(.{});
 
-    try std.testing.expectEqual(entities.entities[entity_0_0.index].index_in_page, 0);
-    try std.testing.expectEqual(entities.entities[entity_2_0.index].index_in_page, 2);
-    try std.testing.expectEqual(entities.entities[entity_3_1.index].index_in_page, 1);
-    try std.testing.expectEqual(entities.entities[entity_1_1.index].index_in_page, 3);
-    try std.testing.expectEqual(entities.entities[entity_4_0.index].index_in_page, 4);
+    try std.testing.expectEqual(entities.entities[entity_0_0.index].location.index_in_page, 0);
+    try std.testing.expectEqual(entities.entities[entity_2_0.index].location.index_in_page, 2);
+    try std.testing.expectEqual(entities.entities[entity_3_1.index].location.index_in_page, 1);
+    try std.testing.expectEqual(entities.entities[entity_1_1.index].location.index_in_page, 3);
+    try std.testing.expectEqual(entities.entities[entity_4_0.index].location.index_in_page, 4);
 
     try std.testing.expectEqual(EntityHandle{ .index = 0, .generation = 0 }, entity_0_0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
@@ -464,8 +494,7 @@ test "random data" {
     var truth = std.ArrayList(Created).init(std.testing.allocator);
     defer truth.deinit();
 
-    // TODO: is gonna fail cause we don't have multiple pages yet! but should work for smaller numbers right?
-    for (0..3681) |_| {
+    for (0..5000) |_| {
         switch (rnd.random().enumValue(enum { create, modify, destroy })) {
             .create => {
                 for (0..rnd.random().uintLessThan(usize, 10)) |_| {
