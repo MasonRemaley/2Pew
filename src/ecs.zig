@@ -68,10 +68,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // TODO: pack this tightly, cache right data
         const PageHeader = struct {
             next: ?*Page,
+            prev: ?*Page,
             archetype: Archetype,
             capacity: EntityIndex,
             entity_size: usize,
             len: usize,
+        };
+        const PageList = struct {
+            head: *Page,
+            tail: *Page,
         };
         // TODO: make sure exactly one page size, make sure ordered correctly, may need to store everything
         // in byte array
@@ -92,12 +97,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         entity_size += @sizeOf(component.type);
                     }
                 }
-                // TODO: okay to access len here?
                 const capacity = @intCast(EntityIndex, self.data.len / entity_size);
 
                 self.* = Page{
                     .header = .{
                         .next = null,
+                        .prev = null,
                         .archetype = archetype,
                         .capacity = capacity,
                         .entity_size = entity_size,
@@ -110,10 +115,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: should probably have an internal free list to accelerate this
             // TODO: make sure this cast is always safe at comptime?
             // TODO: return type
-            fn createEntity(self: *@This()) ?EntityIndex {
-                if (self.header.len >= self.header.capacity) {
-                    return null;
-                }
+            fn createEntity(self: *@This()) EntityIndex {
                 // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
                 const start = (self.header.entity_size - 1) * self.header.capacity;
                 for (self.data[start..(start + self.header.capacity)], 0..) |*b, i| {
@@ -124,14 +126,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         return @intCast(EntityIndex, i);
                     }
                 }
+                // TODO: restructure so this assertions is checked at the beginning of this call again by having it return null?
                 unreachable;
             }
 
             // TODO: i was previously thinking i needed a reference to the handle here--is that correct or no? maybe
             // required for the iterator?
-            fn remove(self: *Page, index: usize) void {
-                // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
+            fn removeEntity(self: *Page, index: usize) void {
                 self.header.len -= 1;
+                // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
                 @ptrCast(*bool, &self.data[(self.header.entity_size - 1) * self.header.capacity + index]).* = false;
             }
 
@@ -152,15 +155,17 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
         };
 
-        entities: []EntitySlot,
+        slots: []EntitySlot,
         free: []EntityIndex,
         // TODO: better way to allocate this..? should we even be using the hashmap here?
         pagePool: ArrayListUnmanaged(*Page),
-        pageLists: AutoArrayHashMapUnmanaged(Archetype, *Page),
+        // Ordered so that pages with space available are always at the front.
+        pageLists: AutoArrayHashMapUnmanaged(Archetype, PageList),
 
         fn init() !@This() {
             return .{
-                .entities = entities: {
+                .slots = entities: {
+                    // TODO: if we're gonna use a page allocator for array lists...always set to multiples of a page
                     var entities = try std.heap.page_allocator.alloc(EntitySlot, max_entities);
                     entities.len = 0;
                     break :entities entities;
@@ -177,7 +182,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         fn deinit(self: *@This()) void {
-            std.heap.page_allocator.free(self.entities);
+            std.heap.page_allocator.free(self.slots);
             std.heap.page_allocator.free(self.free);
             self.pageLists.deinit(std.heap.page_allocator);
             for (self.pagePool.items) |page| {
@@ -187,6 +192,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         fn createEntityChecked(self: *@This(), entity: anytype) ?EntityHandle {
+            // Determine the archetype of this entity
+            comptime var archetype = Archetype.initEmpty();
+            // TODO: why is comptime block required here?
+            comptime {
+                inline for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
+                    archetype.set(std.meta.fieldIndex(Entity, fieldName).?);
+                }
+            }
+
             // Find a free index for the entity
             const index = index: {
                 if (self.free.len > 0) {
@@ -195,11 +209,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     const index = self.free[top];
                     self.free.len = top;
                     break :index index;
-                } else if (self.entities.len < max_entities) {
+                } else if (self.slots.len < max_entities) {
                     // Add a new entity to the end of the list
-                    const top = self.entities.len;
-                    self.entities.len += 1;
-                    self.entities[top] = .{
+                    const top = self.slots.len;
+                    self.slots.len += 1;
+                    self.slots[top] = .{
                         .generation = 0,
                         // TODO: ...
                         .location = undefined,
@@ -210,11 +224,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
             };
 
-            var archetype = @This().getArchetype(@TypeOf(entity));
-
             // TODO: don't ignore errors in this function...just trying things out
             // Get the page list for this archetype
-            var pageListCurrent: *Page = page: {
+            var pageList: *PageList = page: {
                 // TODO: allocate pages up front in pool when possible
                 // Find or allocate a page for this entity
                 var entry = self.pageLists.getOrPut(
@@ -225,47 +237,60 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     var head = (std.heap.page_allocator.create(Page) catch unreachable);
                     head.init(archetype);
                     self.pagePool.append(std.heap.page_allocator, head) catch unreachable;
-                    entry.value_ptr.* = head;
-                }
-                break :page entry.value_ptr.*;
-            };
-
-            // TODO: ideally use an intenal free list ine ach, at least store the current size though!
-            // Iterate over the page list until we find one with space for a new entity, and then
-            // create the entity there
-            self.entities[index].location = while (true) {
-                if (pageListCurrent.createEntity()) |index_in_page| {
-                    break EntityLocation{
-                        .page = pageListCurrent,
-                        .index_in_page = index_in_page,
+                    entry.value_ptr.* = .{
+                        .head = head,
+                        // TODO: do we ever use tail?
+                        .tail = head,
                     };
                 }
-
-                if (pageListCurrent.header.next == null) {
-                    // XXX: dup init code...
-                    var newPage = (std.heap.page_allocator.create(Page) catch unreachable);
-                    newPage.init(archetype);
-                    self.pagePool.append(std.heap.page_allocator, newPage) catch unreachable;
-                    pageListCurrent.header.next = newPage;
-                }
-
-                pageListCurrent = pageListCurrent.header.next.?;
+                break :page entry.value_ptr;
             };
+
+            // If the head does not have space, create a new head that has space
+            if (pageList.head.header.len == pageList.head.header.capacity) {
+                // XXX: dup init code...
+                var newPage = (std.heap.page_allocator.create(Page) catch unreachable);
+                newPage.init(archetype);
+                self.pagePool.append(std.heap.page_allocator, newPage) catch unreachable;
+                newPage.header.next = pageList.head;
+                pageList.head = newPage;
+                pageList.head.header.next.?.header.prev = pageList.head;
+            }
+            const page = pageList.head;
+
+            // Create a new entity
+            self.slots[index].location = EntityLocation{
+                .page = page,
+                .index_in_page = page.createEntity(),
+            };
+
+            // If the page is now full, move it to the end of the page list
+            if (page.header.len == page.header.capacity) {
+                if (page.header.next) |next| {
+                    // Remove page from the list
+                    pageList.head = next;
+
+                    // Insert page at the end of the list
+                    pageList.tail.header.next = page;
+                    page.header.prev = pageList.tail;
+                    pageList.tail = page;
+                }
+            }
 
             // Initialize the new entity
             // TODO: loop fastest or can cache math?
             // TODO: error handling for fields that don't match...
             inline for (std.meta.fields(@TypeOf(entity))) |f| {
-                pageListCurrent.getComponent(
+                page.getComponent(
                     @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?),
-                    self.entities[index].location.index_in_page,
+                    self.slots[index].location.index_in_page,
                 ).* = @field(entity, f.name);
             }
 
             // Return a handle to the entity
             return EntityHandle{
                 .index = index,
-                .generation = self.entities[index].generation,
+                .generation = self.slots[index].generation,
             };
         }
 
@@ -276,23 +301,41 @@ pub fn Entities(comptime componentTypes: anytype) type {
         fn removeEntityChecked(self: *@This(), entity: EntityHandle) !void {
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
-            if (entity.index >= self.entities.len) {
+            if (entity.index >= self.slots.len) {
                 return error.BadIndex;
             }
-            if (self.entities[entity.index].generation != entity.generation) {
+            if (self.slots[entity.index].generation != entity.generation) {
                 return error.BadGeneration;
             }
             if (self.free.len == max_entities) {
                 return error.FreelistFull;
             }
 
+            // TODO: use const in more places--not transitive through ptrs right?
             // TODO: dup index?
             // TODO: have a setter and assert not already set? or just add assert?
-            // Unset the exists bit
-            self.entities[entity.index].location.page.remove(self.entities[entity.index].location.index_in_page);
+            // Unset the exists bit, and reorder the page
+            const page = self.slots[entity.index].location.page;
+            page.removeEntity(self.slots[entity.index].location.index_in_page);
+            const pageList: *PageList = self.pageLists.getPtr(page.header.archetype).?;
+
+            // Move the page to the front of the page list
+            if (pageList.head != page) {
+                // Remove the page from the list
+                if (page.header.prev) |prev| {
+                    prev.header.next = page.header.next;
+                }
+                if (page.header.next) |next| {
+                    next.header.prev = page.header.prev;
+                }
+
+                // Reinsert it at head
+                page.header.next = pageList.head;
+                pageList.head = page;
+            }
 
             // Increment this entity slot's generation so future uses will fail
-            self.entities[entity.index].generation +%= 1;
+            self.slots[entity.index].generation +%= 1;
 
             // Add the entity to the free list
             const top = self.free.len;
@@ -310,68 +353,26 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: dup code, dup index
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
-            if (entity.index >= self.entities.len) {
+            if (entity.index >= self.slots.len) {
                 return error.BadIndex;
             }
-            if (self.entities[entity.index].generation != entity.generation) {
+            if (self.slots[entity.index].generation != entity.generation) {
                 return error.BadGeneration;
             }
 
-            // TODO: repeatedly searching for index of type...store as that.. or doesn't matter cause comptime?
-            var slot = self.entities[entity.index];
-            if (!Archetype.subsetOf(@This().componentMask_(component), slot.location.page.header.archetype)) {
+            var slot = self.slots[entity.index];
+            if (!slot.location.page.header.archetype.isSet(@enumToInt(component))) {
                 return null;
             }
             return slot.location.page.getComponent(component, slot.location.index_in_page);
         }
 
-        // TODO: const vs non const?
         pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: std.meta.FieldEnum(Entity)) ?*std.meta.fieldInfo(Entity, component).type {
             return self.getComponentChecked(entity, component) catch unreachable;
-        }
-
-        // TODO: ...
-        fn componentMask_(comptime component: std.meta.FieldEnum(Entity)) Archetype {
-            var mask = Archetype.initEmpty();
-            mask.set(@enumToInt(component));
-            return mask;
-        }
-        fn componentMask(comptime component: []const u8) Archetype {
-            // TODO: comptime blocks necessary?
-            comptime {
-                if (std.meta.fieldIndex(Entity, component)) |i| {
-                    var mask = Archetype.initEmpty();
-                    mask.set(i);
-                    return mask;
-                }
-                @compileError("component '" ++ component ++ "' not registered");
-            }
-        }
-
-        fn componentType(comptime component: []const u8) type {
-            comptime {
-                inline for (std.meta.fields(Entity)) |c| {
-                    if (std.mem.eql(u8, c.name, component)) {
-                        return c.type;
-                    }
-                }
-                @compileError("component '" ++ component ++ "' not registered");
-            }
-        }
-
-        fn getArchetype(comptime Components: type) Archetype {
-            comptime {
-                var result = Archetype.initEmpty();
-                inline for (std.meta.fields(Components)) |component| {
-                    result = result.unionWith(componentMask(component.name));
-                }
-                return result;
-            }
         }
     };
 }
 
-// TODO: put back once we can make multiple pages...
 test "limits" {
     // The max entity id should be considered invalid
     std.debug.assert(max_entities < std.math.maxInt(EntityIndex));
@@ -416,7 +417,7 @@ test "limits" {
     // Wrap a generation counter
     {
         var entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
-        entities.entities[entity.index].generation = entity.generation;
+        entities.slots[entity.index].generation = entity.generation;
         entities.removeEntity(entity);
         try std.testing.expectEqual(
             EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
@@ -435,10 +436,10 @@ test "free list" {
     const entity_2_0 = entities.createEntity(.{});
     const entity_3_0 = entities.createEntity(.{});
 
-    try std.testing.expectEqual(entities.entities[entity_0_0.index].location.index_in_page, 0);
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].location.index_in_page, 0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
     entities.removeEntity(entity_1_0);
-    try std.testing.expectEqual(entities.entities[entity_3_0.index].location.index_in_page, 3);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].location.index_in_page, 3);
     try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 0 }, entity_3_0);
     entities.removeEntity(entity_3_0);
 
@@ -446,11 +447,11 @@ test "free list" {
     const entity_1_1 = entities.createEntity(.{});
     const entity_4_0 = entities.createEntity(.{});
 
-    try std.testing.expectEqual(entities.entities[entity_0_0.index].location.index_in_page, 0);
-    try std.testing.expectEqual(entities.entities[entity_2_0.index].location.index_in_page, 2);
-    try std.testing.expectEqual(entities.entities[entity_3_1.index].location.index_in_page, 1);
-    try std.testing.expectEqual(entities.entities[entity_1_1.index].location.index_in_page, 3);
-    try std.testing.expectEqual(entities.entities[entity_4_0.index].location.index_in_page, 4);
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].location.index_in_page, 0);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].location.index_in_page, 2);
+    try std.testing.expectEqual(entities.slots[entity_3_1.index].location.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_1_1.index].location.index_in_page, 3);
+    try std.testing.expectEqual(entities.slots[entity_4_0.index].location.index_in_page, 4);
 
     try std.testing.expectEqual(EntityHandle{ .index = 0, .generation = 0 }, entity_0_0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
@@ -596,3 +597,5 @@ test "random data" {
 // - fast & convenient iteration
 // - const/non const or no?
 // - adding/removing components to live entities
+// - tests for page free lists?
+//   - assert that at each step they're sorted correctly?
