@@ -1,5 +1,6 @@
 const std = @import("std");
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const builtin = @import("builtin");
 
 const max_entities: EntityIndex = 1000000;
@@ -13,89 +14,132 @@ const track_generation = switch (builtin.mode) {
 
 const EntityGeneration = if (track_generation) u32 else u0;
 
-// XXX: pack and use all bits?
+// TODO: pack this tightly
 pub const EntityHandle = struct {
     generation: EntityGeneration,
     index: EntityIndex,
 };
 
-const EntitySlot = struct {
-    generation: EntityGeneration,
-};
+fn compareFieldAlignment(_: void, comptime lhs: std.builtin.Type.StructField, comptime rhs: std.builtin.Type.StructField) bool {
+    return @alignOf(lhs.type) > @alignOf(rhs.type);
+}
 
 pub fn Entities(comptime RegisteredComponents: type) type {
+    // TODO: just store field list?
+    comptime var Entity = entity: {
+        var fields: [@typeInfo(RegisteredComponents).Struct.fields.len]std.builtin.Type.StructField = undefined;
+        inline for (@typeInfo(RegisteredComponents).Struct.fields, 0..) |registered, i| {
+            fields[i] = std.builtin.Type.StructField{
+                .name = registered.name,
+                .type = registered.type,
+                .default_value = null,
+                .is_comptime = false,
+                .alignment = @alignOf(registered.type),
+            };
+        }
+        std.sort.sort(std.builtin.Type.StructField, &fields, {}, compareFieldAlignment);
+        break :entity @Type(std.builtin.Type{
+            .Struct = std.builtin.Type.Struct{
+                .layout = .Auto,
+                .backing_integer = null,
+                .fields = &fields,
+                .decls = &[_]std.builtin.Type.Declaration{},
+                .is_tuple = false,
+            },
+        });
+    };
     return struct {
-        const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(RegisteredComponents).Struct.fields.len);
+        const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
+
+        // TODO: pack this tightly, maybe use index instead of ptr for page
+        const EntitySlot = struct {
+            generation: EntityGeneration,
+            page: *Page,
+            index_in_page: u32,
+        };
+
+        // TODO: pack this tightly, cache right data
         const PageHeader = struct {
-            next: ?*anyopaque = null,
+            next: ?*Page,
+            archetype: Archetype,
+            capacity: EntityIndex,
+            entity_size: usize,
+        };
+        // TODO: make sure exactly one page size, make sure ordered correctly, may need to store everything
+        // in byte array
+        // TODO: comptime make sure capacity large enough even if all components used at once?
+        const Page = struct {
+            data: [std.mem.page_size - @sizeOf(PageHeader)]u8 align(std.mem.page_size),
+            header: PageHeader,
+
+            fn init(self: *Page, archetype: Archetype) void {
+                // Calculate the space one entity takes up. No space is wasted due to padding, since
+                // the data field is page aligned and the components are sorted from largest
+                // alignment to smallest.
+                var entity_size: usize = 0;
+                entity_size += 1; // One byte for the existence flag
+                inline for (@typeInfo(Entity).Struct.fields, 0..) |registered, i| {
+                    if (archetype.isSet(i)) {
+                        entity_size += @sizeOf(registered.type);
+                    }
+                }
+                // TODO: okay to access len here?
+                const capacity = @intCast(EntityIndex, self.data.len / entity_size);
+
+                self.* = Page{
+                    .header = .{
+                        .next = null,
+                        .archetype = archetype,
+                        .capacity = capacity,
+                        .entity_size = entity_size,
+                    },
+                    .data = undefined,
+                };
+            }
+
+            // TODO: maybe have an internal free list or such to accelerate this and early out when it's full etc
+            // TODO: make sure this cast is always safe at comptime?
+            // TODO: return type
+            fn createEntity(self: *@This()) ?EntityIndex {
+                // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
+                const start = (self.header.entity_size - 1) * self.header.capacity;
+                for (self.data[start..], 0..) |*b, i| {
+                    if (!@ptrCast(*bool, b).*) {
+                        return @intCast(EntityIndex, i);
+                    }
+                }
+                return null;
+            }
+
+            // TODO: i was previously thinking i needed a reference to the handle here--is that correct or no? maybe
+            // required for the iterator?
+            fn getExists(self: *Page, index: usize) *bool {
+                // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
+                return @ptrCast(*bool, &self.data[(self.header.entity_size - 1) * self.header.capacity + index]);
+            }
+
+            // TODO: usize as index?
+            fn getComponent(self: *Page, comptime component: anytype, index: usize) *Entities(RegisteredComponents).componentType(component) {
+                const Component = Entities(RegisteredComponents).componentType(component);
+                var ptr: usize = 0;
+                inline for (@typeInfo(Entity).Struct.fields, 0..) |registered, i| {
+                    if (self.header.archetype.isSet(i)) {
+                        if (std.mem.eql(u8, registered.name, component)) {
+                            ptr += index * @sizeOf(registered.type);
+                            return @ptrCast(*Component, @alignCast(@alignOf(Component), &self.data[ptr]));
+                        }
+                        ptr += @sizeOf(registered.type) * self.header.capacity;
+                    }
+                }
+                unreachable;
+            }
         };
 
         entities: []EntitySlot,
         free: []EntityIndex,
-        // XXX: better way to allocate this..? should we even be using the hashmap here?
-        pageLists: AutoArrayHashMapUnmanaged(Archetype, *anyopaque),
-
-        // XXX: maybe make helpers that convert between the various reprs..?
-        // XXX: naming of arg..?
-        // XXX: how does allocation/stack space/etc work during comptime?
-        fn Page(comptime EntityUnordered: type) type {
-            const Entity = Entity: {
-                comptime var fields: [@typeInfo(EntityUnordered).Struct.fields.len]std.builtin.Type.StructField = undefined;
-                comptime var i = 0;
-                inline for (@typeInfo(RegisteredComponents).Struct.fields) |registered| {
-                    inline for (@typeInfo(EntityUnordered).Struct.fields) |component| {
-                        if (std.mem.eql(u8, component.name, registered.name)) {
-                            fields[i] = std.builtin.Type.StructField{
-                                .name = registered.name,
-                                .type = registered.type,
-                                .default_value = null,
-                                .is_comptime = false,
-                                .alignment = @alignOf(registered.type),
-                            };
-                            i += 1;
-                            break;
-                        }
-                    }
-                }
-                if (i < fields.len) {
-                    // XXX: give better error, also prevent writing TOO MANY somehow etc or not possible?
-                    @compileError("not all fields found");
-                }
-                break :Entity @Type(std.builtin.Type{
-                    .Struct = std.builtin.Type.Struct{
-                        .layout = .Auto,
-                        .backing_integer = null,
-                        .fields = &fields,
-                        .decls = &[_]std.builtin.Type.Declaration{},
-                        .is_tuple = false,
-                    },
-                });
-            };
-
-            // Create the page type
-            const PageType = struct {
-                header: PageHeader,
-                entities: [std.mem.page_size - @sizeOf(PageHeader)]?Entity,
-
-                // XXX: maybe have an internal free list or such to accelerate this and early out when it's full etc
-                // XXX: make sure this cast is always safe at comptime?
-                fn createEntity(self: *@This()) ?u16 {
-                    for (self.entities, 0..) |entity, i| {
-                        if (entity) |_| {
-                            return @intCast(u16, i);
-                        }
-                    }
-                    return null;
-                }
-            };
-
-            // XXX: is there some better way to set the entities size so this always works..?
-            // // Make sure it's the right size, and then return it
-            // if (@sizeOf(PageType) != std.mem.page_size) {
-            //     @compileError("unreachable: Page struct is of wrong size");
-            // }
-            return PageType;
-        }
+        // TODO: better way to allocate this..? should we even be using the hashmap here?
+        pagePool: ArrayListUnmanaged(*Page),
+        pageLists: AutoArrayHashMapUnmanaged(Archetype, *Page),
 
         fn init() !@This() {
             return .{
@@ -110,6 +154,8 @@ pub fn Entities(comptime RegisteredComponents: type) type {
                     break :free free;
                 },
                 .pageLists = .{},
+                // TODO: init capacity? not actually really pooling these yet just accumulating them
+                .pagePool = .{},
             };
         }
 
@@ -117,7 +163,10 @@ pub fn Entities(comptime RegisteredComponents: type) type {
             std.heap.page_allocator.free(self.entities);
             std.heap.page_allocator.free(self.free);
             self.pageLists.deinit(std.heap.page_allocator);
-            // XXX: actually free the pages...
+            for (self.pagePool.items) |page| {
+                std.heap.page_allocator.destroy(page);
+            }
+            self.pagePool.deinit(std.heap.page_allocator);
         }
 
         fn createEntityChecked(self: *@This(), entity: anytype) ?EntityHandle {
@@ -135,6 +184,9 @@ pub fn Entities(comptime RegisteredComponents: type) type {
                     self.entities.len += 1;
                     self.entities[top] = .{
                         .generation = 0,
+                        // TODO: ...
+                        .page = undefined,
+                        .index_in_page = undefined,
                     };
                     break :index @intCast(EntityIndex, top);
                 } else {
@@ -142,25 +194,32 @@ pub fn Entities(comptime RegisteredComponents: type) type {
                 }
             };
 
-            // XXX: don't ignore errors here...just trying things out
-            // XXX: allocate pages up front in pool when possible?
+            // TODO: don't ignore errors here...just trying things out
+            // TODO: allocate pages up front in pool when possible
             // Find or allocate a page for this entity
+            var archetype = @This().getArchetype(@TypeOf(entity));
             var entry = self.pageLists.getOrPut(
                 std.heap.page_allocator,
-                @This().archetype(entity),
+                archetype,
             ) catch unreachable;
             if (!entry.found_existing) {
-                entry.value_ptr.* = std.heap.page_allocator.create(Page(@TypeOf(entity))) catch unreachable;
+                var page = (std.heap.page_allocator.create(Page) catch unreachable);
+                page.init(archetype);
+                self.pagePool.append(std.heap.page_allocator, page) catch unreachable;
+                entry.value_ptr.* = page;
             }
-            const page: *Page(@TypeOf(entity)) = @ptrCast(*Page(@TypeOf(entity)), @alignCast(@alignOf(*Page(@TypeOf(entity))), entry.value_ptr.*));
 
-            // XXX: assumes there's room in this page for now, never creates a new one
+            // TODO: assumes there's room in this page for now, never creates a new one
+            // TODO: cache array lookup?
             // Populate the entity
-            const indexInPage = page.createEntity() orelse unreachable;
-            // XXX: rename to entity
-            page.entities[indexInPage] = entity;
-            // XXX: now we wanna also store the indexinpage, as well as the page, on the entityslot
-            // so that we can look it back up later in a getComponents call or such!
+            self.entities[index].index_in_page = entry.value_ptr.*.createEntity() orelse unreachable;
+            self.entities[index].page = entry.value_ptr.*;
+
+            // TODO: loop fastest or can cache math?
+            var page: *Page = entry.value_ptr.*;
+            inline for (@typeInfo(@TypeOf(entity)).Struct.fields) |f| {
+                page.getComponent(f.name, 0).* = @field(entity, f.name);
+            }
 
             // Return a handle to the entity
             return EntityHandle{
@@ -200,10 +259,35 @@ pub fn Entities(comptime RegisteredComponents: type) type {
             self.removeEntityChecked(entity) catch unreachable;
         }
 
-        // XXX: wait type ids are a thing? do we even need this?
+        // TODO: allow getting multiple at once?
+        // TODO: check assertions
+        fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: anytype) !?*@This().componentType(component) {
+            // TODO: dup code, dup index
+            // Check that the entity is valid. These should be assertions, but I've made them error
+            // codes for easier unit testing.
+            if (entity.index >= self.entities.len) {
+                return error.BadIndex;
+            }
+            if (self.entities[entity.index].generation != entity.generation) {
+                return error.BadGeneration;
+            }
+
+            // TODO: repeatedly searching for index of type...store as that.. or doesn't matter cause comptime?
+            var slot = self.entities[entity.index];
+            if (!Archetype.subsetOf(@This().componentMask(component), slot.page.header.archetype)) {
+                return null;
+            }
+            return slot.page.getComponent(component, slot.index_in_page);
+        }
+
+        // TODO: const vs non const?
+        pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: anytype) ?*@This().componentType(component) {
+            return self.getComponentChecked(entity, component) catch unreachable;
+        }
+
         fn componentMask(comptime component: []const u8) Archetype {
             comptime {
-                inline for (@typeInfo(RegisteredComponents).Struct.fields, 0..) |c, i| {
+                inline for (@typeInfo(Entity).Struct.fields, 0..) |c, i| {
                     if (std.mem.eql(u8, c.name, component)) {
                         var mask = Archetype.initEmpty();
                         mask.set(i);
@@ -216,8 +300,8 @@ pub fn Entities(comptime RegisteredComponents: type) type {
 
         fn componentType(comptime component: []const u8) type {
             comptime {
-                // XXX: use std.meta.fields instead?
-                inline for (@typeInfo(RegisteredComponents).Struct.fields) |c| {
+                // TODO: use std.meta.fields instead?
+                inline for (@typeInfo(Entity).Struct.fields) |c| {
                     if (std.mem.eql(u8, c.name, component)) {
                         return c.type;
                     }
@@ -226,10 +310,10 @@ pub fn Entities(comptime RegisteredComponents: type) type {
             }
         }
 
-        fn archetype(components: anytype) Archetype {
+        fn getArchetype(comptime components: type) Archetype {
             comptime {
                 var result = Archetype.initEmpty();
-                inline for (@typeInfo(@TypeOf(components)).Struct.fields) |component| {
+                inline for (@typeInfo(components).Struct.fields) |component| {
                     result = result.unionWith(componentMask(component.name));
                 }
                 return result;
@@ -333,7 +417,7 @@ test "archetype masks" {
     var entities = try Entities(struct { x: u8, y: u8 }).init();
     defer entities.deinit();
 
-    // XXX: ...
+    // TODO: ...
     // var archetype = @TypeOf(entities).Archetype.initEmpty();
     // try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{}));
     // try std.testing.expect(!archetype.eql(comptime @TypeOf(entities).archetype(.{ .y = u8 })));
@@ -355,4 +439,63 @@ test "archetype masks" {
     // };
     _ = entities.createEntity(.{ .x = 1, .y = 2 });
     _ = entities.createEntity(.{ .y = 1, .x = 2 });
+}
+
+// // TODO: hmm this should be failing..why isn't it? we've commented out the code that actually does
+// // the calculations
+// fn testSizeAlignment(entities: anytype, comptime entity: type) !void {
+//     try std.testing.expectEqual(
+//         @TypeOf(entities).archetypeSizeAlignment(@TypeOf(entities).getArchetype(entity)).size,
+//         @sizeOf(entity),
+//     );
+//     try std.testing.expectEqual(
+//         @TypeOf(entities).archetypeSizeAlignment(@TypeOf(entities).getArchetype(entity)).alignment,
+//         @alignOf(entity),
+//     );
+// }
+
+// test "archetype size alignment" {
+//     var entities = try Entities(struct { x: u8, y: u32, z: u16 }).init();
+//     defer entities.deinit();
+
+//     // TODO: okay I'm seeing the advantages of the aabbb layout, wastes less space on padding
+//     try testSizeAlignment(entities, extern struct { x: u8 });
+//     try testSizeAlignment(entities, extern struct { y: u32 });
+//     try testSizeAlignment(entities, extern struct { z: u16 });
+//     try testSizeAlignment(entities, extern struct { x: u8, y: u32 });
+//     try testSizeAlignment(entities, extern struct { x: u8, z: u16 });
+//     try testSizeAlignment(entities, extern struct { y: u32, z: u16 });
+//     try testSizeAlignment(entities, extern struct { x: u8, y: u32, z: u16 });
+// }
+
+// TODO: ...
+test "page" {
+    var entities = try Entities(struct { x: u32, y: u8, z: u16 }).init();
+    defer entities.deinit();
+
+    const Page = @TypeOf(entities).Page;
+
+    var page = Page.init(@TypeOf(entities).getArchetype(struct { x: u32, z: u16 }));
+    for (0..page.header.capacity) |i| {
+        page.getComponent("x", u32, i).* = @intCast(u32, i);
+        page.getComponent("z", u16, i).* = @intCast(u16, i * 10);
+        page.getExists(i).* = i % 3 == 0;
+    }
+
+    for (0..page.header.capacity) |i| {
+        try std.testing.expectEqual(i, page.getComponent("x", u32, i).*);
+        try std.testing.expectEqual(i * 10, page.getComponent("z", u16, i).*);
+        try std.testing.expectEqual(i % 3 == 0, page.getExists(i).*);
+    }
+}
+
+// TODO: better error messages if adding wrong component? or just require unique types afterall, which is
+// very reasonable?
+test "page" {
+    var entities = try Entities(struct { x: u32, y: u8, z: u16 }).init();
+    defer entities.deinit();
+
+    const entity = entities.createEntity(.{ .x = 123, .y = 45 });
+    try std.testing.expectEqual(@intCast(u32, 123), (entities.getComponent(entity, "x") orelse unreachable).*);
+    try std.testing.expectEqual(@intCast(u16, 45), (entities.getComponent(entity, "y") orelse unreachable).*);
 }
