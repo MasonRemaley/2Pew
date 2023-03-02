@@ -20,10 +20,6 @@ pub const EntityHandle = struct {
     index: EntityIndex,
 };
 
-fn compareEntityFields(_: void, comptime lhs: std.builtin.Type.StructField, comptime rhs: std.builtin.Type.StructField) bool {
-    return @alignOf(lhs.type) > @alignOf(rhs.type);
-}
-
 pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
         // `Entity` has a field for every possible component type. This is for convenience, it is
@@ -40,7 +36,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     .alignment = @alignOf(registered.type),
                 };
             }
-            std.sort.sort(std.builtin.Type.StructField, &fields, {}, compareEntityFields);
+            const CompareEntityFields = struct {
+                fn cmp(_: void, comptime lhs: std.builtin.Type.StructField, comptime rhs: std.builtin.Type.StructField) bool {
+                    return @alignOf(lhs.type) > @alignOf(rhs.type);
+                }
+            };
+            std.sort.sort(std.builtin.Type.StructField, &fields, {}, CompareEntityFields.cmp);
             break :entity @Type(std.builtin.Type{
                 .Struct = std.builtin.Type.Struct{
                     .layout = .Auto,
@@ -114,7 +115,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // TODO: should probably have an internal free list to accelerate this
             // TODO: make sure this cast is always safe at comptime?
-            // TODO: return type
             fn createEntity(self: *@This()) EntityIndex {
                 // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
                 const start = (self.header.entity_size - 1) * self.header.capacity;
@@ -226,15 +226,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // TODO: don't ignore errors in this function...just trying things out
             // Get the page list for this archetype
-            var pageList: *PageList = page: {
+            const pageList: *PageList = page: {
                 // TODO: allocate pages up front in pool when possible
                 // Find or allocate a page for this entity
-                var entry = self.pageLists.getOrPut(
+                const entry = self.pageLists.getOrPut(
                     std.heap.page_allocator,
                     archetype,
                 ) catch unreachable;
                 if (!entry.found_existing) {
-                    var head = (std.heap.page_allocator.create(Page) catch unreachable);
+                    const head = (std.heap.page_allocator.create(Page) catch unreachable);
                     head.init(archetype);
                     self.pagePool.append(std.heap.page_allocator, head) catch unreachable;
                     entry.value_ptr.* = .{
@@ -249,7 +249,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // If the head does not have space, create a new head that has space
             if (pageList.head.header.len == pageList.head.header.capacity) {
                 // XXX: dup init code...
-                var newPage = (std.heap.page_allocator.create(Page) catch unreachable);
+                const newPage = (std.heap.page_allocator.create(Page) catch unreachable);
                 newPage.init(archetype);
                 self.pagePool.append(std.heap.page_allocator, newPage) catch unreachable;
                 newPage.header.next = pageList.head;
@@ -279,7 +279,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // Initialize the new entity
             // TODO: loop fastest or can cache math?
-            // TODO: error handling for fields that don't match...
             inline for (std.meta.fields(@TypeOf(entity))) |f| {
                 page.getComponent(
                     @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?),
@@ -360,7 +359,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return error.BadGeneration;
             }
 
-            var slot = self.slots[entity.index];
+            const slot = self.slots[entity.index];
             if (!slot.location.page.header.archetype.isSet(@enumToInt(component))) {
                 return null;
             }
@@ -384,10 +383,9 @@ test "limits" {
 
     // Add the max number of entities
     {
-        var i: EntityIndex = 0;
-        while (i < max_entities) : (i += 1) {
+        for (0..max_entities) |i| {
             const entity = entities.createEntity(.{});
-            try std.testing.expectEqual(EntityHandle{ .index = i, .generation = 0 }, entity);
+            try std.testing.expectEqual(EntityHandle{ .index = @intCast(EntityIndex, i), .generation = 0 }, entity);
             try created.append(entity);
         }
         try std.testing.expect(entities.createEntityChecked(.{}) == null);
@@ -395,19 +393,16 @@ test "limits" {
 
     // Remove all the entities
     {
-        var i: EntityIndex = max_entities - 1;
-        while (true) {
-            entities.removeEntity(created.items[i]);
-            if (i == 0) break else i -= 1;
+        for (0..created.items.len) |i| {
+            entities.removeEntity(created.items[created.items.len - i - 1]);
         }
     }
 
     // Create a bunch of entities again
     {
-        var i: EntityIndex = 0;
-        while (i < max_entities) : (i += 1) {
+        for (0..max_entities) |i| {
             try std.testing.expectEqual(
-                EntityHandle{ .index = i, .generation = 1 },
+                EntityHandle{ .index = @intCast(EntityIndex, i), .generation = 1 },
                 entities.createEntity(.{}),
             );
         }
@@ -416,7 +411,7 @@ test "limits" {
 
     // Wrap a generation counter
     {
-        var entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
+        const entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
         entities.slots[entity.index].generation = entity.generation;
         entities.removeEntity(entity);
         try std.testing.expectEqual(
@@ -547,18 +542,17 @@ test "random data" {
                 if (truth.items.len > 0) {
                     const index = rnd.random().uintLessThan(usize, truth.items.len);
                     var entity: *Created = &truth.items[index];
-                    // TODO: why am i allowed to leave off the .* here??
-                    if (entity.*.data.x) |_| {
-                        entity.*.data.x = rnd.random().int(u32);
-                        entities.getComponent(entity.*.handle, .x).?.* = entity.*.data.x.?;
+                    if (entity.data.x) |_| {
+                        entity.data.x = rnd.random().int(u32);
+                        entities.getComponent(entity.handle, .x).?.* = entity.data.x.?;
                     }
-                    if (entity.*.data.y) |_| {
-                        entity.*.data.y = rnd.random().int(u8);
-                        entities.getComponent(entity.*.handle, .y).?.* = entity.*.data.y.?;
+                    if (entity.data.y) |_| {
+                        entity.data.y = rnd.random().int(u8);
+                        entities.getComponent(entity.handle, .y).?.* = entity.data.y.?;
                     }
-                    if (entity.*.data.z) |_| {
-                        entity.*.data.z = rnd.random().int(u16);
-                        entities.getComponent(entity.*.handle, .z).?.* = entity.*.data.z.?;
+                    if (entity.data.z) |_| {
+                        entity.data.z = rnd.random().int(u16);
+                        entities.getComponent(entity.handle, .z).?.* = entity.data.z.?;
                     }
                 }
             },
