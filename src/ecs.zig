@@ -20,36 +20,40 @@ pub const EntityHandle = struct {
     index: EntityIndex,
 };
 
-fn compareFieldAlignment(_: void, comptime lhs: std.builtin.Type.StructField, comptime rhs: std.builtin.Type.StructField) bool {
+fn compareEntityFields(_: void, comptime lhs: std.builtin.Type.StructField, comptime rhs: std.builtin.Type.StructField) bool {
     return @alignOf(lhs.type) > @alignOf(rhs.type);
 }
 
-pub fn Entities(comptime RegisteredComponents: type) type {
-    // TODO: just store field list?
-    comptime var Entity = entity: {
-        var fields: [@typeInfo(RegisteredComponents).Struct.fields.len]std.builtin.Type.StructField = undefined;
-        inline for (@typeInfo(RegisteredComponents).Struct.fields, 0..) |registered, i| {
-            fields[i] = std.builtin.Type.StructField{
-                .name = registered.name,
-                .type = registered.type,
-                .default_value = null,
-                .is_comptime = false,
-                .alignment = @alignOf(registered.type),
-            };
-        }
-        std.sort.sort(std.builtin.Type.StructField, &fields, {}, compareFieldAlignment);
-        break :entity @Type(std.builtin.Type{
-            .Struct = std.builtin.Type.Struct{
-                .layout = .Auto,
-                .backing_integer = null,
-                .fields = &fields,
-                .decls = &[_]std.builtin.Type.Declaration{},
-                .is_tuple = false,
-            },
-        });
-    };
+pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
-        const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
+        // `Entity` has a field for every possible component type. This is for convenience, it is
+        // not used at runtime. Fields are sorted from greatest to least alignment, see `Page` for
+        // rational.
+        const Entity = entity: {
+            var fields: [std.meta.fields(@TypeOf(componentTypes)).len]std.builtin.Type.StructField = undefined;
+            inline for (std.meta.fields(@TypeOf(componentTypes)), 0..) |registered, i| {
+                fields[i] = std.builtin.Type.StructField{
+                    .name = registered.name,
+                    .type = @field(componentTypes, registered.name),
+                    .default_value = null,
+                    .is_comptime = false,
+                    .alignment = @alignOf(registered.type),
+                };
+            }
+            std.sort.sort(std.builtin.Type.StructField, &fields, {}, compareEntityFields);
+            break :entity @Type(std.builtin.Type{
+                .Struct = std.builtin.Type.Struct{
+                    .layout = .Auto,
+                    .backing_integer = null,
+                    .fields = &fields,
+                    .decls = &[_]std.builtin.Type.Declaration{},
+                    .is_tuple = false,
+                },
+            });
+        };
+
+        // `Archetype` has a bit for each component type.
+        const Archetype: type = std.bit_set.IntegerBitSet(std.meta.fields(Entity).len);
 
         // TODO: pack this tightly, maybe use index instead of ptr for page
         const EntitySlot = struct {
@@ -68,6 +72,7 @@ pub fn Entities(comptime RegisteredComponents: type) type {
         // TODO: make sure exactly one page size, make sure ordered correctly, may need to store everything
         // in byte array
         // TODO: comptime make sure capacity large enough even if all components used at once?
+        // TODO: explain alignment sort here
         const Page = struct {
             data: [std.mem.page_size - @sizeOf(PageHeader)]u8 align(std.mem.page_size),
             header: PageHeader,
@@ -78,7 +83,7 @@ pub fn Entities(comptime RegisteredComponents: type) type {
                 // alignment to smallest.
                 var entity_size: usize = 0;
                 entity_size += 1; // One byte for the existence flag
-                inline for (@typeInfo(Entity).Struct.fields, 0..) |registered, i| {
+                inline for (std.meta.fields(Entity), 0..) |registered, i| {
                     if (archetype.isSet(i)) {
                         entity_size += @sizeOf(registered.type);
                     }
@@ -119,14 +124,13 @@ pub fn Entities(comptime RegisteredComponents: type) type {
             }
 
             // TODO: usize as index?
-            fn getComponent(self: *Page, comptime component: anytype, index: usize) *Entities(RegisteredComponents).componentType(component) {
-                const Component = Entities(RegisteredComponents).componentType(component);
+            fn getComponent(self: *Page, comptime component: std.meta.FieldEnum(Entity), index: usize) *std.meta.fieldInfo(Entity, component).type {
                 var ptr: usize = 0;
-                inline for (@typeInfo(Entity).Struct.fields, 0..) |registered, i| {
+                inline for (std.meta.fields(Entity), 0..) |registered, i| {
                     if (self.header.archetype.isSet(i)) {
-                        if (std.mem.eql(u8, registered.name, component)) {
+                        if (i == @enumToInt(component)) {
                             ptr += index * @sizeOf(registered.type);
-                            return @ptrCast(*Component, @alignCast(@alignOf(Component), &self.data[ptr]));
+                            return @ptrCast(*registered.type, @alignCast(@alignOf(registered.type), &self.data[ptr]));
                         }
                         ptr += @sizeOf(registered.type) * self.header.capacity;
                     }
@@ -216,9 +220,13 @@ pub fn Entities(comptime RegisteredComponents: type) type {
             self.entities[index].page = entry.value_ptr.*;
 
             // TODO: loop fastest or can cache math?
+            // XXX: error handling for fields that don't match...
             var page: *Page = entry.value_ptr.*;
-            inline for (@typeInfo(@TypeOf(entity)).Struct.fields) |f| {
-                page.getComponent(f.name, 0).* = @field(entity, f.name);
+            inline for (std.meta.fields(@TypeOf(entity))) |f| {
+                page.getComponent(
+                    @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name) orelse unreachable),
+                    self.entities[index].index_in_page,
+                ).* = @field(entity, f.name);
             }
 
             // Return a handle to the entity
@@ -261,7 +269,7 @@ pub fn Entities(comptime RegisteredComponents: type) type {
 
         // TODO: allow getting multiple at once?
         // TODO: check assertions
-        fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: anytype) !?*@This().componentType(component) {
+        fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: std.meta.FieldEnum(Entity)) !?*std.meta.fieldInfo(Entity, component).type {
             // TODO: dup code, dup index
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
@@ -274,34 +282,39 @@ pub fn Entities(comptime RegisteredComponents: type) type {
 
             // TODO: repeatedly searching for index of type...store as that.. or doesn't matter cause comptime?
             var slot = self.entities[entity.index];
-            if (!Archetype.subsetOf(@This().componentMask(component), slot.page.header.archetype)) {
+            if (!Archetype.subsetOf(@This().componentMask_(component), slot.page.header.archetype)) {
                 return null;
             }
             return slot.page.getComponent(component, slot.index_in_page);
         }
 
         // TODO: const vs non const?
-        pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: anytype) ?*@This().componentType(component) {
+        pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: std.meta.FieldEnum(Entity)) ?*std.meta.fieldInfo(Entity, component).type {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
+        // XXX: ...
+        fn componentMask_(comptime component: std.meta.FieldEnum(Entity)) Archetype {
+            var mask = Archetype.initEmpty();
+            mask.set(@enumToInt(component));
+            return mask;
+        }
         fn componentMask(comptime component: []const u8) Archetype {
+            // TODO: comptime blocks necessary?
             comptime {
-                inline for (@typeInfo(Entity).Struct.fields, 0..) |c, i| {
-                    if (std.mem.eql(u8, c.name, component)) {
-                        var mask = Archetype.initEmpty();
-                        mask.set(i);
-                        return mask;
-                    }
+                if (std.meta.fieldIndex(Entity, component)) |i| {
+                    var mask = Archetype.initEmpty();
+                    mask.set(i);
+                    return mask;
                 }
                 @compileError("component '" ++ component ++ "' not registered");
             }
         }
 
+        // XXX: omg FieldEnum and FieldType!!
         fn componentType(comptime component: []const u8) type {
             comptime {
-                // TODO: use std.meta.fields instead?
-                inline for (@typeInfo(Entity).Struct.fields) |c| {
+                inline for (std.meta.fields(Entity)) |c| {
                     if (std.mem.eql(u8, c.name, component)) {
                         return c.type;
                     }
@@ -310,10 +323,10 @@ pub fn Entities(comptime RegisteredComponents: type) type {
             }
         }
 
-        fn getArchetype(comptime components: type) Archetype {
+        fn getArchetype(comptime Components: type) Archetype {
             comptime {
                 var result = Archetype.initEmpty();
-                inline for (@typeInfo(components).Struct.fields) |component| {
+                inline for (std.meta.fields(Components)) |component| {
                     result = result.unionWith(componentMask(component.name));
                 }
                 return result;
@@ -326,7 +339,7 @@ test "limits" {
     // The max entity id should be considered invalid
     std.debug.assert(max_entities < std.math.maxInt(EntityIndex));
 
-    var entities = try Entities(struct {}).init();
+    var entities = try Entities(.{}).init();
     defer entities.deinit();
     var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
     defer created.deinit();
@@ -376,7 +389,7 @@ test "limits" {
 }
 
 test "create destroy" {
-    var entities = try Entities(struct {}).init();
+    var entities = try Entities(.{}).init();
     defer entities.deinit();
 
     const entity_0_0 = entities.createEntity(.{});
@@ -401,7 +414,7 @@ test "create destroy" {
 }
 
 test "safety checks" {
-    var entities = try Entities(struct {}).init();
+    var entities = try Entities(.{}).init();
     defer entities.deinit();
 
     const entity = entities.createEntity(.{});
@@ -414,7 +427,7 @@ test "safety checks" {
 }
 
 test "archetype masks" {
-    var entities = try Entities(struct { x: u8, y: u8 }).init();
+    var entities = try Entities(.{ .x = u8, .y = u8 }).init();
     defer entities.deinit();
 
     // TODO: ...
@@ -470,7 +483,7 @@ test "archetype masks" {
 
 // TODO: ...
 test "page" {
-    var entities = try Entities(struct { x: u32, y: u8, z: u16 }).init();
+    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
     defer entities.deinit();
 
     const Page = @TypeOf(entities).Page;
@@ -492,10 +505,12 @@ test "page" {
 // TODO: better error messages if adding wrong component? or just require unique types afterall, which is
 // very reasonable?
 test "page" {
-    var entities = try Entities(struct { x: u32, y: u8, z: u16 }).init();
+    // XXX: would be less confusing to just pass name type pairs, so it's clear all other info is discareded.
+    // Also would make errors better when missing a requested field I think, maybe?
+    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
     defer entities.deinit();
 
     const entity = entities.createEntity(.{ .x = 123, .y = 45 });
-    try std.testing.expectEqual(@intCast(u32, 123), (entities.getComponent(entity, "x") orelse unreachable).*);
-    try std.testing.expectEqual(@intCast(u16, 45), (entities.getComponent(entity, "y") orelse unreachable).*);
+    try std.testing.expectEqual(@intCast(u32, 123), (entities.getComponent(entity, .x) orelse unreachable).*);
+    try std.testing.expectEqual(@intCast(u16, 45), (entities.getComponent(entity, .y) orelse unreachable).*);
 }
