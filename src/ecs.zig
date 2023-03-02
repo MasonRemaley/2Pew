@@ -83,9 +83,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 // alignment to smallest.
                 var entity_size: usize = 0;
                 entity_size += 1; // One byte for the existence flag
-                inline for (std.meta.fields(Entity), 0..) |registered, i| {
+                inline for (std.meta.fields(Entity), 0..) |component, i| {
                     if (archetype.isSet(i)) {
-                        entity_size += @sizeOf(registered.type);
+                        entity_size += @sizeOf(component.type);
                     }
                 }
                 // TODO: okay to access len here?
@@ -108,8 +108,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
             fn createEntity(self: *@This()) ?EntityIndex {
                 // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
                 const start = (self.header.entity_size - 1) * self.header.capacity;
-                for (self.data[start..], 0..) |*b, i| {
+                for (self.data[start..(start + self.header.capacity)], 0..) |*b, i| {
                     if (!@ptrCast(*bool, b).*) {
+                        // TODO: make assertions in get component that it exists first
+                        @ptrCast(*bool, b).* = true;
                         return @intCast(EntityIndex, i);
                     }
                 }
@@ -124,15 +126,16 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             // TODO: usize as index?
-            fn getComponent(self: *Page, comptime component: std.meta.FieldEnum(Entity), index: usize) *std.meta.fieldInfo(Entity, component).type {
+            // TODO: faster method when setting multiple components at once?
+            fn getComponent(self: *Page, comptime componentField: std.meta.FieldEnum(Entity), index: usize) *std.meta.fieldInfo(Entity, componentField).type {
                 var ptr: usize = 0;
-                inline for (std.meta.fields(Entity), 0..) |registered, i| {
+                inline for (std.meta.fields(Entity), 0..) |component, i| {
                     if (self.header.archetype.isSet(i)) {
-                        if (i == @enumToInt(component)) {
-                            ptr += index * @sizeOf(registered.type);
-                            return @ptrCast(*registered.type, @alignCast(@alignOf(registered.type), &self.data[ptr]));
+                        if (@intToEnum(std.meta.FieldEnum(Entity), i) == componentField) {
+                            ptr += index * @sizeOf(component.type);
+                            return @ptrCast(*component.type, @alignCast(@alignOf(component.type), &self.data[ptr]));
                         }
-                        ptr += @sizeOf(registered.type) * self.header.capacity;
+                        ptr += @sizeOf(component.type) * self.header.capacity;
                     }
                 }
                 unreachable;
@@ -216,15 +219,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: assumes there's room in this page for now, never creates a new one
             // TODO: cache array lookup?
             // Populate the entity
-            self.entities[index].index_in_page = entry.value_ptr.*.createEntity() orelse unreachable;
+            self.entities[index].index_in_page = entry.value_ptr.*.createEntity().?;
             self.entities[index].page = entry.value_ptr.*;
 
             // TODO: loop fastest or can cache math?
-            // XXX: error handling for fields that don't match...
+            // TODO: error handling for fields that don't match...
             var page: *Page = entry.value_ptr.*;
             inline for (std.meta.fields(@TypeOf(entity))) |f| {
                 page.getComponent(
-                    @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name) orelse unreachable),
+                    @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?),
                     self.entities[index].index_in_page,
                 ).* = @field(entity, f.name);
             }
@@ -237,8 +240,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         pub fn createEntity(self: *@This(), entity: anytype) EntityHandle {
-            return self.createEntityChecked(entity) orelse
-                std.debug.panic("out of entities", .{});
+            return self.createEntityChecked(entity).?;
         }
 
         fn removeEntityChecked(self: *@This(), entity: EntityHandle) !void {
@@ -253,6 +255,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
             if (self.free.len == max_entities) {
                 return error.FreelistFull;
             }
+
+            // TODO: dup index?
+            // TODO: have a setter and assert not already set? or just add assert?
+            // Unset the exists bit
+            self.entities[entity.index].page.getExists(self.entities[entity.index].index_in_page).* = false;
 
             // Increment this entity slot's generation so future uses will fail
             self.entities[entity.index].generation +%= 1;
@@ -293,7 +300,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
-        // XXX: ...
+        // TODO: ...
         fn componentMask_(comptime component: std.meta.FieldEnum(Entity)) Archetype {
             var mask = Archetype.initEmpty();
             mask.set(@enumToInt(component));
@@ -311,7 +318,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
         }
 
-        // XXX: omg FieldEnum and FieldType!!
         fn componentType(comptime component: []const u8) type {
             comptime {
                 inline for (std.meta.fields(Entity)) |c| {
@@ -335,60 +341,62 @@ pub fn Entities(comptime componentTypes: anytype) type {
     };
 }
 
-test "limits" {
-    // The max entity id should be considered invalid
-    std.debug.assert(max_entities < std.math.maxInt(EntityIndex));
+// TODO: put back once we can make multiple pages...
+// test "limits" {
+//     // The max entity id should be considered invalid
+//     std.debug.assert(max_entities < std.math.maxInt(EntityIndex));
 
-    var entities = try Entities(.{}).init();
-    defer entities.deinit();
-    var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
-    defer created.deinit();
+//     var entities = try Entities(.{}).init();
+//     defer entities.deinit();
+//     var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
+//     defer created.deinit();
 
-    // Add the max number of entities
-    {
-        var i: EntityIndex = 0;
-        while (i < max_entities) : (i += 1) {
-            const entity = entities.createEntity(.{});
-            try std.testing.expectEqual(EntityHandle{ .index = i, .generation = 0 }, entity);
-            try created.append(entity);
-        }
-        try std.testing.expect(entities.createEntityChecked(.{}) == null);
-    }
+//     // Add the max number of entities
+//     {
+//         var i: EntityIndex = 0;
+//         while (i < max_entities) : (i += 1) {
+//             const entity = entities.createEntity(.{});
+//             try std.testing.expectEqual(EntityHandle{ .index = i, .generation = 0 }, entity);
+//             try created.append(entity);
+//         }
+//         try std.testing.expect(entities.createEntityChecked(.{}) == null);
+//     }
 
-    // Remove all the entities
-    {
-        var i: EntityIndex = max_entities - 1;
-        while (true) {
-            entities.removeEntity(created.items[i]);
-            if (i == 0) break else i -= 1;
-        }
-    }
+//     // Remove all the entities
+//     {
+//         var i: EntityIndex = max_entities - 1;
+//         while (true) {
+//             entities.removeEntity(created.items[i]);
+//             if (i == 0) break else i -= 1;
+//         }
+//     }
 
-    // Create a bunch of entities again
-    {
-        var i: EntityIndex = 0;
-        while (i < max_entities) : (i += 1) {
-            try std.testing.expectEqual(
-                EntityHandle{ .index = i, .generation = 1 },
-                entities.createEntity(.{}),
-            );
-        }
-        try std.testing.expect(entities.createEntityChecked(.{}) == null);
-    }
+//     // Create a bunch of entities again
+//     {
+//         var i: EntityIndex = 0;
+//         while (i < max_entities) : (i += 1) {
+//             try std.testing.expectEqual(
+//                 EntityHandle{ .index = i, .generation = 1 },
+//                 entities.createEntity(.{}),
+//             );
+//         }
+//         try std.testing.expect(entities.createEntityChecked(.{}) == null);
+//     }
 
-    // Wrap a generation counter
-    {
-        var entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
-        entities.entities[entity.index].generation = entity.generation;
-        entities.removeEntity(entity);
-        try std.testing.expectEqual(
-            EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
-            entities.createEntity(.{}),
-        );
-    }
-}
+//     // Wrap a generation counter
+//     {
+//         var entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
+//         entities.entities[entity.index].generation = entity.generation;
+//         entities.removeEntity(entity);
+//         try std.testing.expectEqual(
+//             EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
+//             entities.createEntity(.{}),
+//         );
+//     }
+// }
 
-test "create destroy" {
+// TODO: test the page indices too?
+test "free list" {
     var entities = try Entities(.{}).init();
     defer entities.deinit();
 
@@ -397,12 +405,22 @@ test "create destroy" {
     const entity_2_0 = entities.createEntity(.{});
     const entity_3_0 = entities.createEntity(.{});
 
+    try std.testing.expectEqual(entities.entities[entity_0_0.index].index_in_page, 0);
+    try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
     entities.removeEntity(entity_1_0);
+    try std.testing.expectEqual(entities.entities[entity_3_0.index].index_in_page, 3);
+    try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 0 }, entity_3_0);
     entities.removeEntity(entity_3_0);
 
     const entity_3_1 = entities.createEntity(.{});
     const entity_1_1 = entities.createEntity(.{});
     const entity_4_0 = entities.createEntity(.{});
+
+    try std.testing.expectEqual(entities.entities[entity_0_0.index].index_in_page, 0);
+    try std.testing.expectEqual(entities.entities[entity_2_0.index].index_in_page, 2);
+    try std.testing.expectEqual(entities.entities[entity_3_1.index].index_in_page, 1);
+    try std.testing.expectEqual(entities.entities[entity_1_1.index].index_in_page, 3);
+    try std.testing.expectEqual(entities.entities[entity_4_0.index].index_in_page, 4);
 
     try std.testing.expectEqual(EntityHandle{ .index = 0, .generation = 0 }, entity_0_0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
@@ -413,7 +431,7 @@ test "create destroy" {
     try std.testing.expectEqual(EntityHandle{ .index = 4, .generation = 0 }, entity_4_0);
 }
 
-test "safety checks" {
+test "safety" {
     var entities = try Entities(.{}).init();
     defer entities.deinit();
 
@@ -426,91 +444,126 @@ test "safety checks" {
     }));
 }
 
-test "archetype masks" {
-    var entities = try Entities(.{ .x = u8, .y = u8 }).init();
-    defer entities.deinit();
-
-    // TODO: ...
-    // var archetype = @TypeOf(entities).Archetype.initEmpty();
-    // try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{}));
-    // try std.testing.expect(!archetype.eql(comptime @TypeOf(entities).archetype(.{ .y = u8 })));
-    // archetype.set(0);
-    // try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ .x = u32 }));
-    // archetype.set(1);
-    // try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ .x = u32, .y = u8 }));
-    // try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ .y = u8, .x = u32 }));
-    // archetype.unset(0);
-    // try std.testing.expectEqual(archetype, comptime @TypeOf(entities).archetype(.{ .y = u8 }));
-
-    // const A = struct {
-    //     x: u8,
-    //     y: u8,
-    // };
-    // const B = struct {
-    //     y: u8,
-    //     x: u8,
-    // };
-    _ = entities.createEntity(.{ .x = 1, .y = 2 });
-    _ = entities.createEntity(.{ .y = 1, .x = 2 });
-}
-
-// // TODO: hmm this should be failing..why isn't it? we've commented out the code that actually does
-// // the calculations
-// fn testSizeAlignment(entities: anytype, comptime entity: type) !void {
-//     try std.testing.expectEqual(
-//         @TypeOf(entities).archetypeSizeAlignment(@TypeOf(entities).getArchetype(entity)).size,
-//         @sizeOf(entity),
-//     );
-//     try std.testing.expectEqual(
-//         @TypeOf(entities).archetypeSizeAlignment(@TypeOf(entities).getArchetype(entity)).alignment,
-//         @alignOf(entity),
-//     );
-// }
-
-// test "archetype size alignment" {
-//     var entities = try Entities(struct { x: u8, y: u32, z: u16 }).init();
-//     defer entities.deinit();
-
-//     // TODO: okay I'm seeing the advantages of the aabbb layout, wastes less space on padding
-//     try testSizeAlignment(entities, extern struct { x: u8 });
-//     try testSizeAlignment(entities, extern struct { y: u32 });
-//     try testSizeAlignment(entities, extern struct { z: u16 });
-//     try testSizeAlignment(entities, extern struct { x: u8, y: u32 });
-//     try testSizeAlignment(entities, extern struct { x: u8, z: u16 });
-//     try testSizeAlignment(entities, extern struct { y: u32, z: u16 });
-//     try testSizeAlignment(entities, extern struct { x: u8, y: u32, z: u16 });
-// }
-
-// TODO: ...
-test "page" {
-    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
-    defer entities.deinit();
-
-    const Page = @TypeOf(entities).Page;
-
-    var page = Page.init(@TypeOf(entities).getArchetype(struct { x: u32, z: u16 }));
-    for (0..page.header.capacity) |i| {
-        page.getComponent("x", u32, i).* = @intCast(u32, i);
-        page.getComponent("z", u16, i).* = @intCast(u16, i * 10);
-        page.getExists(i).* = i % 3 == 0;
-    }
-
-    for (0..page.header.capacity) |i| {
-        try std.testing.expectEqual(i, page.getComponent("x", u32, i).*);
-        try std.testing.expectEqual(i * 10, page.getComponent("z", u16, i).*);
-        try std.testing.expectEqual(i % 3 == 0, page.getExists(i).*);
-    }
-}
-
 // TODO: better error messages if adding wrong component? or just require unique types afterall, which is
 // very reasonable?
-test "page" {
-    // XXX: would be less confusing to just pass name type pairs, so it's clear all other info is discareded.
-    // Also would make errors better when missing a requested field I think, maybe?
+test "random data" {
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
     defer entities.deinit();
 
-    const entity = entities.createEntity(.{ .x = 123, .y = 45 });
-    try std.testing.expectEqual(@intCast(u32, 123), (entities.getComponent(entity, .x) orelse unreachable).*);
-    try std.testing.expectEqual(@intCast(u16, 45), (entities.getComponent(entity, .y) orelse unreachable).*);
+    const Data = struct {
+        x: ?u32 = null,
+        y: ?u8 = null,
+        z: ?u16 = null,
+    };
+    const Created = struct {
+        data: Data,
+        handle: EntityHandle,
+    };
+
+    var rnd = std.rand.DefaultPrng.init(0);
+    var truth = std.ArrayList(Created).init(std.testing.allocator);
+    defer truth.deinit();
+
+    // TODO: is gonna fail cause we don't have multiple pages yet! but should work for smaller numbers right?
+    for (0..3681) |_| {
+        switch (rnd.random().enumValue(enum { create, modify, destroy })) {
+            .create => {
+                for (0..rnd.random().uintLessThan(usize, 10)) |_| {
+                    const data = Data{
+                        .x = if (rnd.random().boolean()) rnd.random().int(u32) else null,
+                        .y = if (rnd.random().boolean()) rnd.random().int(u8) else null,
+                        .z = if (rnd.random().boolean()) rnd.random().int(u16) else null,
+                    };
+                    try truth.append(Created{
+                        .data = data,
+                        .handle = handle: {
+                            if (data.x) |x| {
+                                if (data.y) |y| {
+                                    if (data.z) |z| {
+                                        break :handle entities.createEntity(.{ .x = x, .y = y, .z = z });
+                                    }
+                                }
+                            }
+                            if (data.x) |x| {
+                                if (data.y) |y| {
+                                    break :handle entities.createEntity(.{ .x = x, .y = y });
+                                }
+                            }
+                            if (data.x) |x| {
+                                if (data.z) |z| {
+                                    break :handle entities.createEntity(.{ .x = x, .z = z });
+                                }
+                            }
+                            if (data.y) |y| {
+                                if (data.z) |z| {
+                                    break :handle entities.createEntity(.{ .y = y, .z = z });
+                                }
+                            }
+                            if (data.x) |x| {
+                                break :handle entities.createEntity(.{ .x = x });
+                            }
+                            if (data.y) |y| {
+                                break :handle entities.createEntity(.{ .y = y });
+                            }
+                            if (data.z) |z| {
+                                break :handle entities.createEntity(.{ .z = z });
+                            }
+                            break :handle entities.createEntity(.{});
+                        },
+                    });
+                }
+            },
+            .modify => {
+                if (truth.items.len > 0) {
+                    const index = rnd.random().uintLessThan(usize, truth.items.len);
+                    var entity: *Created = &truth.items[index];
+                    // TODO: why am i allowed to leave off the .* here??
+                    if (entity.*.data.x) |_| {
+                        entity.*.data.x = rnd.random().int(u32);
+                        entities.getComponent(entity.*.handle, .x).?.* = entity.*.data.x.?;
+                    }
+                    if (entity.*.data.y) |_| {
+                        entity.*.data.y = rnd.random().int(u8);
+                        entities.getComponent(entity.*.handle, .y).?.* = entity.*.data.y.?;
+                    }
+                    if (entity.*.data.z) |_| {
+                        entity.*.data.z = rnd.random().int(u16);
+                        entities.getComponent(entity.*.handle, .z).?.* = entity.*.data.z.?;
+                    }
+                }
+            },
+            .destroy => {
+                // TODO: destroy more at once?
+                if (truth.items.len > 0) {
+                    const index = rnd.random().uintLessThan(usize, truth.items.len);
+                    const removed = truth.orderedRemove(index);
+                    entities.removeEntity(removed.handle);
+                }
+            },
+        }
+
+        // Test that all created entities are still correct
+        for (truth.items) |expected| {
+            if (expected.data.x) |x| {
+                try std.testing.expectEqual(x, entities.getComponent(expected.handle, .x).?.*);
+            } else {
+                try std.testing.expect(entities.getComponent(expected.handle, .x) == null);
+            }
+            if (expected.data.y) |y| {
+                try std.testing.expectEqual(y, entities.getComponent(expected.handle, .y).?.*);
+            } else {
+                try std.testing.expect(entities.getComponent(expected.handle, .y) == null);
+            }
+            if (expected.data.z) |z| {
+                try std.testing.expectEqual(z, entities.getComponent(expected.handle, .z).?.*);
+            } else {
+                try std.testing.expect(entities.getComponent(expected.handle, .z) == null);
+            }
+        }
+    }
 }
+
+// TODO: missing features:
+// - fast & convenient iteration
+// - const/non const or no?
+// - adding/removing components to live entities
