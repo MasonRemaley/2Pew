@@ -485,6 +485,35 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     });
                 };
 
+                // XXX: mostly dup of above just made * [*]? can we clean this up?
+                const ComponentArrays = entity: {
+                    var fields: [std.meta.fields(@TypeOf(components)).len]std.builtin.Type.StructField = undefined;
+                    var i = 0;
+                    // TODO: i forgot (Entity) ont his, and it thought of it as the type of the function..??
+                    inline for (components) |component| {
+                        const entityFieldEnum: std.meta.FieldEnum(Entity) = component;
+                        const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
+                        const FieldType = [*]entityField.type;
+                        fields[i] = std.builtin.Type.StructField{
+                            .name = entityField.name,
+                            .type = FieldType,
+                            .default_value = null,
+                            .is_comptime = false,
+                            .alignment = @alignOf(FieldType),
+                        };
+                        i += 1;
+                    }
+                    break :entity @Type(std.builtin.Type{
+                        .Struct = std.builtin.Type.Struct{
+                            .layout = .Auto,
+                            .backing_integer = null,
+                            .fields = &fields,
+                            .decls = &[_]std.builtin.Type.Declaration{},
+                            .is_tuple = false,
+                        },
+                    });
+                };
+
                 const Item = struct {
                     handle: EntityHandle,
                     comps: Components,
@@ -494,7 +523,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList).Iterator,
                 page_list: ?*Page,
                 index_in_page: u32,
-                item: Item,
+                component_arrays: ComponentArrays,
+                handle_array: [*]EntityHandle,
 
                 fn init(entities: *Entities(componentTypes)) @This() {
                     return .{
@@ -511,8 +541,21 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         .page_lists = entities.page_lists.iterator(),
                         .page_list = null,
                         .index_in_page = 0,
-                        .item = undefined,
+                        .component_arrays = undefined,
+                        .handle_array = undefined,
                     };
+                }
+
+                fn setPageList(self: *@This(), page_list: ?*Page) void {
+                    self.page_list = page_list;
+                    self.index_in_page = 0;
+                    if (page_list) |pl| {
+                        self.handle_array = pl.handleArray();
+                        inline for (std.meta.fields(ComponentArrays)) |field| {
+                            const entity_field = @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, field.name).?);
+                            @field(self.component_arrays, field.name) = pl.componentArray(entity_field);
+                        }
+                    }
                 }
 
                 // TODO: iterator invalidation...does our free list make it worse somehow? also can we make it safe
@@ -522,48 +565,40 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 // e.g. firing a bullet, and we can enforce it! make sure that's true but i think it should be fine!
                 // we could also add a way to defer creation--more robust, but can't work with the entity right away. could
                 // return a handle to an empty entity though.
-                fn next(self: *@This()) ?*Item {
+                pub fn next(self: *@This()) ?Item {
                     while (true) {
                         // If we don't have a page list, find the next compatible archetype's page
                         // list
                         if (self.page_list == null) {
-                            self.page_list = while (self.page_lists.next()) |page| {
+                            const nextPageList = while (self.page_lists.next()) |page| {
                                 if (page.key_ptr.supersetOf(self.archetype)) {
                                     break page.value_ptr.head;
                                 }
-                            } else {
-                                // No more pages, give up
-                                return null;
-                            };
-                            self.index_in_page = 0;
+                            } else return null;
+                            self.setPageList(nextPageList);
                         }
 
                         // Find the next entity in this archetype page
                         while (self.index_in_page < self.page_list.?.header().capacity) : (self.index_in_page += 1) {
-                            if (self.page_list.?.handleArray()[self.index_in_page].index != invalid_entity_index) {
+                            if (self.handle_array[self.index_in_page].index != invalid_entity_index) {
                                 break;
                             }
                         }
 
                         // If it exists, return it
                         if (self.index_in_page < self.page_list.?.header().capacity) {
-                            // XXX: just increment the pointers here instead of using index in page?
-                            // e.g. have a pointer to exists, and to each component, and increment
-                            // each? (or increment exists and then add the right amount to the others)
-                            self.item.handle = self.page_list.?.handleArray()[self.index_in_page];
+                            var item: Item = undefined;
+                            item.handle = self.handle_array[self.index_in_page];
                             inline for (std.meta.fields(Components)) |field| {
-                                @field(self.item.comps, field.name) = &self.page_list.?.componentArray(
-                                    @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, field.name).?),
-                                )[self.index_in_page];
+                                @field(item.comps, field.name) = &@field(self.component_arrays, field.name)[self.index_in_page];
                             }
                             self.index_in_page += 1;
-                            return &self.item;
+                            return item;
                         }
 
                         // If we didn't find anything, advance to the next page in this archetype
                         // page list
-                        self.page_list = self.page_list.?.header().next;
-                        self.index_in_page = 0;
+                        self.setPageList(self.page_list.?.header().next);
                     }
                 }
             };
