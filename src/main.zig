@@ -66,7 +66,7 @@ pub fn main() !void {
     // }
 }
 
-pub fn sdlAssertZero(ret: c_int) void {
-    if (ret == 0) return;
-    panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
-}
+// pub fn sdlAssertZero(ret: c_int) void {
+//     if (ret == 0) return;
+//     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
+// }
