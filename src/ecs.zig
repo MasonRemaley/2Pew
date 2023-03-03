@@ -185,6 +185,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     }
                 }
 
+                // TODO: add one if possible so no longer conservative?
                 const padding_conservative = max_component_alignment - 1;
                 const entity_size = @sizeOf(EntityHandle) + components_size;
                 const conservative_capacity = @intCast(EntityIndex, (std.mem.page_size - ptr - padding_conservative) / entity_size);
@@ -551,16 +552,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         }
 
                         // Find the next entity in this archetype page
-                        while (true) {
+                        while (self.index_in_page < self.page_list.?.header().capacity) : (self.index_in_page += 1) {
                             if (self.page_list.?.handleArray()[self.index_in_page].index != invalid_entity_index) {
                                 break;
                             }
-
-                            if (self.index_in_page == self.page_list.?.header().capacity) {
-                                break;
-                            }
-
-                            self.index_in_page += 1;
                         }
 
                         // If it exists, return it
@@ -721,7 +716,6 @@ test "random data" {
     var truth = std.ArrayList(Created).init(std.testing.allocator);
     defer truth.deinit();
 
-    // XXX: can do way more now!
     for (0..10000) |_| {
         switch (rnd.random().enumValue(enum { create, modify, destroy })) {
             .create => {
@@ -816,6 +810,61 @@ test "random data" {
                 try std.testing.expect(entities.getComponent(expected.handle, .z) == null);
             }
         }
+
+        // Test that iterators are working properly
+        {
+            var truth_xyz = std.AutoArrayHashMap(EntityHandle, Data).init(std.testing.allocator);
+            defer truth_xyz.deinit();
+            var truth_xz = std.AutoArrayHashMap(EntityHandle, Data).init(std.testing.allocator);
+            defer truth_xz.deinit();
+            var truth_y = std.AutoArrayHashMap(EntityHandle, Data).init(std.testing.allocator);
+            defer truth_y.deinit();
+            var truth_all = std.AutoArrayHashMap(EntityHandle, Data).init(std.testing.allocator);
+            defer truth_all.deinit();
+
+            for (truth.items) |entity| {
+                if (entity.data.x != null and entity.data.y != null and entity.data.z != null)
+                    try truth_xyz.put(entity.handle, entity.data);
+                if (entity.data.x != null and entity.data.z != null)
+                    try truth_xz.put(entity.handle, entity.data);
+                if (entity.data.y != null)
+                    try truth_y.put(entity.handle, entity.data);
+                try truth_all.put(entity.handle, entity.data);
+            }
+
+            var iter_xyz = entities.iterator(.{ .x, .y, .z });
+            while (iter_xyz.next()) |entity| {
+                var expected = truth_xyz.get(entity.handle).?;
+                _ = truth_xyz.swapRemove(entity.handle);
+                try std.testing.expectEqual(expected.x.?, entity.comps.x.*);
+                try std.testing.expectEqual(expected.y.?, entity.comps.y.*);
+                try std.testing.expectEqual(expected.z.?, entity.comps.z.*);
+            }
+            try std.testing.expect(truth_xyz.count() == 0);
+
+            var iter_xz = entities.iterator(.{ .x, .z });
+            while (iter_xz.next()) |entity| {
+                var expected = truth_xz.get(entity.handle).?;
+                _ = truth_xz.swapRemove(entity.handle);
+                try std.testing.expectEqual(expected.x.?, entity.comps.x.*);
+                try std.testing.expectEqual(expected.z.?, entity.comps.z.*);
+            }
+            try std.testing.expect(truth_xz.count() == 0);
+
+            var iter_y = entities.iterator(.{.y});
+            while (iter_y.next()) |entity| {
+                var expected = truth_y.get(entity.handle).?;
+                _ = truth_y.swapRemove(entity.handle);
+                try std.testing.expectEqual(expected.y.?, entity.comps.y.*);
+            }
+            try std.testing.expect(truth_y.count() == 0);
+
+            var iter_all = entities.iterator(.{});
+            while (iter_all.next()) |entity| {
+                try std.testing.expect(truth_all.swapRemove(entity.handle));
+            }
+            try std.testing.expect(truth_all.count() == 0);
+        }
     }
 }
 
@@ -889,8 +938,6 @@ test "minimal iter test" {
 
 // TODO: missing features:
 // - fast & convenient iteration
-//     - test iteration in each test
-//          - we can do this by hasing on the handle or something, but to do that we need a way to get the actual handle from the iterator, so gotta store that now
 //     - getComponent on the iterator for non-iter components, but still faster than going through the handle?
 // - const/non const or no?
 // - adding/removing components to live entities
