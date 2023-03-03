@@ -96,33 +96,33 @@ pub fn Entities(comptime componentTypes: anytype) type {
             fn remove(self: *@This(), page: *Page) void {
                 // Update head/tail
                 if (self.head == page)
-                    self.head = page.getHeader().next;
+                    self.head = page.header().next;
                 if (self.tail == page)
-                    self.tail = page.getHeader().prev;
+                    self.tail = page.header().prev;
 
                 // Update the previous node
-                if (page.getHeader().prev) |prev| {
-                    prev.getHeader().next = page.getHeader().next;
+                if (page.header().prev) |prev| {
+                    prev.header().next = page.header().next;
                 }
 
                 // Update the next node
-                if (page.getHeader().next) |next| {
-                    next.getHeader().prev = page.getHeader().prev;
+                if (page.header().next) |next| {
+                    next.header().prev = page.header().prev;
                 }
 
                 // Invaidate prev/next
-                page.getHeader().prev = undefined;
-                page.getHeader().next = undefined;
+                page.header().prev = undefined;
+                page.header().next = undefined;
             }
 
             fn prepend(self: *@This(), page: *Page) void {
                 // Update prev/next
-                page.getHeader().prev = null;
-                page.getHeader().next = self.head;
+                page.header().prev = null;
+                page.header().next = self.head;
 
                 // Update the current head's prev
                 if (self.head) |head| {
-                    head.getHeader().prev = page;
+                    head.header().prev = page;
                 }
 
                 // Update head and tail
@@ -132,12 +132,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             fn append(self: *@This(), page: *Page) void {
                 // Update prev/next
-                page.getHeader().prev = self.tail;
-                page.getHeader().next = null;
+                page.header().prev = self.tail;
+                page.header().next = null;
 
                 // Update the current tail's next
                 if (self.tail) |tail| {
-                    tail.getHeader().next = page;
+                    tail.header().next = page;
                 }
 
                 // Update head and tail
@@ -152,20 +152,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // TODO: instead of getting individual components, get component arrays?
         const Page = opaque {
             const BackingType = [std.mem.page_size]u8;
-
-            fn getData(self: *Page) *[std.mem.page_size]u8 {
-                return @ptrCast(*[std.mem.page_size]u8, self);
-            }
-            fn headerIndex() usize {
-                comptime {
-                    return std.mem.page_size - @sizeOf(PageHeader);
-                }
-            }
-
-            // TODO: may make more sense to put the header + any padding at the start
-            fn getHeader(self: *Page) *PageHeader {
-                return @ptrCast(*PageHeader, @alignCast(@alignOf(PageHeader), &self.getData()[headerIndex()]));
-            }
 
             fn init(archetype: Archetype) !*Page {
                 var page = @ptrCast(*Page, try std.heap.page_allocator.create(BackingType));
@@ -182,7 +168,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
 
                 const capacity = @intCast(EntityIndex, headerIndex() / entity_size);
-                page.getHeader().* = .{
+                page.header().* = .{
                     .next = null,
                     .prev = null,
                     .archetype = archetype,
@@ -198,16 +184,30 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 std.heap.page_allocator.destroy(@ptrCast(*BackingType, self));
             }
 
+            fn data(self: *Page) *[std.mem.page_size]u8 {
+                return @ptrCast(*[std.mem.page_size]u8, self);
+            }
+            fn headerIndex() usize {
+                comptime {
+                    return std.mem.page_size - @sizeOf(PageHeader);
+                }
+            }
+
+            // TODO: may make more sense to put the header + any padding at the start
+            fn header(self: *Page) *PageHeader {
+                return @ptrCast(*PageHeader, @alignCast(@alignOf(PageHeader), &self.data()[headerIndex()]));
+            }
+
             // TODO: should probably have an internal free list to accelerate this
             // TODO: make sure this cast is always safe at comptime?
             fn createEntity(self: *@This()) EntityIndex {
                 // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
-                const start = (self.getHeader().entity_size - 1) * self.getHeader().capacity;
-                for (self.getData()[start..(start + self.getHeader().capacity)], 0..) |*b, i| {
+                const start = (self.header().entity_size - 1) * self.header().capacity;
+                for (self.data()[start..(start + self.header().capacity)], 0..) |*b, i| {
                     if (!@ptrCast(*bool, b).*) {
                         // TODO: make assertions in get component that it exists first
                         @ptrCast(*bool, b).* = true;
-                        self.getHeader().len += 1;
+                        self.header().len += 1;
                         return @intCast(EntityIndex, i);
                     }
                 }
@@ -217,15 +217,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             fn exists(self: *@This(), index: u32) bool {
                 // TODO: one more dup of exists logic...
-                return @ptrCast(*bool, &self.getData()[(self.getHeader().entity_size - 1) * self.getHeader().capacity + index]).*;
+                return @ptrCast(*bool, &self.data()[(self.header().entity_size - 1) * self.header().capacity + index]).*;
             }
 
             // TODO: i was previously thinking i needed a reference to the handle here--is that correct or no? maybe
             // required for the iterator?
             fn removeEntity(self: *Page, index: usize) void {
-                self.getHeader().len -= 1;
+                self.header().len -= 1;
                 // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
-                @ptrCast(*bool, &self.getData()[(self.getHeader().entity_size - 1) * self.getHeader().capacity + index]).* = false;
+                @ptrCast(*bool, &self.data()[(self.header().entity_size - 1) * self.header().capacity + index]).* = false;
             }
 
             // TODO: usize as index?
@@ -233,12 +233,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
             fn getComponent(self: *Page, comptime componentField: std.meta.FieldEnum(Entity), index: usize) *std.meta.fieldInfo(Entity, componentField).type {
                 var ptr: usize = 0;
                 inline for (std.meta.fields(Entity), 0..) |component, i| {
-                    if (self.getHeader().archetype.isSet(i)) {
+                    if (self.header().archetype.isSet(i)) {
                         if (@intToEnum(std.meta.FieldEnum(Entity), i) == componentField) {
                             ptr += index * @sizeOf(component.type);
-                            return @ptrCast(*component.type, @alignCast(@alignOf(component.type), &self.getData()[ptr]));
+                            return @ptrCast(*component.type, @alignCast(@alignOf(component.type), &self.data()[ptr]));
                         }
-                        ptr += @sizeOf(component.type) * self.getHeader().capacity;
+                        ptr += @sizeOf(component.type) * self.header().capacity;
                     }
                 }
                 unreachable;
@@ -333,7 +333,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // TODO: only possiblly necessary if didn't juts create one..
             // If the head does not have space, create a new head that has space
-            if (page_list.head.?.getHeader().len == page_list.head.?.getHeader().capacity) {
+            if (page_list.head.?.header().len == page_list.head.?.header().capacity) {
                 const newPage = Page.init(archetype) catch unreachable;
                 self.page_pool.append(std.heap.page_allocator, newPage) catch unreachable;
                 page_list.prepend(newPage);
@@ -347,7 +347,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             };
 
             // If the page is now full, move it to the end of the page list
-            if (page.getHeader().len == page.getHeader().capacity) {
+            if (page.header().len == page.header().capacity) {
                 page_list.moveToTail(page);
             }
 
@@ -388,9 +388,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: have a setter and assert not already set? or just add assert?
             // Unset the exists bit, and reorder the page
             const page = self.slots[entity.index].location.page;
-            const was_full = page.getHeader().len == page.getHeader().capacity;
+            const was_full = page.header().len == page.header().capacity;
             page.removeEntity(self.slots[entity.index].location.index_in_page);
-            const page_list: *PageList = self.page_lists.getPtr(page.getHeader().archetype).?;
+            const page_list: *PageList = self.page_lists.getPtr(page.header().archetype).?;
 
             // If this page didn't have space before but does now, move it to the front of the page
             // list
@@ -425,7 +425,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             const slot = self.slots[entity.index];
-            if (!slot.location.page.getHeader().archetype.isSet(@enumToInt(component))) {
+            if (!slot.location.page.header().archetype.isSet(@enumToInt(component))) {
                 return null;
             }
             return slot.location.page.getComponent(component, slot.location.index_in_page);
@@ -520,7 +520,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                                 break;
                             }
 
-                            if (self.index_in_page == self.page_list.?.getHeader().capacity) {
+                            if (self.index_in_page == self.page_list.?.header().capacity) {
                                 break;
                             }
 
@@ -528,7 +528,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         }
 
                         // If it exists, return it
-                        if (self.index_in_page < self.page_list.?.getHeader().capacity) {
+                        if (self.index_in_page < self.page_list.?.header().capacity) {
                             // XXX: found it! actually set the values here
                             // XXX: just increment the pointers here instead of using index in page?
                             // e.g. have a pointer to exists, and to each component, and increment
@@ -545,7 +545,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                         // If we didn't find anything, advance to the next page in this archetype
                         // page list
-                        self.page_list = self.page_list.?.getHeader().next;
+                        self.page_list = self.page_list.?.header().next;
                         self.index_in_page = 0;
                     }
                 }
@@ -588,8 +588,8 @@ test "limits" {
         while (page_lists.next()) |page_list| {
             var page: ?*@TypeOf(entities).Page = page_list.value_ptr.head;
             while (page) |p| {
-                try std.testing.expect(p.getHeader().len == 0);
-                page = p.getHeader().next;
+                try std.testing.expect(p.header().len == 0);
+                page = p.header().next;
             }
         }
     }
@@ -840,6 +840,7 @@ test "minimal iter test" {
 // TODO: missing features:
 // - fast & convenient iteration
 //     - test iteration in each test
+//          - we can do this by hasing on the handle or something, but to do that we need a way to get the actual handle from the iterator, so gotta store that now
 // - const/non const or no?
 // - adding/removing components to live entities
 // - tests for page free lists?
