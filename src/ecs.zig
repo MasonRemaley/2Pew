@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const max_entities: EntityIndex = 1000000;
 
 const EntityIndex = u32;
+const invalid_entity_index = std.math.maxInt(EntityIndex);
 
 const track_generation = switch (builtin.mode) {
     .Debug, .ReleaseSafe => true,
@@ -66,15 +67,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
             location: EntityLocation,
         };
 
-        // TODO: pack this tightly, cache right data
-        const PageHeader = struct {
-            next: ?*Page,
-            prev: ?*Page,
-            archetype: Archetype,
-            capacity: EntityIndex,
-            entity_size: usize,
-            len: usize,
-        };
         const PageList = struct {
             head: ?*Page = null,
             tail: ?*Page = null,
@@ -145,6 +137,19 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 if (self.head == null) self.head = page;
             }
         };
+
+        // TODO: pack this tightly, cache right data
+        const PageHeader = struct {
+            next: ?*Page,
+            prev: ?*Page,
+            archetype: Archetype,
+            capacity: EntityIndex,
+            entity_size: usize,
+            len: usize,
+            component_arrays: usize,
+            handle_array: usize,
+        };
+
         // TODO: make sure exactly one page size, make sure ordered correctly, may need to store everything
         // in byte array
         // TODO: comptime make sure capacity large enough even if all components used at once?
@@ -153,60 +158,86 @@ pub fn Entities(comptime componentTypes: anytype) type {
         const Page = opaque {
             const BackingType = [std.mem.page_size]u8;
 
+            // TODO: This math is cheap enough, but if adding a page to an existing list technically
+            // could just copy it.
             fn init(archetype: Archetype) !*Page {
-                var page = @ptrCast(*Page, try std.heap.page_allocator.create(BackingType));
+                var ptr: usize = 0;
 
-                // Calculate the space one entity takes up. No space is wasted due to padding, since
-                // the data field is page aligned and the components are sorted from largest
-                // alignment to smallest.
-                var entity_size: usize = 0;
-                entity_size += 1; // One byte for the existence flag
+                // Store the header, no alignment necessary since we start out page aligned
+                ptr += @sizeOf(PageHeader);
+
+                // Store the handle array
+                // XXX: eventually will be alignof handle
+                ptr = std.mem.alignForward(ptr, @alignOf(EntityHandle));
+                const handle_array = ptr;
+
+                // Calculate how many entities can actually be stored
+                var components_size: usize = 0;
+                var max_component_alignment: usize = 1;
+                var first = true;
                 inline for (std.meta.fields(Entity), 0..) |component, i| {
                     if (archetype.isSet(i)) {
-                        entity_size += @sizeOf(component.type);
+                        if (first) {
+                            first = false;
+                            max_component_alignment = @alignOf(component.type);
+                        }
+                        components_size += @sizeOf(component.type);
                     }
                 }
 
-                const capacity = @intCast(EntityIndex, headerIndex() / entity_size);
+                const padding_conservative = max_component_alignment - 1;
+                const entity_size = @sizeOf(EntityHandle) + components_size;
+                const conservative_capacity = @intCast(EntityIndex, (std.mem.page_size - ptr - padding_conservative) / entity_size);
+
+                ptr += @sizeOf(EntityHandle) * conservative_capacity;
+
+                // Store the component arrays
+                ptr = std.mem.alignForward(ptr, max_component_alignment);
+                const component_arrays = ptr;
+
+                var page = @ptrCast(*Page, try std.heap.page_allocator.create(BackingType));
                 page.header().* = .{
                     .next = null,
                     .prev = null,
                     .archetype = archetype,
-                    .capacity = capacity,
+                    .capacity = conservative_capacity,
                     .entity_size = entity_size,
                     .len = 0,
+                    .handle_array = handle_array,
+                    .component_arrays = component_arrays,
                 };
+
+                // Initialize with invalid handles
+                var handles = page.handleArray();
+                for (0..conservative_capacity) |i| {
+                    handles[i].index = invalid_entity_index;
+                }
 
                 return page;
             }
 
             fn deinit(self: *Page) void {
-                std.heap.page_allocator.destroy(@ptrCast(*BackingType, self));
+                std.heap.page_allocator.destroy(self.data());
             }
 
             fn data(self: *Page) *[std.mem.page_size]u8 {
                 return @ptrCast(*[std.mem.page_size]u8, self);
             }
-            fn headerIndex() usize {
-                comptime {
-                    return std.mem.page_size - @sizeOf(PageHeader);
-                }
-            }
 
             // TODO: may make more sense to put the header + any padding at the start
             fn header(self: *Page) *PageHeader {
-                return @ptrCast(*PageHeader, @alignCast(@alignOf(PageHeader), &self.data()[headerIndex()]));
+                return @ptrCast(*PageHeader, @alignCast(@alignOf(PageHeader), self.data()));
             }
 
             // TODO: should probably have an internal free list to accelerate this
             // TODO: make sure this cast is always safe at comptime?
-            fn createEntity(self: *@This()) EntityIndex {
-                // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
-                const start = (self.header().entity_size - 1) * self.header().capacity;
-                for (self.data()[start..(start + self.header().capacity)], 0..) |*b, i| {
-                    if (!@ptrCast(*bool, b).*) {
-                        // TODO: make assertions in get component that it exists first
-                        @ptrCast(*bool, b).* = true;
+            // TODO: make assertions in get component that it exists first
+            fn createEntity(self: *@This(), handle: EntityHandle) EntityIndex {
+                // XXX: can i use a normal for loop on this, but cap it with a range or slice?
+                var handles = self.handleArray();
+                for (0..self.header().capacity) |i| {
+                    if (handles[i].index == invalid_entity_index) {
+                        handles[i] = handle;
                         self.header().len += 1;
                         return @intCast(EntityIndex, i);
                     }
@@ -215,29 +246,27 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 unreachable;
             }
 
-            fn exists(self: *@This(), index: u32) bool {
-                // TODO: one more dup of exists logic...
-                return @ptrCast(*bool, &self.data()[(self.header().entity_size - 1) * self.header().capacity + index]).*;
+            fn handleArray(self: *@This()) [*]EntityHandle {
+                return @ptrCast([*]EntityHandle, @alignCast(@alignOf(EntityHandle), &self.data()[self.header().handle_array]));
             }
 
             // TODO: i was previously thinking i needed a reference to the handle here--is that correct or no? maybe
             // required for the iterator?
             fn removeEntity(self: *Page, index: usize) void {
                 self.header().len -= 1;
-                // TODO: subs out the exists flag..a little confusing and more math than necessary, does one other place too
-                @ptrCast(*bool, &self.data()[(self.header().entity_size - 1) * self.header().capacity + index]).* = false;
+                self.handleArray()[index].index = invalid_entity_index;
             }
 
             // TODO: usize as index?
             // TODO: faster method when setting multiple components at once?
-            fn getComponent(self: *Page, comptime componentField: std.meta.FieldEnum(Entity), index: usize) *std.meta.fieldInfo(Entity, componentField).type {
-                var ptr: usize = 0;
+            fn componentArray(self: *Page, comptime componentField: std.meta.FieldEnum(Entity)) [*]std.meta.fieldInfo(Entity, componentField).type {
+                var ptr: usize = self.header().component_arrays;
                 inline for (std.meta.fields(Entity), 0..) |component, i| {
                     if (self.header().archetype.isSet(i)) {
                         if (@intToEnum(std.meta.FieldEnum(Entity), i) == componentField) {
-                            ptr += index * @sizeOf(component.type);
-                            return @ptrCast(*component.type, @alignCast(@alignOf(component.type), &self.data()[ptr]));
+                            return @ptrCast([*]component.type, @alignCast(@alignOf(component.type), &self.data()[ptr]));
                         }
+
                         ptr += @sizeOf(component.type) * self.header().capacity;
                     }
                 }
@@ -341,9 +370,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const page = page_list.head.?;
 
             // Create a new entity
+            const handle = EntityHandle{
+                .index = index,
+                .generation = self.slots[index].generation,
+            };
             self.slots[index].location = EntityLocation{
                 .page = page,
-                .index_in_page = page.createEntity(),
+                .index_in_page = page.createEntity(handle),
             };
 
             // If the page is now full, move it to the end of the page list
@@ -354,17 +387,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // Initialize the new entity
             // TODO: loop fastest or can cache math?
             inline for (std.meta.fields(@TypeOf(entity))) |f| {
-                page.getComponent(
+                page.componentArray(
                     @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?),
-                    self.slots[index].location.index_in_page,
-                ).* = @field(entity, f.name);
+                )[self.slots[index].location.index_in_page] = @field(entity, f.name);
             }
 
-            // Return a handle to the entity
-            return EntityHandle{
-                .index = index,
-                .generation = self.slots[index].generation,
-            };
+            // Return the handle to the entity
+            return handle;
         }
 
         pub fn createEntity(self: *@This(), entity: anytype) EntityHandle {
@@ -428,7 +457,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             if (!slot.location.page.header().archetype.isSet(@enumToInt(component))) {
                 return null;
             }
-            return slot.location.page.getComponent(component, slot.location.index_in_page);
+            return &slot.location.page.componentArray(component)[slot.location.index_in_page];
         }
 
         pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: std.meta.FieldEnum(Entity)) ?*std.meta.fieldInfo(Entity, component).type {
@@ -437,7 +466,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         pub fn Iterator(comptime components: anytype) type {
             return struct {
-                const Item = entity: {
+                const Components = entity: {
                     var fields: [std.meta.fields(@TypeOf(components)).len]std.builtin.Type.StructField = undefined;
                     var i = 0;
                     // XXX: wait inline for on tuples? indexing?
@@ -464,6 +493,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                             .is_tuple = false,
                         },
                     });
+                };
+
+                const Item = struct {
+                    handle: EntityHandle,
+                    comps: Components,
                 };
 
                 archetype: Archetype,
@@ -496,6 +530,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 // oh wait I think it's fine--we just can't create stuff of the archetype that we're itearting. but
                 // if it just has a subset of the components that's fine. that's fine for the most common use cases
                 // e.g. firing a bullet, and we can enforce it! make sure that's true but i think it should be fine!
+                // we could also add a way to defer creation--more robust, but can't work with the entity right away. could
+                // return a handle to an empty entity though.
                 // XXX: add entity id to item...make sure can't clashs somehow, maybe make an outer struct
                 // called item and make the above called components or something.
                 fn next(self: *@This()) ?*Item {
@@ -516,7 +552,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                         // Find the next entity in this archetype page
                         while (true) {
-                            if (self.page_list.?.exists(self.index_in_page)) {
+                            if (self.page_list.?.handleArray()[self.index_in_page].index != invalid_entity_index) {
                                 break;
                             }
 
@@ -533,11 +569,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                             // XXX: just increment the pointers here instead of using index in page?
                             // e.g. have a pointer to exists, and to each component, and increment
                             // each? (or increment exists and then add the right amount to the others)
-                            inline for (std.meta.fields(Item)) |field| {
-                                @field(self.item, field.name) = self.page_list.?.getComponent(
+                            self.item.handle = self.page_list.?.handleArray()[self.index_in_page];
+                            inline for (std.meta.fields(Components)) |field| {
+                                @field(self.item.comps, field.name) = &self.page_list.?.componentArray(
                                     @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, field.name).?),
-                                    self.index_in_page,
-                                );
+                                )[self.index_in_page];
                             }
                             self.index_in_page += 1;
                             return &self.item;
@@ -790,19 +826,21 @@ test "minimal iter test" {
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
     defer entities.deinit();
 
-    _ = entities.createEntity(.{ .x = 10, .y = 20 });
-    _ = entities.createEntity(.{ .x = 30, .y = 40 });
-    _ = entities.createEntity(.{ .x = 50 });
-    _ = entities.createEntity(.{ .y = 60 });
+    const entity_0 = entities.createEntity(.{ .x = 10, .y = 20 });
+    const entity_1 = entities.createEntity(.{ .x = 30, .y = 40 });
+    const entity_2 = entities.createEntity(.{ .x = 50 });
+    const entity_3 = entities.createEntity(.{ .y = 60 });
 
     {
         var iter = entities.iterator(.{ .x, .y });
         var next = iter.next().?;
-        try std.testing.expectEqual(next.x.*, 10);
-        try std.testing.expectEqual(next.y.*, 20);
+        try std.testing.expectEqual(next.handle, entity_0);
+        try std.testing.expectEqual(next.comps.x.*, 10);
+        try std.testing.expectEqual(next.comps.y.*, 20);
         next = iter.next().?;
-        try std.testing.expectEqual(next.x.*, 30);
-        try std.testing.expectEqual(next.y.*, 40);
+        try std.testing.expectEqual(next.handle, entity_1);
+        try std.testing.expectEqual(next.comps.x.*, 30);
+        try std.testing.expectEqual(next.comps.y.*, 40);
 
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
@@ -810,28 +848,40 @@ test "minimal iter test" {
 
     {
         var iter = entities.iterator(.{.x});
-        try std.testing.expectEqual(iter.next().?.x.*, 10);
-        try std.testing.expectEqual(iter.next().?.x.*, 30);
-        try std.testing.expectEqual(iter.next().?.x.*, 50);
+        var next = iter.next().?;
+        try std.testing.expectEqual(next.handle, entity_0);
+        try std.testing.expectEqual(next.comps.x.*, 10);
+        next = iter.next().?;
+        try std.testing.expectEqual(next.handle, entity_1);
+        try std.testing.expectEqual(next.comps.x.*, 30);
+        next = iter.next().?;
+        try std.testing.expectEqual(next.handle, entity_2);
+        try std.testing.expectEqual(next.comps.x.*, 50);
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
     }
 
     {
         var iter = entities.iterator(.{.y});
-        try std.testing.expectEqual(iter.next().?.y.*, 20);
-        try std.testing.expectEqual(iter.next().?.y.*, 40);
-        try std.testing.expectEqual(iter.next().?.y.*, 60);
+        var next = iter.next().?;
+        try std.testing.expectEqual(next.handle, entity_0);
+        try std.testing.expectEqual(next.comps.y.*, 20);
+        next = iter.next().?;
+        try std.testing.expectEqual(next.handle, entity_1);
+        try std.testing.expectEqual(next.comps.y.*, 40);
+        next = iter.next().?;
+        try std.testing.expectEqual(next.handle, entity_3);
+        try std.testing.expectEqual(next.comps.y.*, 60);
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
     }
 
     {
         var iter = entities.iterator(.{});
-        try std.testing.expect(iter.next() != null);
-        try std.testing.expect(iter.next() != null);
-        try std.testing.expect(iter.next() != null);
-        try std.testing.expect(iter.next() != null);
+        try std.testing.expectEqual(iter.next().?.handle, entity_0);
+        try std.testing.expectEqual(iter.next().?.handle, entity_1);
+        try std.testing.expectEqual(iter.next().?.handle, entity_2);
+        try std.testing.expectEqual(iter.next().?.handle, entity_3);
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
     }
@@ -841,6 +891,7 @@ test "minimal iter test" {
 // - fast & convenient iteration
 //     - test iteration in each test
 //          - we can do this by hasing on the handle or something, but to do that we need a way to get the actual handle from the iterator, so gotta store that now
+//     - getComponent on the iterator for non-iter components, but still faster than going through the handle?
 // - const/non const or no?
 // - adding/removing components to live entities
 // - tests for page free lists?
