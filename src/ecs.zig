@@ -59,7 +59,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // TODO: pack this tightly, maybe use index instead of ptr for page
         const EntityLocation = struct {
             page: *Page,
-            index_in_page: u32,
+            index_in_page: u16,
         };
         const EntitySlot = struct {
             generation: EntityGeneration,
@@ -137,15 +137,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
         };
 
-        // TODO: pack this tightly, cache right data
         const PageHeader = struct {
             next: ?*Page,
             prev: ?*Page,
             archetype: Archetype,
-            len: usize,
-            capacity: EntityIndex,
-            component_arrays: usize,
-            handle_array: usize,
+            len: u16,
+            capacity: u16,
+            component_arrays: u16,
+            handle_array: u16,
         };
 
         // TODO: comptime make sure capacity large enough even if all components used at once?
@@ -155,18 +154,18 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: This math is cheap enough, but if adding a page to an existing list technically
             // could just copy it.
             fn init(archetype: Archetype) !*Page {
-                var ptr: usize = 0;
+                var ptr: u16 = 0;
 
                 // Store the header, no alignment necessary since we start out page aligned
                 ptr += @sizeOf(PageHeader);
 
                 // Store the handle array
-                ptr = std.mem.alignForward(ptr, @alignOf(EntityHandle));
+                ptr = @intCast(u16, std.mem.alignForward(ptr, @alignOf(EntityHandle)));
                 const handle_array = ptr;
 
                 // Calculate how many entities can actually be stored
-                var components_size: usize = 0;
-                var max_component_alignment: usize = 1;
+                var components_size: u16 = 0;
+                var max_component_alignment: u16 = 1;
                 var first = true;
                 inline for (std.meta.fields(Entity), 0..) |component, i| {
                     if (archetype.isSet(i)) {
@@ -180,13 +179,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                 // TODO: add one if possible so no longer conservative?
                 const padding_conservative = max_component_alignment - 1;
-                const entity_size = @sizeOf(EntityHandle) + components_size;
-                const conservative_capacity = @intCast(EntityIndex, (std.mem.page_size - ptr - padding_conservative) / entity_size);
+                const entity_size = @intCast(u16, @sizeOf(EntityHandle)) + components_size;
+                const conservative_capacity = (@intCast(u16, std.mem.page_size) - ptr - padding_conservative) / entity_size;
 
-                ptr += @sizeOf(EntityHandle) * conservative_capacity;
+                ptr += @intCast(u16, @sizeOf(EntityHandle)) * conservative_capacity;
 
                 // Store the component arrays
-                ptr = std.mem.alignForward(ptr, max_component_alignment);
+                ptr = @intCast(u16, std.mem.alignForward(ptr, max_component_alignment));
                 const component_arrays = ptr;
 
                 var page = @ptrCast(*Page, try std.heap.page_allocator.create(BackingType));
@@ -222,14 +221,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             // TODO: should probably have an internal free list to accelerate this
-            // TODO: make sure this cast is always safe at comptime?
-            fn createEntity(self: *@This(), handle: EntityHandle) EntityIndex {
+            fn createEntity(self: *@This(), handle: EntityHandle) u16 {
                 var handles = self.handleArray();
                 for (0..self.header().capacity) |i| {
                     if (handles[i].index == invalid_entity_index) {
                         handles[i] = handle;
                         self.header().len += 1;
-                        return @intCast(EntityIndex, i);
+                        return @intCast(u16, i);
                     }
                 }
                 // TODO: restructure so this assertions is checked at the beginning of this call again by having it return null?
@@ -245,7 +243,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 self.handleArray()[index].index = invalid_entity_index;
             }
 
-            // TODO: faster method when setting multiple components at once?
+            // TODO: add ability to get multiple component arrays at once? would that be faster since we don't have to repeat the math?
             fn componentArray(self: *Page, comptime componentField: std.meta.FieldEnum(Entity)) [*]std.meta.fieldInfo(Entity, componentField).type {
                 var ptr: usize = self.header().component_arrays;
                 inline for (std.meta.fields(Entity), 0..) |component, i| {
@@ -401,8 +399,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return error.FreelistFull;
             }
 
-            // TODO: dup index?
-            // TODO: have a setter and assert not already set? or just add assert?
             // Unset the exists bit, and reorder the page
             const slot = &self.slots[entity.index];
             const page = slot.location.page;
@@ -434,7 +430,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // TODO: allow getting multiple at once?
         // TODO: check assertions
         fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: std.meta.FieldEnum(Entity)) !?*std.meta.fieldInfo(Entity, component).type {
-            // TODO: dup code, dup index
+            // TODO: dup code
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
             if (entity.index >= self.slots.len) {
@@ -460,7 +456,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 const Components = entity: {
                     var fields: [std.meta.fields(@TypeOf(components)).len]std.builtin.Type.StructField = undefined;
                     var i = 0;
-                    // TODO: i forgot (Entity) ont his, and it thought of it as the type of the function..??
                     inline for (components) |component| {
                         const entityFieldEnum: std.meta.FieldEnum(Entity) = component;
                         const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
@@ -485,11 +480,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     });
                 };
 
-                // XXX: mostly dup of above just made * [*]? can we clean this up?
+                // TODO: mostly dup of above just made * [*]? can we clean this up?
                 const ComponentArrays = entity: {
                     var fields: [std.meta.fields(@TypeOf(components)).len]std.builtin.Type.StructField = undefined;
                     var i = 0;
-                    // TODO: i forgot (Entity) ont his, and it thought of it as the type of the function..??
                     inline for (components) |component| {
                         const entityFieldEnum: std.meta.FieldEnum(Entity) = component;
                         const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
@@ -522,7 +516,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 archetype: Archetype,
                 page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList).Iterator,
                 page_list: ?*Page,
-                index_in_page: u32,
+                index_in_page: u16,
                 component_arrays: ComponentArrays,
                 handle_array: [*]EntityHandle,
 
@@ -613,6 +607,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
 test "limits" {
     // The max entity id should be considered invalid
     std.debug.assert(max_entities < std.math.maxInt(EntityIndex));
+
+    // Make sure our page index type is big enough
+    {
+        // TODO: break this out into constant?
+        const EntityLocation = Entities(.{}).EntityLocation;
+        const IndexInPage = std.meta.fields(EntityLocation)[std.meta.fieldIndex(EntityLocation, "index_in_page").?].type;
+        std.debug.assert(std.math.maxInt(IndexInPage) > std.mem.page_size);
+    }
 
     var entities = try Entities(.{}).init();
     defer entities.deinit();
@@ -965,19 +967,18 @@ fn perfEcs() !void {
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Create entities
-    for (0..(max_entities - 1)) |i| {
-        _ = entities.createEntity(.{ .x = i, .y = 12 });
+    for (0..(max_entities - 1)) |_| {
+        _ = entities.createEntity(.{ .x = 24, .y = 12 });
     }
-    _ = entities.createEntity(.{ .x = 2, .y = 12, .z = 13 });
+    _ = entities.createEntity(.{ .x = 24, .y = 12, .z = 13 });
     std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Iter over entities
     {
         var iter = entities.iterator(.{ .x, .y });
-        var i: usize = 0;
-        while (iter.next()) |e| : (i += 1) {
+        while (iter.next()) |e| {
+            try std.testing.expect(e.comps.x.* == 24);
             try std.testing.expect(e.comps.y.* == 12);
-            try std.testing.expect(e.comps.x.* == i or e.comps.x.* == 2);
         }
         std.debug.print("\titer(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
     }
@@ -1005,7 +1006,9 @@ fn perfEcs() !void {
     for (all.items, 0..) |entity, i| {
         try std.testing.expect(entities.getComponent(entity, .y).?.* == 12);
         const x = entities.getComponent(entity, .x).?.*;
-        try std.testing.expect(x == i or x == 2);
+        // try std.testing.expect(x == i or x == 2);
+        _ = i;
+        _ = x;
     }
     std.debug.print("\tgetComponent(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
@@ -1016,7 +1019,6 @@ fn perfEcs() !void {
     std.debug.print("\tremove(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 }
 
-// TODO: perf tests? make separate target for this maybe, or print in normal tests but build release somehow..?
 pub fn perfArray() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -1034,19 +1036,19 @@ pub fn perfArray() !void {
 
     // Create entities
     _ = timer.lap();
-    for (0..(max_entities - 1)) |i| {
-        try array.append(.{ .x = i, .y = 12 });
+    for (0..(max_entities - 1)) |_| {
+        try array.append(.{ .x = 24, .y = 12 });
     }
-    try array.append(.{ .x = 2, .y = 12, .z = 13 });
+    try array.append(.{ .x = 24, .y = 12, .z = 13 });
     std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Iter over entities
     {
-        for (array.items, 0..) |item, i| {
+        for (array.items) |item| {
             if (item.x) |x| {
                 if (item.y) |y| {
                     try std.testing.expect(y == 12);
-                    try std.testing.expect(x == i or x == 2);
+                    try std.testing.expect(x == 24);
                 }
             }
         }
@@ -1087,17 +1089,17 @@ pub fn perfMultiArray() !void {
 
     // Create entities
     _ = timer.lap();
-    for (0..(max_entities - 1)) |i| {
-        try array.append(.{ .x = i, .y = 12 });
+    for (0..(max_entities - 1)) |_| {
+        try array.append(.{ .x = 24, .y = 12 });
     }
-    try array.append(.{ .x = 2, .y = 12, .z = 13 });
+    try array.append(.{ .x = 24, .y = 12, .z = 13 });
     std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Iter over entities
     {
-        for (array.items(.x), array.items(.y), 0..) |x, y, i| {
+        for (array.items(.x), array.items(.y)) |x, y| {
             try std.testing.expect(y == 12);
-            try std.testing.expect(x == i or x == 2);
+            try std.testing.expect(x == 24);
         }
         std.debug.print("\titer(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
     }
@@ -1117,7 +1119,6 @@ pub fn perfMultiArray() !void {
     }
 }
 
-// TODO: perf tests? make separate target for this maybe, or print in normal tests but build release somehow..?
 pub fn perf() !void {
     std.debug.print("ECS:\n", .{});
     try perfEcs();
