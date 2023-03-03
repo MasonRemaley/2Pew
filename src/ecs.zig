@@ -91,7 +91,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
             fn headerIndex() usize {
                 comptime {
-                    return std.mem.page_size - std.mem.alignBackward(std.mem.page_size - 1, @alignOf(PageHeader));
+                    return std.mem.page_size - @sizeOf(PageHeader);
                 }
             }
 
@@ -115,7 +115,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
 
                 const capacity = @intCast(EntityIndex, headerIndex() / entity_size);
-
                 page.getHeader().* = .{
                     .next = null,
                     .prev = null,
@@ -149,6 +148,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 unreachable;
             }
 
+            fn exists(self: *@This(), index: u32) bool {
+                // TODO: one more dup of exists logic...
+                return @ptrCast(*bool, &self.getData()[(self.getHeader().entity_size - 1) * self.getHeader().capacity + index]).*;
+            }
+
             // TODO: i was previously thinking i needed a reference to the handle here--is that correct or no? maybe
             // required for the iterator?
             fn removeEntity(self: *Page, index: usize) void {
@@ -179,7 +183,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // TODO: better way to allocate this..? should we even be using the hashmap here?
         pagePool: ArrayListUnmanaged(*Page),
         // Ordered so that pages with space available are always at the front.
-        pageLists: AutoArrayHashMapUnmanaged(Archetype, PageList),
+        page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList),
 
         fn init() !@This() {
             return .{
@@ -194,7 +198,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     free.len = 0;
                     break :free free;
                 },
-                .pageLists = .{},
+                .page_lists = .{},
                 // TODO: init capacity? not actually really pooling these yet just accumulating them
                 .pagePool = .{},
             };
@@ -203,7 +207,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         fn deinit(self: *@This()) void {
             std.heap.page_allocator.free(self.slots);
             std.heap.page_allocator.free(self.free);
-            self.pageLists.deinit(std.heap.page_allocator);
+            self.page_lists.deinit(std.heap.page_allocator);
             for (self.pagePool.items) |page| {
                 page.deinit();
             }
@@ -211,14 +215,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         fn createEntityChecked(self: *@This(), entity: anytype) ?EntityHandle {
-            // Determine the archetype of this entity
-            comptime var archetype = Archetype.initEmpty();
-            // TODO: why is comptime block required here?
-            comptime {
+            const archetype = comptime archetype: {
+                var archetype = Archetype.initEmpty();
                 inline for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
                     archetype.set(std.meta.fieldIndex(Entity, fieldName).?);
                 }
-            }
+                break :archetype archetype;
+            };
 
             // Find a free index for the entity
             const index = index: {
@@ -245,35 +248,37 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // TODO: don't ignore errors in this function...just trying things out. add errdefer where needed
             // Get the page list for this archetype
-            const pageList: *PageList = page: {
+            const page_list: *PageList = page: {
                 // TODO: allocate pages up front in pool when possible
                 // Find or allocate a page for this entity
-                const entry = self.pageLists.getOrPut(
+                const entry = self.page_lists.getOrPut(
                     std.heap.page_allocator,
                     archetype,
                 ) catch unreachable;
                 if (!entry.found_existing) {
+                    // XXX: also test that the expected number of pages are created..??? i thought
+                    // we already checked this in another test how is this going wrong?
                     const head = Page.init(archetype) catch unreachable;
                     self.pagePool.append(std.heap.page_allocator, head) catch unreachable;
                     entry.value_ptr.* = .{
                         .head = head,
-                        // TODO: do we ever use tail?
                         .tail = head,
                     };
                 }
                 break :page entry.value_ptr;
             };
 
+            // TODO: only possiblly necessary if didn't juts create one..
             // If the head does not have space, create a new head that has space
-            if (pageList.head.getHeader().len == pageList.head.getHeader().capacity) {
-                // XXX: dup init code...
+            if (page_list.head.getHeader().len == page_list.head.getHeader().capacity) {
+                // XXX: test next/prev lining up?
                 const newPage = Page.init(archetype) catch unreachable;
                 self.pagePool.append(std.heap.page_allocator, newPage) catch unreachable;
-                newPage.getHeader().next = pageList.head;
-                pageList.head = newPage;
-                pageList.head.getHeader().next.?.getHeader().prev = pageList.head;
+                newPage.getHeader().next = page_list.head;
+                page_list.head.getHeader().prev = newPage;
+                page_list.head = newPage;
             }
-            const page = pageList.head;
+            const page = page_list.head;
 
             // Create a new entity
             self.slots[index].location = EntityLocation{
@@ -285,12 +290,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
             if (page.getHeader().len == page.getHeader().capacity) {
                 if (page.getHeader().next) |next| {
                     // Remove page from the list
-                    pageList.head = next;
+                    page_list.head = next;
 
                     // Insert page at the end of the list
-                    pageList.tail.getHeader().next = page;
-                    page.getHeader().prev = pageList.tail;
-                    pageList.tail = page;
+                    page_list.tail.getHeader().next = page;
+                    page.getHeader().prev = page_list.tail;
+                    page_list.tail = page;
                 }
             }
 
@@ -327,16 +332,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return error.FreelistFull;
             }
 
-            // TODO: use const in more places--not transitive through ptrs right?
             // TODO: dup index?
             // TODO: have a setter and assert not already set? or just add assert?
             // Unset the exists bit, and reorder the page
             const page = self.slots[entity.index].location.page;
             page.removeEntity(self.slots[entity.index].location.index_in_page);
-            const pageList: *PageList = self.pageLists.getPtr(page.getHeader().archetype).?;
+            const page_list: *PageList = self.page_lists.getPtr(page.getHeader().archetype).?;
 
             // Move the page to the front of the page list
-            if (pageList.head != page) {
+            if (page_list.head != page) {
                 // Remove the page from the list
                 if (page.getHeader().prev) |prev| {
                     prev.getHeader().next = page.getHeader().next;
@@ -346,8 +350,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
 
                 // Reinsert it at head
-                page.getHeader().next = pageList.head;
-                pageList.head = page;
+                page.getHeader().next = page_list.head;
+                page_list.head = page;
             }
 
             // Increment this entity slot's generation so future uses will fail
@@ -385,6 +389,127 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: std.meta.FieldEnum(Entity)) ?*std.meta.fieldInfo(Entity, component).type {
             return self.getComponentChecked(entity, component) catch unreachable;
+        }
+
+        pub fn Iterator(comptime components: anytype) type {
+            return struct {
+                const Item = entity: {
+                    var fields: [std.meta.fields(@TypeOf(components)).len]std.builtin.Type.StructField = undefined;
+                    var i = 0;
+                    // XXX: wait inline for on tuples? indexing?
+                    // XXX: i forgot (Entity) ont his, and it thought of it as the type of the function..??
+                    inline for (components) |component| {
+                        const entityFieldEnum: std.meta.FieldEnum(Entity) = component;
+                        const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
+                        const FieldType = *entityField.type;
+                        fields[i] = std.builtin.Type.StructField{
+                            .name = entityField.name,
+                            .type = FieldType,
+                            .default_value = null,
+                            .is_comptime = false,
+                            .alignment = @alignOf(FieldType),
+                        };
+                        i += 1;
+                    }
+                    break :entity @Type(std.builtin.Type{
+                        .Struct = std.builtin.Type.Struct{
+                            .layout = .Auto,
+                            .backing_integer = null,
+                            .fields = &fields,
+                            .decls = &[_]std.builtin.Type.Declaration{},
+                            .is_tuple = false,
+                        },
+                    });
+                };
+
+                archetype: Archetype,
+                page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList).Iterator,
+                page_list: ?*Page,
+                index_in_page: u32,
+                item: Item,
+
+                fn init(entities: *Entities(componentTypes)) @This() {
+                    return .{
+                        // XXX: will we get the expected errors for non existent fields?
+                        // XXX: why can't use a getter for this and the other place?
+                        .archetype = comptime archetype: {
+                            var archetype = Archetype.initEmpty();
+                            inline for (std.meta.fields(@TypeOf(components))) |field| {
+                                const entityField: std.meta.FieldEnum(Entity) = @field(components, field.name);
+                                archetype.set(@enumToInt(entityField));
+                            }
+                            break :archetype archetype;
+                        },
+                        .page_lists = entities.page_lists.iterator(),
+                        .page_list = null,
+                        .index_in_page = 0,
+                        .item = undefined,
+                    };
+                }
+
+                // XXX: iterator invalidation...does our free list make it worse somehow? also can we make it safe
+                // by setting flags in debug mode that indicate that an iterator is live?--
+                // oh wait I think it's fine--we just can't create stuff of the archetype that we're itearting. but
+                // if it just has a subset of the components that's fine. that's fine for the most common use cases
+                // e.g. firing a bullet, and we can enforce it! make sure that's true but i think it should be fine!
+                // XXX: add entity id to item...make sure can't clashs somehow, maybe make an outer struct
+                // called item and make the above called components or something.
+                fn next(self: *@This()) ?*Item {
+                    while (true) {
+                        // If we don't have a page list, find the next compatible archetype's page
+                        // list
+                        if (self.page_list == null) {
+                            self.page_list = while (self.page_lists.next()) |page| {
+                                if (page.key_ptr.supersetOf(self.archetype)) {
+                                    break page.value_ptr.head;
+                                }
+                            } else {
+                                // No more pages, give up
+                                return null;
+                            };
+                            self.index_in_page = 0;
+                        }
+
+                        // Find the next entity in this archetype page
+                        while (true) {
+                            if (self.page_list.?.exists(self.index_in_page)) {
+                                break;
+                            }
+
+                            if (self.index_in_page == self.page_list.?.getHeader().capacity) {
+                                break;
+                            }
+
+                            self.index_in_page += 1;
+                        }
+
+                        // If it exists, return it
+                        if (self.index_in_page < self.page_list.?.getHeader().capacity) {
+                            // XXX: found it! actually set the values here
+                            // XXX: just increment the pointers here instead of using index in page?
+                            // e.g. have a pointer to exists, and to each component, and increment
+                            // each? (or increment exists and then add the right amount to the others)
+                            inline for (std.meta.fields(Item)) |field| {
+                                @field(self.item, field.name) = self.page_list.?.getComponent(
+                                    @intToEnum(std.meta.FieldEnum(Entity), std.meta.fieldIndex(Entity, field.name).?),
+                                    self.index_in_page,
+                                );
+                            }
+                            self.index_in_page += 1;
+                            return &self.item;
+                        }
+
+                        // If we didn't find anything, advance to the next page in this archetype
+                        // page list
+                        self.page_list = self.page_list.?.getHeader().next;
+                        self.index_in_page = 0;
+                    }
+                }
+            };
+        }
+
+        fn iterator(self: *@This(), components: anytype) Iterator(components) {
+            return Iterator(components).init(self);
         }
     };
 }
@@ -604,8 +729,62 @@ test "random data" {
     }
 }
 
+// XXX: just while writing it, write a more extensive test later
+// XXX: why did fixing the header make the limits test so slow?
+test "minimal iter test" {
+    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
+    defer entities.deinit();
+
+    _ = entities.createEntity(.{ .x = 10, .y = 20 });
+    _ = entities.createEntity(.{ .x = 30, .y = 40 });
+    _ = entities.createEntity(.{ .x = 50 });
+    _ = entities.createEntity(.{ .y = 60 });
+
+    {
+        var iter = entities.iterator(.{ .x, .y });
+        var next = iter.next().?;
+        try std.testing.expectEqual(next.x.*, 10);
+        try std.testing.expectEqual(next.y.*, 20);
+        next = iter.next().?;
+        try std.testing.expectEqual(next.x.*, 30);
+        try std.testing.expectEqual(next.y.*, 40);
+
+        try std.testing.expect(iter.next() == null);
+        try std.testing.expect(iter.next() == null);
+    }
+
+    {
+        var iter = entities.iterator(.{.x});
+        try std.testing.expectEqual(iter.next().?.x.*, 10);
+        try std.testing.expectEqual(iter.next().?.x.*, 30);
+        try std.testing.expectEqual(iter.next().?.x.*, 50);
+        try std.testing.expect(iter.next() == null);
+        try std.testing.expect(iter.next() == null);
+    }
+
+    {
+        var iter = entities.iterator(.{.y});
+        try std.testing.expectEqual(iter.next().?.y.*, 20);
+        try std.testing.expectEqual(iter.next().?.y.*, 40);
+        try std.testing.expectEqual(iter.next().?.y.*, 60);
+        try std.testing.expect(iter.next() == null);
+        try std.testing.expect(iter.next() == null);
+    }
+
+    {
+        var iter = entities.iterator(.{});
+        try std.testing.expect(iter.next() != null);
+        try std.testing.expect(iter.next() != null);
+        try std.testing.expect(iter.next() != null);
+        try std.testing.expect(iter.next() != null);
+        try std.testing.expect(iter.next() == null);
+        try std.testing.expect(iter.next() == null);
+    }
+}
+
 // TODO: missing features:
 // - fast & convenient iteration
+//     - test iteration in each test
 // - const/non const or no?
 // - adding/removing components to live entities
 // - tests for page free lists?
