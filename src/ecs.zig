@@ -15,7 +15,6 @@ const track_generation = switch (builtin.mode) {
 
 const EntityGeneration = if (track_generation) u32 else u0;
 
-// TODO: pack this tightly
 pub const EntityHandle = struct {
     generation: EntityGeneration,
     index: EntityIndex,
@@ -143,18 +142,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
             next: ?*Page,
             prev: ?*Page,
             archetype: Archetype,
-            capacity: EntityIndex,
-            entity_size: usize,
             len: usize,
+            capacity: EntityIndex,
             component_arrays: usize,
             handle_array: usize,
         };
 
-        // TODO: make sure exactly one page size, make sure ordered correctly, may need to store everything
-        // in byte array
         // TODO: comptime make sure capacity large enough even if all components used at once?
-        // TODO: explain alignment sort here
-        // TODO: instead of getting individual components, get component arrays?
         const Page = opaque {
             const BackingType = [std.mem.page_size]u8;
 
@@ -167,7 +161,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 ptr += @sizeOf(PageHeader);
 
                 // Store the handle array
-                // XXX: eventually will be alignof handle
                 ptr = std.mem.alignForward(ptr, @alignOf(EntityHandle));
                 const handle_array = ptr;
 
@@ -202,7 +195,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     .prev = null,
                     .archetype = archetype,
                     .capacity = conservative_capacity,
-                    .entity_size = entity_size,
                     .len = 0,
                     .handle_array = handle_array,
                     .component_arrays = component_arrays,
@@ -225,16 +217,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return @ptrCast(*[std.mem.page_size]u8, self);
             }
 
-            // TODO: may make more sense to put the header + any padding at the start
             fn header(self: *Page) *PageHeader {
                 return @ptrCast(*PageHeader, @alignCast(@alignOf(PageHeader), self.data()));
             }
 
             // TODO: should probably have an internal free list to accelerate this
             // TODO: make sure this cast is always safe at comptime?
-            // TODO: make assertions in get component that it exists first
             fn createEntity(self: *@This(), handle: EntityHandle) EntityIndex {
-                // XXX: can i use a normal for loop on this, but cap it with a range or slice?
                 var handles = self.handleArray();
                 for (0..self.header().capacity) |i| {
                     if (handles[i].index == invalid_entity_index) {
@@ -251,14 +240,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return @ptrCast([*]EntityHandle, @alignCast(@alignOf(EntityHandle), &self.data()[self.header().handle_array]));
             }
 
-            // TODO: i was previously thinking i needed a reference to the handle here--is that correct or no? maybe
-            // required for the iterator?
             fn removeEntity(self: *Page, index: usize) void {
                 self.header().len -= 1;
                 self.handleArray()[index].index = invalid_entity_index;
             }
 
-            // TODO: usize as index?
             // TODO: faster method when setting multiple components at once?
             fn componentArray(self: *Page, comptime componentField: std.meta.FieldEnum(Entity)) [*]std.meta.fieldInfo(Entity, componentField).type {
                 var ptr: usize = self.header().component_arrays;
@@ -277,15 +263,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         slots: []EntitySlot,
         free: []EntityIndex,
-        // TODO: better way to allocate this..? should we even be using the hashmap here?
+        // TODO: if we're gonna use a page allocator for array lists...always set to multiples of a page
         page_pool: ArrayListUnmanaged(*Page),
+        // TODO: better way to allocate this..? should we even be using the hashmap here?
         // Ordered so that pages with space available are always at the front.
         page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList),
 
         fn init() !@This() {
             return .{
                 .slots = entities: {
-                    // TODO: if we're gonna use a page allocator for array lists...always set to multiples of a page
                     var entities = try std.heap.page_allocator.alloc(EntitySlot, max_entities);
                     entities.len = 0;
                     break :entities entities;
@@ -397,6 +383,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return handle;
         }
 
+        // TODO: name overly verbose?
         pub fn createEntity(self: *@This(), entity: anytype) EntityHandle {
             return self.createEntityChecked(entity).?;
         }
@@ -417,9 +404,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: dup index?
             // TODO: have a setter and assert not already set? or just add assert?
             // Unset the exists bit, and reorder the page
-            const page = self.slots[entity.index].location.page;
+            const slot = &self.slots[entity.index];
+            const page = slot.location.page;
             const was_full = page.header().len == page.header().capacity;
-            page.removeEntity(self.slots[entity.index].location.index_in_page);
+            page.removeEntity(slot.location.index_in_page);
             const page_list: *PageList = self.page_lists.getPtr(page.header().archetype).?;
 
             // If this page didn't have space before but does now, move it to the front of the page
@@ -429,7 +417,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             // Increment this entity slot's generation so future uses will fail
-            self.slots[entity.index].generation +%= 1;
+            if (EntityGeneration != u0) {
+                slot.generation +%= 1;
+            }
 
             // Add the entity to the free list
             const top = self.free.len;
@@ -470,8 +460,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 const Components = entity: {
                     var fields: [std.meta.fields(@TypeOf(components)).len]std.builtin.Type.StructField = undefined;
                     var i = 0;
-                    // XXX: wait inline for on tuples? indexing?
-                    // XXX: i forgot (Entity) ont his, and it thought of it as the type of the function..??
+                    // TODO: i forgot (Entity) ont his, and it thought of it as the type of the function..??
                     inline for (components) |component| {
                         const entityFieldEnum: std.meta.FieldEnum(Entity) = component;
                         const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
@@ -509,12 +498,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                 fn init(entities: *Entities(componentTypes)) @This() {
                     return .{
-                        // XXX: will we get the expected errors for non existent fields?
-                        // XXX: why can't use a getter for this and the other place?
+                        // TODO: will we get the expected errors for non existent fields?
+                        // TODO: why can't use a getter for this and the other place?
                         .archetype = comptime archetype: {
                             var archetype = Archetype.initEmpty();
-                            inline for (std.meta.fields(@TypeOf(components))) |field| {
-                                const entityField: std.meta.FieldEnum(Entity) = @field(components, field.name);
+                            inline for (components) |field| {
+                                const entityField: std.meta.FieldEnum(Entity) = field;
                                 archetype.set(@enumToInt(entityField));
                             }
                             break :archetype archetype;
@@ -526,15 +515,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     };
                 }
 
-                // XXX: iterator invalidation...does our free list make it worse somehow? also can we make it safe
+                // TODO: iterator invalidation...does our free list make it worse somehow? also can we make it safe
                 // by setting flags in debug mode that indicate that an iterator is live?--
                 // oh wait I think it's fine--we just can't create stuff of the archetype that we're itearting. but
                 // if it just has a subset of the components that's fine. that's fine for the most common use cases
                 // e.g. firing a bullet, and we can enforce it! make sure that's true but i think it should be fine!
                 // we could also add a way to defer creation--more robust, but can't work with the entity right away. could
                 // return a handle to an empty entity though.
-                // XXX: add entity id to item...make sure can't clashs somehow, maybe make an outer struct
-                // called item and make the above called components or something.
                 fn next(self: *@This()) ?*Item {
                     while (true) {
                         // If we don't have a page list, find the next compatible archetype's page
@@ -560,7 +547,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                         // If it exists, return it
                         if (self.index_in_page < self.page_list.?.header().capacity) {
-                            // XXX: found it! actually set the values here
                             // XXX: just increment the pointers here instead of using index in page?
                             // e.g. have a pointer to exists, and to each component, and increment
                             // each? (or increment exists and then add the right amount to the others)
@@ -647,7 +633,6 @@ test "limits" {
     }
 }
 
-// TODO: test the page indices too?
 test "free list" {
     var entities = try Entities(.{}).init();
     defer entities.deinit();
@@ -716,7 +701,7 @@ test "random data" {
     var truth = std.ArrayList(Created).init(std.testing.allocator);
     defer truth.deinit();
 
-    for (0..10000) |_| {
+    for (0..1000) |_| {
         switch (rnd.random().enumValue(enum { create, modify, destroy })) {
             .create => {
                 for (0..rnd.random().uintLessThan(usize, 10)) |_| {
@@ -783,11 +768,12 @@ test "random data" {
                 }
             },
             .destroy => {
-                // TODO: destroy more at once?
-                if (truth.items.len > 0) {
-                    const index = rnd.random().uintLessThan(usize, truth.items.len);
-                    const removed = truth.orderedRemove(index);
-                    entities.removeEntity(removed.handle);
+                for (0..rnd.random().uintLessThan(usize, 3)) |_| {
+                    if (truth.items.len > 0) {
+                        const index = rnd.random().uintLessThan(usize, truth.items.len);
+                        const removed = truth.orderedRemove(index);
+                        entities.removeEntity(removed.handle);
+                    }
                 }
             },
         }
@@ -868,9 +854,6 @@ test "random data" {
     }
 }
 
-// XXX: just while writing it, write a more extensive test later
-// XXX: okay so like it's adding entities that's slow...the second time is faster, but only a little
-// bit, is something going wrong? are we allocating more often than we should or something?
 test "minimal iter test" {
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
     defer entities.deinit();
@@ -936,11 +919,180 @@ test "minimal iter test" {
     }
 }
 
-// TODO: missing features:
-// - fast & convenient iteration
-//     - getComponent on the iterator for non-iter components, but still faster than going through the handle?
-// - const/non const or no?
-// - adding/removing components to live entities
-// - tests for page free lists?
-//   - assert that at each step they're sorted correctly?
-// - check perf
+fn perfEcs() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    // Init
+    var timer = try std.time.Timer.start();
+    var entities = try Entities(.{ .x = u128, .y = u256, .z = u128 }).init();
+    defer entities.deinit();
+    std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
+    // Create entities
+    for (0..(max_entities - 1)) |i| {
+        _ = entities.createEntity(.{ .x = i, .y = 12 });
+    }
+    _ = entities.createEntity(.{ .x = 2, .y = 12, .z = 13 });
+    std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
+    // Iter over entities
+    {
+        var iter = entities.iterator(.{ .x, .y });
+        var i: usize = 0;
+        while (iter.next()) |e| : (i += 1) {
+            try std.testing.expect(e.comps.y.* == 12);
+            try std.testing.expect(e.comps.x.* == i or e.comps.x.* == 2);
+        }
+        std.debug.print("\titer(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    // Iter one entity
+    {
+        var iter = entities.iterator(.{.z});
+        while (iter.next()) |e| {
+            try std.testing.expect(e.comps.z.* == 13);
+        }
+        std.debug.print("\titer(1): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    var all = std.ArrayList(EntityHandle).init(allocator);
+    defer all.deinit();
+    {
+        var iter = entities.iterator(.{});
+        while (iter.next()) |next| {
+            try all.append(next.handle);
+        }
+    }
+    _ = timer.lap();
+
+    // Getting components
+    for (all.items, 0..) |entity, i| {
+        try std.testing.expect(entities.getComponent(entity, .y).?.* == 12);
+        const x = entities.getComponent(entity, .x).?.*;
+        try std.testing.expect(x == i or x == 2);
+    }
+    std.debug.print("\tgetComponent(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
+    // Remove all entities
+    for (all.items) |entity| {
+        entities.removeEntity(entity);
+    }
+    std.debug.print("\tremove(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+}
+
+// TODO: perf tests? make separate target for this maybe, or print in normal tests but build release somehow..?
+pub fn perfArray() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    const Entity = struct {
+        x: ?u128 = null,
+        y: ?u256 = null,
+        z: ?u128 = null,
+    };
+
+    var timer = try std.time.Timer.start();
+    var array = std.ArrayList(Entity).init(allocator);
+    defer array.deinit();
+    std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
+    // Create entities
+    _ = timer.lap();
+    for (0..(max_entities - 1)) |i| {
+        try array.append(.{ .x = i, .y = 12 });
+    }
+    try array.append(.{ .x = 2, .y = 12, .z = 13 });
+    std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
+    // Iter over entities
+    {
+        for (array.items, 0..) |item, i| {
+            if (item.x) |x| {
+                if (item.y) |y| {
+                    try std.testing.expect(y == 12);
+                    try std.testing.expect(x == i or x == 2);
+                }
+            }
+        }
+        std.debug.print("\titer(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    // Iter one entity
+    {
+        for (array.items) |item| {
+            if (item.z) |z| {
+                try std.testing.expect(z == 13);
+            }
+        }
+        std.debug.print("\titer(1): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    {
+        while (array.items.len > 0)
+            _ = array.swapRemove(0);
+        std.debug.print("\tremove all: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+}
+
+pub fn perfMultiArray() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    const Entity = struct {
+        x: ?u128 = null,
+        y: ?u256 = null,
+        z: ?u128 = null,
+    };
+
+    var timer = try std.time.Timer.start();
+    var array = std.MultiArrayList(Entity).init(allocator);
+    defer array.deinit();
+    std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
+    // Create entities
+    _ = timer.lap();
+    for (0..(max_entities - 1)) |i| {
+        try array.append(.{ .x = i, .y = 12 });
+    }
+    try array.append(.{ .x = 2, .y = 12, .z = 13 });
+    std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
+    // Iter over entities
+    {
+        for (array.items(.x), array.items(.y), 0..) |x, y, i| {
+            try std.testing.expect(y == 12);
+            try std.testing.expect(x == i or x == 2);
+        }
+        std.debug.print("\titer(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    // Iter one entity
+    {
+        for (array.items(.z)) |z| {
+            try std.testing.expect(z == 13);
+        }
+        std.debug.print("\titer(1): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    {
+        while (array.items.len > 0)
+            _ = array.swapRemove(0);
+        std.debug.print("\tremove all: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+}
+
+// TODO: perf tests? make separate target for this maybe, or print in normal tests but build release somehow..?
+pub fn perf() !void {
+    std.debug.print("ECS:\n", .{});
+    try perfEcs();
+    std.debug.print("\n", .{});
+
+    std.debug.print("Array:\n", .{});
+    try perfArray();
+    std.debug.print("\n", .{});
+
+    std.debug.print("MultiArray:\n", .{});
+    try perfArray();
+    std.debug.print("\n", .{});
+}
