@@ -76,13 +76,80 @@ pub fn Entities(comptime componentTypes: anytype) type {
             len: usize,
         };
         const PageList = struct {
-            head: *Page,
-            tail: *Page,
+            head: ?*Page = null,
+            tail: ?*Page = null,
+
+            fn moveToHead(self: *@This(), page: *Page) void {
+                if (self.head != page) {
+                    self.remove(page);
+                    self.prepend(page);
+                }
+            }
+
+            fn moveToTail(self: *@This(), page: *Page) void {
+                if (self.tail != page) {
+                    self.remove(page);
+                    self.append(page);
+                }
+            }
+
+            fn remove(self: *@This(), page: *Page) void {
+                // Update head/tail
+                if (self.head == page)
+                    self.head = page.getHeader().next;
+                if (self.tail == page)
+                    self.tail = page.getHeader().prev;
+
+                // Update the previous node
+                if (page.getHeader().prev) |prev| {
+                    prev.getHeader().next = page.getHeader().next;
+                }
+
+                // Update the next node
+                if (page.getHeader().next) |next| {
+                    next.getHeader().prev = page.getHeader().prev;
+                }
+
+                // Invaidate prev/next
+                page.getHeader().prev = undefined;
+                page.getHeader().next = undefined;
+            }
+
+            fn prepend(self: *@This(), page: *Page) void {
+                // Update prev/next
+                page.getHeader().prev = null;
+                page.getHeader().next = self.head;
+
+                // Update the current head's prev
+                if (self.head) |head| {
+                    head.getHeader().prev = page;
+                }
+
+                // Update head and tail
+                self.head = page;
+                if (self.tail == null) self.tail = page;
+            }
+
+            fn append(self: *@This(), page: *Page) void {
+                // Update prev/next
+                page.getHeader().prev = self.tail;
+                page.getHeader().next = null;
+
+                // Update the current tail's next
+                if (self.tail) |tail| {
+                    tail.getHeader().next = page;
+                }
+
+                // Update head and tail
+                self.tail = page;
+                if (self.head == null) self.head = page;
+            }
         };
         // TODO: make sure exactly one page size, make sure ordered correctly, may need to store everything
         // in byte array
         // TODO: comptime make sure capacity large enough even if all components used at once?
         // TODO: explain alignment sort here
+        // TODO: instead of getting individual components, get component arrays?
         const Page = opaque {
             const BackingType = [std.mem.page_size]u8;
 
@@ -181,7 +248,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         slots: []EntitySlot,
         free: []EntityIndex,
         // TODO: better way to allocate this..? should we even be using the hashmap here?
-        pagePool: ArrayListUnmanaged(*Page),
+        page_pool: ArrayListUnmanaged(*Page),
         // Ordered so that pages with space available are always at the front.
         page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList),
 
@@ -200,7 +267,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 },
                 .page_lists = .{},
                 // TODO: init capacity? not actually really pooling these yet just accumulating them
-                .pagePool = .{},
+                .page_pool = .{},
             };
         }
 
@@ -208,10 +275,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
             std.heap.page_allocator.free(self.slots);
             std.heap.page_allocator.free(self.free);
             self.page_lists.deinit(std.heap.page_allocator);
-            for (self.pagePool.items) |page| {
+            for (self.page_pool.items) |page| {
                 page.deinit();
             }
-            self.pagePool.deinit(std.heap.page_allocator);
+            self.page_pool.deinit(std.heap.page_allocator);
         }
 
         fn createEntityChecked(self: *@This(), entity: anytype) ?EntityHandle {
@@ -256,29 +323,22 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     archetype,
                 ) catch unreachable;
                 if (!entry.found_existing) {
-                    // XXX: also test that the expected number of pages are created..??? i thought
-                    // we already checked this in another test how is this going wrong?
-                    const head = Page.init(archetype) catch unreachable;
-                    self.pagePool.append(std.heap.page_allocator, head) catch unreachable;
-                    entry.value_ptr.* = .{
-                        .head = head,
-                        .tail = head,
-                    };
+                    const newPage = Page.init(archetype) catch unreachable;
+                    self.page_pool.append(std.heap.page_allocator, newPage) catch unreachable;
+                    entry.value_ptr.* = PageList{};
+                    entry.value_ptr.*.prepend(newPage);
                 }
                 break :page entry.value_ptr;
             };
 
             // TODO: only possiblly necessary if didn't juts create one..
             // If the head does not have space, create a new head that has space
-            if (page_list.head.getHeader().len == page_list.head.getHeader().capacity) {
-                // XXX: test next/prev lining up?
+            if (page_list.head.?.getHeader().len == page_list.head.?.getHeader().capacity) {
                 const newPage = Page.init(archetype) catch unreachable;
-                self.pagePool.append(std.heap.page_allocator, newPage) catch unreachable;
-                newPage.getHeader().next = page_list.head;
-                page_list.head.getHeader().prev = newPage;
-                page_list.head = newPage;
+                self.page_pool.append(std.heap.page_allocator, newPage) catch unreachable;
+                page_list.prepend(newPage);
             }
-            const page = page_list.head;
+            const page = page_list.head.?;
 
             // Create a new entity
             self.slots[index].location = EntityLocation{
@@ -288,15 +348,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // If the page is now full, move it to the end of the page list
             if (page.getHeader().len == page.getHeader().capacity) {
-                if (page.getHeader().next) |next| {
-                    // Remove page from the list
-                    page_list.head = next;
-
-                    // Insert page at the end of the list
-                    page_list.tail.getHeader().next = page;
-                    page.getHeader().prev = page_list.tail;
-                    page_list.tail = page;
-                }
+                page_list.moveToTail(page);
             }
 
             // Initialize the new entity
@@ -336,22 +388,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: have a setter and assert not already set? or just add assert?
             // Unset the exists bit, and reorder the page
             const page = self.slots[entity.index].location.page;
+            const was_full = page.getHeader().len == page.getHeader().capacity;
             page.removeEntity(self.slots[entity.index].location.index_in_page);
             const page_list: *PageList = self.page_lists.getPtr(page.getHeader().archetype).?;
 
-            // Move the page to the front of the page list
-            if (page_list.head != page) {
-                // Remove the page from the list
-                if (page.getHeader().prev) |prev| {
-                    prev.getHeader().next = page.getHeader().next;
-                }
-                if (page.getHeader().next) |next| {
-                    next.getHeader().prev = page.getHeader().prev;
-                }
-
-                // Reinsert it at head
-                page.getHeader().next = page_list.head;
-                page_list.head = page;
+            // If this page didn't have space before but does now, move it to the front of the page
+            // list
+            if (was_full) {
+                page_list.moveToHead(page);
             }
 
             // Increment this entity slot's generation so future uses will fail
@@ -524,32 +568,41 @@ test "limits" {
     defer created.deinit();
 
     // Add the max number of entities
-    {
-        for (0..max_entities) |i| {
-            const entity = entities.createEntity(.{});
-            try std.testing.expectEqual(EntityHandle{ .index = @intCast(EntityIndex, i), .generation = 0 }, entity);
-            try created.append(entity);
-        }
-        try std.testing.expect(entities.createEntityChecked(.{}) == null);
+    for (0..max_entities) |i| {
+        const entity = entities.createEntity(.{});
+        try std.testing.expectEqual(EntityHandle{ .index = @intCast(EntityIndex, i), .generation = 0 }, entity);
+        try created.append(entity);
     }
+    try std.testing.expect(entities.createEntityChecked(.{}) == null);
+    const page_pool_size = entities.page_pool.items.len;
 
     // Remove all the entities
+    while (created.popOrNull()) |entity| {
+        entities.removeEntity(entity);
+    }
+    try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
+
+    // Assert that all pages are empty
     {
-        for (0..created.items.len) |i| {
-            entities.removeEntity(created.items[created.items.len - i - 1]);
+        var page_lists = entities.page_lists.iterator();
+        while (page_lists.next()) |page_list| {
+            var page: ?*@TypeOf(entities).Page = page_list.value_ptr.head;
+            while (page) |p| {
+                try std.testing.expect(p.getHeader().len == 0);
+                page = p.getHeader().next;
+            }
         }
     }
 
     // Create a bunch of entities again
-    {
-        for (0..max_entities) |i| {
-            try std.testing.expectEqual(
-                EntityHandle{ .index = @intCast(EntityIndex, i), .generation = 1 },
-                entities.createEntity(.{}),
-            );
-        }
-        try std.testing.expect(entities.createEntityChecked(.{}) == null);
+    for (0..max_entities) |i| {
+        try std.testing.expectEqual(
+            EntityHandle{ .index = @intCast(EntityIndex, i), .generation = 1 },
+            entities.createEntity(.{}),
+        );
     }
+    try std.testing.expect(entities.createEntityChecked(.{}) == null);
+    try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
     // Wrap a generation counter
     {
@@ -632,7 +685,8 @@ test "random data" {
     var truth = std.ArrayList(Created).init(std.testing.allocator);
     defer truth.deinit();
 
-    for (0..5000) |_| {
+    // XXX: can do way more now!
+    for (0..10000) |_| {
         switch (rnd.random().enumValue(enum { create, modify, destroy })) {
             .create => {
                 for (0..rnd.random().uintLessThan(usize, 10)) |_| {
@@ -730,7 +784,8 @@ test "random data" {
 }
 
 // XXX: just while writing it, write a more extensive test later
-// XXX: why did fixing the header make the limits test so slow?
+// XXX: okay so like it's adding entities that's slow...the second time is faster, but only a little
+// bit, is something going wrong? are we allocating more often than we should or something?
 test "minimal iter test" {
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
     defer entities.deinit();
@@ -789,3 +844,4 @@ test "minimal iter test" {
 // - adding/removing components to live entities
 // - tests for page free lists?
 //   - assert that at each step they're sorted correctly?
+// - check perf
