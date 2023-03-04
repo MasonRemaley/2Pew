@@ -183,6 +183,9 @@ pub fn main() !void {
     };
     const display_radius = display_height / 2.0;
 
+    var dt: f32 = 1.0 / 60.0;
+    var timer = try std.time.Timer.start();
+
     while (true) {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event) != 0) {
@@ -222,8 +225,6 @@ pub fn main() !void {
             }
             ship.prev_input = ship.input;
         }
-
-        const dt = 1.0 / 60.0;
 
         {
             var i: usize = 0;
@@ -442,6 +443,9 @@ pub fn main() !void {
         }
 
         c.SDL_RenderPresent(renderer);
+
+        var last_dt = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
+        dt = lerp(dt, last_dt, 0.1);
     }
 }
 
@@ -633,6 +637,7 @@ const Assets = struct {
         const animation = a.animations.items[@enumToInt(anim.index)];
         const frame_index = @floatToInt(u32, @floor(anim.time_passed * animation.fps));
         const frame = animation.start + frame_index;
+        // TODO: for large dt can cause out of bounds index
         const frame_sprite = a.sprite(a.frames.items[frame]);
         anim.time_passed += dt;
         const end_time = @intToFloat(f32, animation.len) / animation.fps;
@@ -741,4 +746,8 @@ fn sdlRect(top_left_pos: V, size: V) c.SDL_Rect {
         .w = @floatToInt(i32, size_floored.x),
         .h = @floatToInt(i32, size_floored.y),
     };
+}
+
+fn lerp(start: f32, end: f32, t: f32) f32 {
+    return (1.0 - t) * start + t * end;
 }
