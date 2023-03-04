@@ -315,7 +315,7 @@ pub fn main() !void {
                 turret.cooldown -= dt;
                 if (ship.input.fire and turret.cooldown <= 0) {
                     turret.cooldown = turret.cooldown_amount;
-                    _ = entities.createEntity(.{
+                    _ = entities.create(.{
                         .bullet = .{
                             .sprite = bullet_small,
                             .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),

@@ -1,9 +1,13 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const ecs = @import("ecs.zig");
 const Entities = ecs.Entities;
 const EntityHandle = ecs.EntityHandle;
 
 pub fn main() !void {
+    if (builtin.mode != .ReleaseFast) {
+        std.debug.print("\nWARNING: bench run in {} mode\n\n", .{builtin.mode});
+    }
     std.debug.print("ECS:\n", .{});
     try benchEcs();
     std.debug.print("\n", .{});
@@ -30,9 +34,9 @@ fn benchEcs() !void {
 
     // Create entities
     for (0..(ecs.max_entities - 1)) |_| {
-        _ = entities.createEntity(.{ .x = 24, .y = 12 });
+        _ = entities.create(.{ .x = 24, .y = 12 });
     }
-    _ = entities.createEntity(.{ .x = 24, .y = 12, .z = 13 });
+    _ = entities.create(.{ .x = 24, .y = 12, .z = 13 });
     std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Iter over entities

@@ -148,7 +148,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return @ptrCast(*Header, @alignCast(@alignOf(Header), self.data()));
             }
 
-            fn createEntity(self: *@This(), handle: EntityHandle) u16 {
+            fn create(self: *@This(), handle: EntityHandle) u16 {
                 var handles = self.handleArray();
                 for (0..self.header().capacity) |i| {
                     if (handles[i].index == invalid_entity_index) {
@@ -290,7 +290,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             self.pages.deinit(std.heap.page_allocator);
         }
 
-        fn createEntityChecked(self: *@This(), entity: anytype) ?EntityHandle {
+        fn createChecked(self: *@This(), entity: anytype) ?EntityHandle {
             const archetype = comptime archetype: {
                 var archetype = Archetype.initEmpty();
                 inline for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
@@ -355,7 +355,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             };
             const slot = &self.slots[index];
             slot.page = page;
-            slot.index_in_page = page.createEntity(handle);
+            slot.index_in_page = page.create(handle);
 
             // If the page is now full, move it to the end of the page list
             if (page.header().len == page.header().capacity) {
@@ -372,8 +372,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return handle;
         }
 
-        pub fn createEntity(self: *@This(), entity: anytype) EntityHandle {
-            return self.createEntityChecked(entity).?;
+        pub fn create(self: *@This(), entity: anytype) EntityHandle {
+            return self.createChecked(entity).?;
         }
 
         fn removeEntityChecked(self: *@This(), entity: EntityHandle) !void {
@@ -604,11 +604,11 @@ test "limits" {
 
     // Add the max number of entities
     for (0..max_entities) |i| {
-        const entity = entities.createEntity(.{});
+        const entity = entities.create(.{});
         try std.testing.expectEqual(EntityHandle{ .index = @intCast(SlotIndex, i), .generation = 0 }, entity);
         try created.append(entity);
     }
-    try std.testing.expect(entities.createEntityChecked(.{}) == null);
+    try std.testing.expect(entities.createChecked(.{}) == null);
     const page_pool_size = entities.pages.items.len;
 
     // Remove all the entities
@@ -633,10 +633,10 @@ test "limits" {
     for (0..max_entities) |i| {
         try std.testing.expectEqual(
             EntityHandle{ .index = @intCast(SlotIndex, i), .generation = 1 },
-            entities.createEntity(.{}),
+            entities.create(.{}),
         );
     }
-    try std.testing.expect(entities.createEntityChecked(.{}) == null);
+    try std.testing.expect(entities.createChecked(.{}) == null);
     try std.testing.expectEqual(page_pool_size, entities.pages.items.len);
 
     // Wrap a generation counter
@@ -646,7 +646,7 @@ test "limits" {
         entities.removeEntity(entity);
         try std.testing.expectEqual(
             EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
-            entities.createEntity(.{}),
+            entities.create(.{}),
         );
     }
 }
@@ -655,10 +655,10 @@ test "free list" {
     var entities = try Entities(.{}).init();
     defer entities.deinit();
 
-    const entity_0_0 = entities.createEntity(.{});
-    const entity_1_0 = entities.createEntity(.{});
-    const entity_2_0 = entities.createEntity(.{});
-    const entity_3_0 = entities.createEntity(.{});
+    const entity_0_0 = entities.create(.{});
+    const entity_1_0 = entities.create(.{});
+    const entity_2_0 = entities.create(.{});
+    const entity_3_0 = entities.create(.{});
 
     try std.testing.expectEqual(entities.slots[entity_0_0.index].index_in_page, 0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
@@ -667,9 +667,9 @@ test "free list" {
     try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 0 }, entity_3_0);
     entities.removeEntity(entity_3_0);
 
-    const entity_3_1 = entities.createEntity(.{});
-    const entity_1_1 = entities.createEntity(.{});
-    const entity_4_0 = entities.createEntity(.{});
+    const entity_3_1 = entities.create(.{});
+    const entity_1_1 = entities.create(.{});
+    const entity_4_0 = entities.create(.{});
 
     try std.testing.expectEqual(entities.slots[entity_0_0.index].index_in_page, 0);
     try std.testing.expectEqual(entities.slots[entity_2_0.index].index_in_page, 2);
@@ -690,7 +690,7 @@ test "safety" {
     var entities = try Entities(.{}).init();
     defer entities.deinit();
 
-    const entity = entities.createEntity(.{});
+    const entity = entities.create(.{});
     entities.removeEntity(entity);
     try std.testing.expectError(error.BadGeneration, entities.removeEntityChecked(entity));
     try std.testing.expectError(error.BadIndex, entities.removeEntityChecked(EntityHandle{
@@ -732,35 +732,35 @@ test "random data" {
                             if (data.x) |x| {
                                 if (data.y) |y| {
                                     if (data.z) |z| {
-                                        break :handle entities.createEntity(.{ .x = x, .y = y, .z = z });
+                                        break :handle entities.create(.{ .x = x, .y = y, .z = z });
                                     }
                                 }
                             }
                             if (data.x) |x| {
                                 if (data.y) |y| {
-                                    break :handle entities.createEntity(.{ .x = x, .y = y });
+                                    break :handle entities.create(.{ .x = x, .y = y });
                                 }
                             }
                             if (data.x) |x| {
                                 if (data.z) |z| {
-                                    break :handle entities.createEntity(.{ .x = x, .z = z });
+                                    break :handle entities.create(.{ .x = x, .z = z });
                                 }
                             }
                             if (data.y) |y| {
                                 if (data.z) |z| {
-                                    break :handle entities.createEntity(.{ .y = y, .z = z });
+                                    break :handle entities.create(.{ .y = y, .z = z });
                                 }
                             }
                             if (data.x) |x| {
-                                break :handle entities.createEntity(.{ .x = x });
+                                break :handle entities.create(.{ .x = x });
                             }
                             if (data.y) |y| {
-                                break :handle entities.createEntity(.{ .y = y });
+                                break :handle entities.create(.{ .y = y });
                             }
                             if (data.z) |z| {
-                                break :handle entities.createEntity(.{ .z = z });
+                                break :handle entities.create(.{ .z = z });
                             }
-                            break :handle entities.createEntity(.{});
+                            break :handle entities.create(.{});
                         },
                     });
                 }
@@ -874,10 +874,10 @@ test "minimal iter test" {
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
     defer entities.deinit();
 
-    const entity_0 = entities.createEntity(.{ .x = 10, .y = 20 });
-    const entity_1 = entities.createEntity(.{ .x = 30, .y = 40 });
-    const entity_2 = entities.createEntity(.{ .x = 50 });
-    const entity_3 = entities.createEntity(.{ .y = 60 });
+    const entity_0 = entities.create(.{ .x = 10, .y = 20 });
+    const entity_1 = entities.create(.{ .x = 30, .y = 40 });
+    const entity_2 = entities.create(.{ .x = 50 });
+    const entity_3 = entities.create(.{ .y = 60 });
 
     {
         var iter = entities.iterator(.{ .x, .y });
