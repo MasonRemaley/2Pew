@@ -8,6 +8,7 @@ const V = @import("Vec2d.zig");
 
 const display_width = 1920;
 const display_height = 1080;
+const ecs = @import("ecs.zig");
 
 pub fn main() !void {
     const gpa = std.heap.c_allocator;
@@ -750,4 +751,8 @@ fn sdlRect(top_left_pos: V, size: V) c.SDL_Rect {
 
 fn lerp(start: f32, end: f32, t: f32) f32 {
     return (1.0 - t) * start + t * end;
+}
+
+test {
+    _ = ecs;
 }

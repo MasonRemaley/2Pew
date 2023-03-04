@@ -74,6 +74,7 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // Creates a step for unit testing.
+    // TODO(mason): add all source files here?
     const exe_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
