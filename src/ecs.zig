@@ -392,11 +392,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const page = slot.page;
             const was_full = page.header().len == page.header().capacity;
             page.removeEntity(slot.index_in_page);
-            const page_list: *PageList = self.page_lists.getPtr(page.header().archetype).?;
 
             // If this page didn't have space before but does now, move it to the front of the page
             // list
             if (was_full) {
+                const page_list: *PageList = self.page_lists.getPtr(page.header().archetype).?;
                 page_list.moveToHead(page);
             }
 
