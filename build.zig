@@ -1,5 +1,4 @@
 const std = @import("std");
-const _ = @import("src/ecs.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -67,16 +66,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const ecs_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/ecs.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
 
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);
-    test_step.dependOn(&ecs_tests.step);
 }

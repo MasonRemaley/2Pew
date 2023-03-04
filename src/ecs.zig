@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const assert = std.debug.assert;
+
 const FieldEnum = std.meta.FieldEnum;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
@@ -39,12 +41,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     .alignment = @alignOf(registered.type),
                 };
             }
-            const CompareEntityFields = struct {
-                fn cmp(_: void, comptime lhs: Type.StructField, comptime rhs: Type.StructField) bool {
-                    return @alignOf(lhs.type) > @alignOf(rhs.type);
+            const AlignmentDescending = struct {
+                fn lessThan(_: void, comptime lhs: Type.StructField, comptime rhs: Type.StructField) bool {
+                    return @alignOf(rhs.type) < @alignOf(lhs.type);
                 }
             };
-            std.sort.sort(Type.StructField, &fields, {}, CompareEntityFields.cmp);
+            std.sort.sort(Type.StructField, &fields, {}, AlignmentDescending.lessThan);
             break :entity @Type(Type{
                 .Struct = Type.Struct{
                     .layout = .Auto,
@@ -85,7 +87,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 ptr += @sizeOf(Header);
 
                 // Store the handle array
-                ptr = @intCast(u16, std.mem.alignForward(ptr, @alignOf(EntityHandle)));
+                comptime assert(@alignOf(Header) >= @alignOf(EntityHandle));
                 const handle_array = ptr;
 
                 // Calculate how many entities can actually be stored
@@ -103,15 +105,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
 
                 const padding_conservative = max_component_alignment - 1;
-                const entity_size = @intCast(u16, @sizeOf(EntityHandle)) + components_size;
-                const conservative_capacity = (@intCast(u16, std.mem.page_size) - ptr - padding_conservative) / entity_size;
+                const entity_size = @sizeOf(EntityHandle) + components_size;
+                const conservative_capacity = (std.mem.page_size - ptr - padding_conservative) / entity_size;
 
-                std.debug.assert(conservative_capacity > 0);
+                assert(conservative_capacity > 0);
 
-                ptr += @intCast(u16, @sizeOf(EntityHandle)) * conservative_capacity;
+                ptr += @sizeOf(EntityHandle) * conservative_capacity;
 
                 // Store the component arrays
-                ptr = @intCast(u16, std.mem.alignForward(ptr, max_component_alignment));
+                ptr = std.mem.alignForwardGeneric(u16, ptr, max_component_alignment);
                 const component_arrays = ptr;
 
                 var page = @ptrCast(*Page, try std.heap.page_allocator.create(BackingType));
@@ -557,22 +559,21 @@ pub fn Entities(comptime componentTypes: anytype) type {
                             if (self.handle_array[self.index_in_page].index != invalid_entity_index) {
                                 break;
                             }
+                        } else {
+                            // If we didn't find anything, advance to the next page in this archetype
+                            // page list
+                            self.setPageList(self.page_list.?.header().next);
+                            continue;
                         }
 
                         // If it exists, return it
-                        if (self.index_in_page < self.page_list.?.header().capacity) {
-                            var item: Item = undefined;
-                            item.handle = self.handle_array[self.index_in_page];
-                            inline for (std.meta.fields(Components)) |field| {
-                                @field(item.comps, field.name) = &@field(self.component_arrays, field.name)[self.index_in_page];
-                            }
-                            self.index_in_page += 1;
-                            return item;
+                        var item: Item = undefined;
+                        item.handle = self.handle_array[self.index_in_page];
+                        inline for (std.meta.fields(Components)) |field| {
+                            @field(item.comps, field.name) = &@field(self.component_arrays, field.name)[self.index_in_page];
                         }
-
-                        // If we didn't find anything, advance to the next page in this archetype
-                        // page list
-                        self.setPageList(self.page_list.?.header().next);
+                        self.index_in_page += 1;
+                        return item;
                     }
                 }
             };
@@ -586,14 +587,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
 test "limits" {
     // The max entity id should be considered invalid
-    std.debug.assert(max_entities < std.math.maxInt(SlotIndex));
+    assert(max_entities < std.math.maxInt(SlotIndex));
 
     // Make sure our page index type is big enough
     {
         // TODO: break this out into constant?
         const EntitySlot = Entities(.{}).EntitySlot;
         const IndexInPage = std.meta.fields(EntitySlot)[std.meta.fieldIndex(EntitySlot, "index_in_page").?].type;
-        std.debug.assert(std.math.maxInt(IndexInPage) > std.mem.page_size);
+        assert(std.math.maxInt(IndexInPage) > std.mem.page_size);
     }
 
     var entities = try Entities(.{}).init();
