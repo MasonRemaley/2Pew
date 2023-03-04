@@ -9,6 +9,7 @@ const V = @import("Vec2d.zig");
 const display_width = 1920;
 const display_height = 1080;
 const ecs = @import("ecs.zig");
+const Entities = ecs.Entities;
 
 pub fn main() !void {
     const gpa = std.heap.c_allocator;
@@ -172,8 +173,8 @@ pub fn main() !void {
     var stars: [150]Star = undefined;
     generateStars(&stars);
 
-    var bullets = std.ArrayList(Bullet).init(gpa);
-    defer bullets.deinit();
+    var entities = try Entities(.{ .bullet = Bullet }).init();
+    defer entities.deinit();
 
     var decorations = std.ArrayList(Decoration).init(gpa);
     defer decorations.deinit();
@@ -228,15 +229,15 @@ pub fn main() !void {
         }
 
         {
-            var i: usize = 0;
-            while (i < bullets.items.len) {
-                const bullet = &bullets.items[i];
+            var it = entities.iterator(.{.bullet});
+            while (it.next()) |entity| {
+                const bullet = entity.comps.bullet;
 
                 bullet.pos.add(bullet.vel.scaled(dt));
 
                 bullet.duration -= dt;
                 if (bullet.duration <= 0) {
-                    _ = bullets.swapRemove(i);
+                    entities.removeEntity(entity.handle);
                     continue;
                 }
 
@@ -245,7 +246,6 @@ pub fn main() !void {
                         ship.radius * ship.radius + bullet.radius * bullet.radius)
                     {
                         ship.hp -= bullet.damage;
-                        _ = bullets.swapRemove(i);
 
                         // spawn shrapnel here
                         const shrapnel_animation = shrapnel_animations[
@@ -262,11 +262,10 @@ pub fn main() !void {
                             .duration = 2,
                         });
 
+                        entities.removeEntity(entity.handle);
                         continue;
                     }
                 }
-
-                i += 1;
             }
         }
 
@@ -316,13 +315,15 @@ pub fn main() !void {
                 turret.cooldown -= dt;
                 if (ship.input.fire and turret.cooldown <= 0) {
                     turret.cooldown = turret.cooldown_amount;
-                    try bullets.append(.{
-                        .sprite = bullet_small,
-                        .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
-                        .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
-                        .duration = turret.bullet_duration,
-                        .radius = 2,
-                        .damage = turret.bullet_damage,
+                    _ = entities.createEntity(.{
+                        .bullet = .{
+                            .sprite = bullet_small,
+                            .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
+                            .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
+                            .duration = turret.bullet_duration,
+                            .radius = 2,
+                            .damage = turret.bullet_damage,
+                        },
                     });
                 }
             }
@@ -416,18 +417,22 @@ pub fn main() !void {
             }
         }
 
-        for (bullets.items) |bullet| {
-            const sprite = assets.sprite(bullet.sprite);
-            sdlAssertZero(c.SDL_RenderCopyEx(
-                renderer,
-                sprite.texture,
-                null, // source rectangle
-                &sprite.toSdlRect(bullet.pos),
-                // The bullet asset images point up instead of to the right.
-                toDegrees(bullet.vel.angle() + math.pi / 2.0),
-                null, // center of rotation
-                c.SDL_FLIP_NONE,
-            ));
+        {
+            var it = entities.iterator(.{.bullet});
+            while (it.next()) |entity| {
+                const bullet = entity.comps.bullet;
+                const sprite = assets.sprite(bullet.sprite);
+                sdlAssertZero(c.SDL_RenderCopyEx(
+                    renderer,
+                    sprite.texture,
+                    null, // source rectangle
+                    &sprite.toSdlRect(bullet.pos),
+                    // The bullet asset images point up instead of to the right.
+                    toDegrees(bullet.vel.angle() + math.pi / 2.0),
+                    null, // center of rotation
+                    c.SDL_FLIP_NONE,
+                ));
+            }
         }
 
         for (decorations.items) |*decoration| {
