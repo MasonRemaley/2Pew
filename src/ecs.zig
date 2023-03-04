@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 
 const assert = std.debug.assert;
 
+const Allocator = std.mem.Allocator;
 const FieldEnum = std.meta.FieldEnum;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
@@ -80,7 +81,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             const BackingType = [std.mem.page_size]u8;
 
-            fn init(archetype: Archetype) !*Page {
+            fn init(allocator: Allocator, archetype: Archetype) !*Page {
                 var ptr: u16 = 0;
 
                 // Store the header, no alignment necessary since we start out page aligned
@@ -116,7 +117,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 ptr = std.mem.alignForwardGeneric(u16, ptr, max_component_alignment);
                 const component_arrays = ptr;
 
-                var page = @ptrCast(*Page, try std.heap.page_allocator.create(BackingType));
+                var page = @ptrCast(*Page, try allocator.create(BackingType));
                 page.header().* = .{
                     .next = null,
                     .prev = null,
@@ -136,8 +137,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return page;
             }
 
-            fn deinit(self: *Page) void {
-                std.heap.page_allocator.destroy(self.data());
+            fn deinit(self: *Page, allocator: Allocator) void {
+                allocator.destroy(self.data());
             }
 
             fn data(self: *Page) *[std.mem.page_size]u8 {
@@ -262,16 +263,19 @@ pub fn Entities(comptime componentTypes: anytype) type {
         free_slot_indices: []SlotIndex,
         pages: ArrayListUnmanaged(*Page),
         page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList),
+        // XXX: eventually don't store this, once we don't allocate after init!
+        allocator: Allocator,
 
-        pub fn init() !@This() {
+        pub fn init(allocator: Allocator) !@This() {
             return .{
+                .allocator = allocator,
                 .slots = entities: {
-                    var entities = try std.heap.page_allocator.alloc(EntitySlot, max_entities);
+                    var entities = try allocator.alloc(EntitySlot, max_entities);
                     entities.len = 0;
                     break :entities entities;
                 },
                 .free_slot_indices = free_slot_indices: {
-                    var free_slot_indices = try std.heap.page_allocator.alloc(SlotIndex, max_entities);
+                    var free_slot_indices = try allocator.alloc(SlotIndex, max_entities);
                     free_slot_indices.len = 0;
                     break :free_slot_indices free_slot_indices;
                 },
@@ -281,13 +285,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         pub fn deinit(self: *@This()) void {
-            std.heap.page_allocator.free(self.slots);
-            std.heap.page_allocator.free(self.free_slot_indices);
-            self.page_lists.deinit(std.heap.page_allocator);
+            self.allocator.free(self.slots);
+            self.allocator.free(self.free_slot_indices);
+            self.page_lists.deinit(self.allocator);
             for (self.pages.items) |page| {
-                page.deinit();
+                page.deinit(self.allocator);
             }
-            self.pages.deinit(std.heap.page_allocator);
+            self.pages.deinit(self.allocator);
         }
 
         fn createChecked(self: *@This(), entity: anytype) ?EntityHandle {
@@ -327,12 +331,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const page_list: *PageList = page: {
                 // Find or allocate a page for this entity
                 const entry = self.page_lists.getOrPut(
-                    std.heap.page_allocator,
+                    self.allocator,
                     archetype,
                 ) catch unreachable;
                 if (!entry.found_existing) {
-                    const newPage = Page.init(archetype) catch unreachable;
-                    self.pages.append(std.heap.page_allocator, newPage) catch unreachable;
+                    const newPage = Page.init(self.allocator, archetype) catch unreachable;
+                    self.pages.append(self.allocator, newPage) catch unreachable;
                     entry.value_ptr.* = PageList{};
                     entry.value_ptr.*.prepend(newPage);
                 }
@@ -342,8 +346,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: only possiblly necessary if didn't juts create one
             // If the head does not have space, create a new head that has space
             if (page_list.head.?.header().len == page_list.head.?.header().capacity) {
-                const newPage = Page.init(archetype) catch unreachable;
-                self.pages.append(std.heap.page_allocator, newPage) catch unreachable;
+                const newPage = Page.init(self.allocator, archetype) catch unreachable;
+                self.pages.append(self.allocator, newPage) catch unreachable;
                 page_list.prepend(newPage);
             }
             const page = page_list.head.?;
@@ -597,7 +601,7 @@ test "limits" {
         assert(std.math.maxInt(IndexInPage) > std.mem.page_size);
     }
 
-    var entities = try Entities(.{}).init();
+    var entities = try Entities(.{}).init(std.heap.page_allocator);
     defer entities.deinit();
     var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
     defer created.deinit();
@@ -652,7 +656,7 @@ test "limits" {
 }
 
 test "free list" {
-    var entities = try Entities(.{}).init();
+    var entities = try Entities(.{}).init(std.heap.page_allocator);
     defer entities.deinit();
 
     const entity_0_0 = entities.create(.{});
@@ -687,7 +691,7 @@ test "free list" {
 }
 
 test "safety" {
-    var entities = try Entities(.{}).init();
+    var entities = try Entities(.{}).init(std.heap.page_allocator);
     defer entities.deinit();
 
     const entity = entities.create(.{});
@@ -700,7 +704,7 @@ test "safety" {
 }
 
 test "random data" {
-    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
+    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(std.heap.page_allocator);
     defer entities.deinit();
 
     const Data = struct {
@@ -871,7 +875,7 @@ test "random data" {
 }
 
 test "minimal iter test" {
-    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init();
+    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(std.heap.page_allocator);
     defer entities.deinit();
 
     const entity_0 = entities.create(.{ .x = 10, .y = 20 });

@@ -28,7 +28,7 @@ fn benchEcs() !void {
 
     // Init
     var timer = try std.time.Timer.start();
-    var entities = try Entities(.{ .x = u128, .y = u256, .z = u128 }).init();
+    var entities = try Entities(.{ .x = u128, .y = u256, .z = u128 }).init(std.heap.page_allocator);
     defer entities.deinit();
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
