@@ -18,7 +18,10 @@ const EntityGeneration = switch (builtin.mode) {
 
 pub const max_entities: SlotIndex = 1000000;
 const invalid_entity_index = std.math.maxInt(SlotIndex);
-const page_size = std.mem.page_size;
+// XXX: can now tweak for perf. note that lower numbers are better
+// tests though, may wanna make configurable for that reason.
+const page_size = 4096;
+// XXX: comptime assert page size > header size?
 // XXX: set reasonable values for these
 const max_pages = max_entities / 32;
 const max_archetypes = 40000;
@@ -34,7 +37,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         const Archetype: type = std.bit_set.IntegerBitSet(std.meta.fields(Entity).len);
 
         // `Entity` has a field for every possible component type. This is for convenience, it is
-        // not used at runtime. Fields are sorted from greatest to least alignment, see `Page` for
+        // not used at runtime. Fields are sorted from greatest to least alignment, see `PageHeader` for
         // rational.
         const Entity = entity: {
             var fields: [std.meta.fields(@TypeOf(componentTypes)).len]Type.StructField = undefined;
@@ -68,32 +71,29 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // This indirection allows the actual data to move without invalidating the handle.
         const EntitySlot = struct {
             generation: EntityGeneration,
-            page: *Page,
+            page: *PageHeader,
             index_in_page: u16,
         };
 
+        // XXX: rename to PageHeader?
         // A page contains entities of a single archetype.
-        const Page = opaque {
-            const Header = struct {
-                next: ?*Page,
-                prev: ?*Page,
-                archetype: Archetype,
-                len: u16,
-                capacity: u16,
-                component_arrays: u16,
-                handle_array: u16,
-            };
+        const PageHeader = struct {
+            next: ?*PageHeader,
+            prev: ?*PageHeader,
+            archetype: Archetype,
+            len: u16,
+            capacity: u16,
+            component_arrays: u16,
+            handle_array: u16,
 
-            const BackingType = [page_size]u8;
-
-            fn init(page_pool: *ArrayListAlignedUnmanaged(*Page, std.mem.page_size), archetype: Archetype) !*Page {
+            fn init(page_pool: *ArrayListUnmanaged(*PageHeader), archetype: Archetype) !*PageHeader {
                 var ptr: u16 = 0;
 
                 // Store the header, no alignment necessary since we start out page aligned
-                ptr += @sizeOf(Header);
+                ptr += @sizeOf(PageHeader);
 
                 // Store the handle array
-                comptime assert(@alignOf(Header) >= @alignOf(EntityHandle));
+                comptime assert(@alignOf(PageHeader) >= @alignOf(EntityHandle));
                 const handle_array = ptr;
 
                 // Calculate how many entities can actually be stored
@@ -130,7 +130,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 var page_index = page_pool.items.len;
                 page_pool.items.len += 1;
                 var page = page_pool.items[page_index];
-                page.header().* = .{
+                page.* = PageHeader{
                     .next = null,
                     .prev = null,
                     .archetype = archetype,
@@ -149,24 +149,16 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return page;
             }
 
-            fn deinit(self: *Page, allocator: Allocator) void {
-                allocator.destroy(self.data());
-            }
-
-            fn data(self: *Page) *[page_size]u8 {
-                return @ptrCast(*[page_size]u8, self);
-            }
-
-            fn header(self: *Page) *Header {
-                return @ptrCast(*Header, @alignCast(@alignOf(Header), self.data()));
+            fn deinit(self: *PageHeader, allocator: Allocator) void {
+                allocator.free(@ptrCast(*[page_size]u8, self));
             }
 
             fn createEntity(self: *@This(), handle: EntityHandle) u16 {
                 var handles = self.handleArray();
-                for (0..self.header().capacity) |i| {
+                for (0..self.capacity) |i| {
                     if (handles[i].index == invalid_entity_index) {
                         handles[i] = handle;
-                        self.header().len += 1;
+                        self.len += 1;
                         return @intCast(u16, i);
                     }
                 }
@@ -174,24 +166,24 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 unreachable;
             }
 
-            fn removeEntity(self: *Page, index: usize) void {
-                self.header().len -= 1;
+            fn removeEntity(self: *PageHeader, index: usize) void {
+                self.len -= 1;
                 self.handleArray()[index].index = invalid_entity_index;
             }
 
             fn handleArray(self: *@This()) [*]EntityHandle {
-                return @ptrCast([*]EntityHandle, @alignCast(@alignOf(EntityHandle), &self.data()[self.header().handle_array]));
+                return @intToPtr([*]EntityHandle, @ptrToInt(self) + self.handle_array);
             }
 
-            fn componentArray(self: *Page, comptime componentField: FieldEnum(Entity)) [*]std.meta.fieldInfo(Entity, componentField).type {
-                var ptr: usize = self.header().component_arrays;
+            fn componentArray(self: *PageHeader, comptime componentField: FieldEnum(Entity)) [*]std.meta.fieldInfo(Entity, componentField).type {
+                var ptr: usize = self.component_arrays;
                 inline for (std.meta.fields(Entity), 0..) |component, i| {
-                    if (self.header().archetype.isSet(i)) {
+                    if (self.archetype.isSet(i)) {
                         if (@intToEnum(FieldEnum(Entity), i) == componentField) {
-                            return @ptrCast([*]component.type, @alignCast(@alignOf(component.type), &self.data()[ptr]));
+                            return @intToPtr([*]std.meta.fieldInfo(Entity, componentField).type, @ptrToInt(self) + ptr);
                         }
 
-                        ptr += @sizeOf(component.type) * self.header().capacity;
+                        ptr += @sizeOf(component.type) * self.capacity;
                     }
                 }
                 unreachable;
@@ -201,53 +193,53 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // A linked list of max_pages of a single archetype. Pages with available space are kept sorted
         // to the front of the list.
         const PageList = struct {
-            head: ?*Page = null,
-            tail: ?*Page = null,
+            head: ?*PageHeader = null,
+            tail: ?*PageHeader = null,
 
-            fn moveToHead(self: *@This(), page: *Page) void {
+            fn moveToHead(self: *@This(), page: *PageHeader) void {
                 if (self.head != page) {
                     self.remove(page);
                     self.prepend(page);
                 }
             }
 
-            fn moveToTail(self: *@This(), page: *Page) void {
+            fn moveToTail(self: *@This(), page: *PageHeader) void {
                 if (self.tail != page) {
                     self.remove(page);
                     self.append(page);
                 }
             }
 
-            fn remove(self: *@This(), page: *Page) void {
+            fn remove(self: *@This(), page: *PageHeader) void {
                 // Update head/tail
                 if (self.head == page)
-                    self.head = page.header().next;
+                    self.head = page.next;
                 if (self.tail == page)
-                    self.tail = page.header().prev;
+                    self.tail = page.prev;
 
                 // Update the previous node
-                if (page.header().prev) |prev| {
-                    prev.header().next = page.header().next;
+                if (page.prev) |prev| {
+                    prev.next = page.next;
                 }
 
                 // Update the next node
-                if (page.header().next) |next| {
-                    next.header().prev = page.header().prev;
+                if (page.next) |next| {
+                    next.prev = page.prev;
                 }
 
                 // Invaidate prev/next
-                page.header().prev = undefined;
-                page.header().next = undefined;
+                page.prev = undefined;
+                page.next = undefined;
             }
 
-            fn prepend(self: *@This(), page: *Page) void {
+            fn prepend(self: *@This(), page: *PageHeader) void {
                 // Update prev/next
-                page.header().prev = null;
-                page.header().next = self.head;
+                page.prev = null;
+                page.next = self.head;
 
                 // Update the current head's prev
                 if (self.head) |head| {
-                    head.header().prev = page;
+                    head.prev = page;
                 }
 
                 // Update head and tail
@@ -255,14 +247,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 if (self.tail == null) self.tail = page;
             }
 
-            fn append(self: *@This(), page: *Page) void {
+            fn append(self: *@This(), page: *PageHeader) void {
                 // Update prev/next
-                page.header().prev = self.tail;
-                page.header().next = null;
+                page.prev = self.tail;
+                page.next = null;
 
                 // Update the current tail's next
                 if (self.tail) |tail| {
-                    tail.header().next = page;
+                    tail.next = page;
                 }
 
                 // Update head and tail
@@ -273,7 +265,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         slots: []EntitySlot,
         free_slot_indices: []SlotIndex,
-        page_pool: ArrayListAlignedUnmanaged(*Page, std.mem.page_size),
+        page_pool: ArrayListUnmanaged(*PageHeader),
         page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList),
 
         pub fn init(allocator: Allocator) !@This() {
@@ -297,11 +289,16 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     break :page_lists page_lists;
                 },
                 .page_pool = page_pool: {
-                    var page_pool = try ArrayListAlignedUnmanaged(*Page, std.mem.page_size).initCapacity(allocator, max_pages);
+                    // XXX: doesn't need to page page aligned it's an array of pointers!
+                    var page_pool = try ArrayListUnmanaged(*PageHeader).initCapacity(allocator, max_pages);
                     _ = page_pool.addManyAsArrayAssumeCapacity(max_pages);
                     // XXX: create all with one call?
                     for (page_pool.items) |*page| {
-                        page.* = @ptrCast(*Page, try allocator.create(Page.BackingType));
+                        page.* = @ptrCast(*PageHeader, try allocator.alignedAlloc(
+                            [page_size]u8,
+                            std.mem.page_size,
+                            1,
+                        ));
                     }
                     page_pool.items.len = 0;
                     break :page_pool page_pool;
@@ -367,7 +364,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
                 const entry = self.page_lists.getOrPutAssumeCapacity(archetype);
                 if (!entry.found_existing) {
-                    const newPage = try Page.init(&self.page_pool, archetype);
+                    const newPage = try PageHeader.init(&self.page_pool, archetype);
                     entry.value_ptr.* = PageList{};
                     entry.value_ptr.*.prepend(newPage);
                 }
@@ -376,8 +373,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // TODO: only possiblly necessary if didn't juts create one
             // If the head does not have space, create a new head that has space
-            if (page_list.head.?.header().len == page_list.head.?.header().capacity) {
-                const newPage = try Page.init(&self.page_pool, archetype);
+            if (page_list.head.?.len == page_list.head.?.capacity) {
+                const newPage = try PageHeader.init(&self.page_pool, archetype);
                 page_list.prepend(newPage);
             }
             const page = page_list.head.?;
@@ -392,7 +389,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             slot.index_in_page = page.createEntity(handle);
 
             // If the page is now full, move it to the end of the page list
-            if (page.header().len == page.header().capacity) {
+            if (page.len == page.capacity) {
                 page_list.moveToTail(page);
             }
 
@@ -428,13 +425,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // Unset the exists bit, and reorder the page
             const slot = &self.slots[entity.index];
             const page = slot.page;
-            const was_full = page.header().len == page.header().capacity;
+            const was_full = page.len == page.capacity;
             page.removeEntity(slot.index_in_page);
 
             // If this page didn't have space before but does now, move it to the front of the page
             // list
             if (was_full) {
-                const page_list: *PageList = self.page_lists.getPtr(page.header().archetype).?;
+                const page_list: *PageList = self.page_lists.getPtr(page.archetype).?;
                 page_list.moveToHead(page);
             }
 
@@ -466,7 +463,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             const slot = self.slots[entity.index];
-            if (!slot.page.header().archetype.isSet(@enumToInt(component))) {
+            if (!slot.page.archetype.isSet(@enumToInt(component))) {
                 return null;
             }
             return &slot.page.componentArray(component)[slot.index_in_page];
@@ -541,7 +538,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                 archetype: Archetype,
                 page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList).Iterator,
-                page_list: ?*Page,
+                page_list: ?*PageHeader,
                 index_in_page: u16,
                 component_arrays: ComponentArrays,
                 handle_array: [*]EntityHandle,
@@ -565,7 +562,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     };
                 }
 
-                fn setPageList(self: *@This(), page_list: ?*Page) void {
+                fn setPageList(self: *@This(), page_list: ?*PageHeader) void {
                     self.page_list = page_list;
                     self.index_in_page = 0;
                     if (page_list) |pl| {
@@ -591,14 +588,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         }
 
                         // Find the next entity in this archetype page
-                        while (self.index_in_page < self.page_list.?.header().capacity) : (self.index_in_page += 1) {
+                        while (self.index_in_page < self.page_list.?.capacity) : (self.index_in_page += 1) {
                             if (self.handle_array[self.index_in_page].index != invalid_entity_index) {
                                 break;
                             }
                         } else {
                             // If we didn't find anything, advance to the next page in this archetype
                             // page list
-                            self.setPageList(self.page_list.?.header().next);
+                            self.setPageList(self.page_list.?.next);
                             continue;
                         }
 
@@ -658,10 +655,10 @@ test "limits" {
     {
         var page_lists = entities.page_lists.iterator();
         while (page_lists.next()) |page_list| {
-            var page: ?*@TypeOf(entities).Page = page_list.value_ptr.head;
+            var page: ?*@TypeOf(entities).PageHeader = page_list.value_ptr.head;
             while (page) |p| {
-                try std.testing.expect(p.header().len == 0);
-                page = p.header().next;
+                try std.testing.expect(p.len == 0);
+                page = p.next;
             }
         }
     }
