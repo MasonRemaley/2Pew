@@ -86,7 +86,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             const BackingType = [page_size]u8;
 
-            fn init(page_pool: *ArrayListAlignedUnmanaged(*Page, std.mem.page_size), archetype: Archetype) *Page {
+            fn init(page_pool: *ArrayListAlignedUnmanaged(*Page, std.mem.page_size), archetype: Archetype) !*Page {
                 var ptr: u16 = 0;
 
                 // Store the header, no alignment necessary since we start out page aligned
@@ -122,7 +122,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 ptr = std.mem.alignForwardGeneric(u16, ptr, max_component_alignment);
                 const component_arrays = ptr;
 
-                // XXX: safety check this, and warn halfway?
+                if (page_pool.items.len == page_pool.capacity) {
+                    return error.OutOfPages;
+                } else if (page_pool.items.len == page_pool.capacity / 2) {
+                    std.log.warn("page pool halfway depleted", .{});
+                }
                 var page_index = page_pool.items.len;
                 page_pool.items.len += 1;
                 var page = page_pool.items[page_index];
@@ -157,7 +161,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return @ptrCast(*Header, @alignCast(@alignOf(Header), self.data()));
             }
 
-            fn create(self: *@This(), handle: EntityHandle) u16 {
+            fn createEntity(self: *@This(), handle: EntityHandle) u16 {
                 var handles = self.handleArray();
                 for (0..self.header().capacity) |i| {
                     if (handles[i].index == invalid_entity_index) {
@@ -286,7 +290,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 },
                 .page_lists = page_lists: {
                     var page_lists = AutoArrayHashMapUnmanaged(Archetype, PageList){};
-                    try page_lists.ensureTotalCapacity(allocator, max_archetypes);
+                    // XXX: is this right/explain better
+                    // We add one to the max because `getOrPutAssumeCapacity` may or may not
+                    // allocate, so we stop one early.
+                    try page_lists.ensureTotalCapacity(allocator, max_archetypes + 1);
                     break :page_lists page_lists;
                 },
                 .page_pool = page_pool: {
@@ -313,7 +320,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
             self.page_pool.deinit(allocator);
         }
 
-        fn createChecked(self: *@This(), entity: anytype) ?EntityHandle {
+        // XXX: test the failure conditions here?
+        pub fn createChecked(self: *@This(), entity: anytype) !EntityHandle {
             const archetype = comptime archetype: {
                 var archetype = Archetype.initEmpty();
                 inline for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
@@ -331,6 +339,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     self.free_slot_indices.len = top;
                     break :index index;
                 } else if (self.slots.len < max_entities) {
+                    if (self.slots.len == max_entities / 2) {
+                        std.log.warn("entity slots halfway depleted", .{});
+                    }
                     // Add a new entity to the end of the list
                     const top = self.slots.len;
                     self.slots.len += 1;
@@ -341,7 +352,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     };
                     break :index @intCast(SlotIndex, top);
                 } else {
-                    return null;
+                    return error.OutOfEntities;
                 }
             };
 
@@ -349,12 +360,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // Get the page list for this archetype
             const page_list: *PageList = page: {
                 // Find or allocate a page for this entity
-                // XXX: not just check in debug mode, that's alreay done in the assume anyway
-                // XXX: also warn when halfway
-                std.debug.assert(self.page_lists.count() < self.page_lists.capacity());
+                if (self.page_lists.count() >= self.page_lists.capacity()) {
+                    return error.OutOfArchetypes;
+                } else if (self.page_lists.count() == self.page_lists.capacity() / 2) {
+                    std.log.warn("archetype map halfway depleted", .{});
+                }
                 const entry = self.page_lists.getOrPutAssumeCapacity(archetype);
                 if (!entry.found_existing) {
-                    const newPage = Page.init(&self.page_pool, archetype);
+                    const newPage = try Page.init(&self.page_pool, archetype);
                     entry.value_ptr.* = PageList{};
                     entry.value_ptr.*.prepend(newPage);
                 }
@@ -364,7 +377,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: only possiblly necessary if didn't juts create one
             // If the head does not have space, create a new head that has space
             if (page_list.head.?.header().len == page_list.head.?.header().capacity) {
-                const newPage = Page.init(&self.page_pool, archetype);
+                const newPage = try Page.init(&self.page_pool, archetype);
                 page_list.prepend(newPage);
             }
             const page = page_list.head.?;
@@ -376,7 +389,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             };
             const slot = &self.slots[index];
             slot.page = page;
-            slot.index_in_page = page.create(handle);
+            slot.index_in_page = page.createEntity(handle);
 
             // If the page is now full, move it to the end of the page list
             if (page.header().len == page.header().capacity) {
@@ -394,9 +407,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         pub fn create(self: *@This(), entity: anytype) EntityHandle {
-            return self.createChecked(entity).?;
+            return self.createChecked(entity) catch |err|
+                std.debug.panic("failed to create entity: {}", .{err});
         }
 
+        // XXX: also make pub or no?
         fn removeEntityChecked(self: *@This(), entity: EntityHandle) !void {
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
@@ -407,7 +422,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return error.BadGeneration;
             }
             if (self.free_slot_indices.len == max_entities) {
-                return error.FreelistFull;
+                return error.DoubleFree;
             }
 
             // Unset the exists bit, and reorder the page
@@ -630,7 +645,7 @@ test "limits" {
         try std.testing.expectEqual(EntityHandle{ .index = @intCast(SlotIndex, i), .generation = 0 }, entity);
         try created.append(entity);
     }
-    try std.testing.expect(entities.createChecked(.{}) == null);
+    try std.testing.expectError(error.OutOfEntities, entities.createChecked(.{}));
     const page_pool_size = entities.page_pool.items.len;
 
     // Remove all the entities
@@ -658,7 +673,7 @@ test "limits" {
             entities.create(.{}),
         );
     }
-    try std.testing.expect(entities.createChecked(.{}) == null);
+    try std.testing.expectError(error.OutOfEntities, entities.createChecked(.{}));
     try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
     // Wrap a generation counter
