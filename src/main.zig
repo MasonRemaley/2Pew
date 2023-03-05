@@ -8,8 +8,19 @@ const V = @import("Vec2d.zig");
 
 const display_width = 1920;
 const display_height = 1080;
+const display_center: V = .{
+    .x = display_width / 2.0,
+    .y = display_height / 2.0,
+};
+const display_radius = display_height / 2.0;
+
 const ecs = @import("ecs.zig");
-const Entities = ecs.Entities;
+const Entities = ecs.Entities(.{
+    .bullet = Bullet,
+    .ship = Ship,
+    .controller = *c.SDL_GameController,
+    .particle = Particle,
+});
 const EntityHandle = ecs.EntityHandle;
 
 pub fn main() !void {
@@ -56,12 +67,7 @@ pub fn main() !void {
     var game = try Game.init(&assets);
 
     // TODO(mason): some of these have shared behaviors we can factor out e.g. sprites, newtonian mechanics
-    var entities = try Entities(.{
-        .bullet = Bullet,
-        .ship = Ship,
-        .controller = *c.SDL_GameController,
-        .particle = Particle,
-    }).init(gpa);
+    var entities = try Entities.init(gpa);
     defer entities.deinit(gpa);
 
     {
@@ -107,378 +113,384 @@ pub fn main() !void {
     var stars: [150]Star = undefined;
     generateStars(&stars);
 
-    const display_center: V = .{
-        .x = display_width / 2.0,
-        .y = display_height / 2.0,
-    };
-    const display_radius = display_height / 2.0;
-
     var dt: f32 = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
     while (true) {
-        var event: c.SDL_Event = undefined;
-        while (c.SDL_PollEvent(&event) != 0) {
-            switch (event.type) {
-                c.SDL_QUIT => return,
-                c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
-                    c.SDL_SCANCODE_ESCAPE => return,
-                    else => {},
-                },
-                else => {},
-            }
-        }
-
-        {
-            var it = entities.iterator(.{ .controller, .ship });
-            while (it.next()) |entity| {
-                const controller = entity.comps.controller.*;
-                const ship = entity.comps.ship;
-                ship.input = .{};
-                // left/right on the left joystick
-                const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
-                // up/down on the left joystick
-                //const y_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTY);
-
-                const dead_zone = 10000;
-                ship.input.left = ship.input.left or x_axis < -dead_zone;
-                ship.input.right = ship.input.right or x_axis > dead_zone;
-                ship.input.forward = ship.input.forward or
-                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
-                ship.input.fire = ship.input.fire or
-                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
-                //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
-                //std.debug.print("input: {any}\n", .{ship.input});
-            }
-        }
-
-        {
-            var it = entities.iterator(.{.ship});
-            while (it.next()) |entity| {
-                const ship = entity.comps.ship;
-                if (!ship.prev_input.forward and ship.input.forward) {
-                    ship.setAnimation(ship.accel);
-                } else if (ship.prev_input.forward and !ship.input.forward) {
-                    ship.setAnimation(ship.still);
-                }
-                ship.prev_input = ship.input;
-            }
-        }
-
-        {
-            var bullet_it = entities.iterator(.{.bullet});
-            while (bullet_it.next()) |bullet_entity| {
-                const bullet = bullet_entity.comps.bullet;
-
-                bullet.pos.add(bullet.vel.scaled(dt));
-
-                bullet.duration -= dt;
-                if (bullet.duration <= 0) {
-                    entities.remove(bullet_entity.handle);
-                    continue;
-                }
-
-                {
-                    var ship_it = entities.iterator(.{.ship});
-                    while (ship_it.next()) |ship_entity| {
-                        const ship = ship_entity.comps.ship;
-                        if (ship.pos.distanceSqrd(bullet.pos) <
-                            ship.radius * ship.radius + bullet.radius * bullet.radius)
-                        {
-                            ship.hp -= bullet.damage;
-
-                            // spawn shrapnel here
-                            const shrapnel_animation = game.shrapnel_animations[
-                                std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
-                            ];
-                            const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                                .scaled(bullet.vel.length() * 0.2);
-                            _ = entities.create(.{ .particle = .{
-                                .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
-                                .pos = ship.pos,
-                                .vel = ship.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
-                                .rotation = 2 * math.pi * std.crypto.random.float(f32),
-                                .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                                .duration = 2,
-                            } });
-
-                            entities.remove(bullet_entity.handle);
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        {
-            var it = entities.iterator(.{.ship});
-            while (it.next()) |entity| {
-                const ship = entity.comps.ship;
-                ship.pos.add(ship.vel.scaled(dt));
-
-                // explode ships that reach 0 hp
-                if (ship.hp <= 0) {
-                    // spawn explosion here
-                    _ = entities.create(.{ .particle = .{
-                        .anim_playback = .{ .index = game.explosion_animation, .time_passed = 0 },
-                        .pos = ship.pos,
-                        .vel = ship.vel,
-                        .rotation = 0,
-                        .rotation_vel = 0,
-                        .duration = 100,
-                    } });
-                    // give player their next ship
-                    const player = &game.players[ship.player];
-                    player.ship_progression_index += 1;
-                    if (player.ship_progression_index >= player.ship_progression.len) {
-                        // this player would lose the game, but instead let's just
-                        // give them another ship
-                        player.ship_progression_index = 0;
-                    }
-                    const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                    const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
-                    ship.* = game.initShip(ship.player, new_pos);
-                    continue;
-                }
-
-                // bonk
-                var other_it = it;
-                while (other_it.next()) |other_entity| {
-                    const other = other_entity.comps.ship;
-                    const added_radii = ship.radius + other.radius;
-                    if (ship.pos.distanceSqrd(other.pos) > added_radii * added_radii) continue;
-
-                    // calculate normal
-                    const normal = other.pos.minus(ship.pos).normalized();
-                    // calculate relative velocity
-                    const rv = other.vel.minus(ship.vel);
-                    // calculate relative velocity in terms of the normal direction
-                    const vel_along_normal = rv.dot(normal);
-                    // do not resolve if velocities are separating
-                    if (vel_along_normal > 0) continue;
-                    // calculate restitution
-                    const e = @min(ship.collision_damping, other.collision_damping);
-                    // calculate impulse scalar
-                    var j: f32 = -(1.0 + e) * vel_along_normal;
-                    const my_mass = mass(ship.density, ship.radius);
-                    const other_mass = mass(other.density, other.radius);
-                    j /= 1.0 / my_mass + 1.0 / other_mass;
-                    // apply impulse
-                    const impulse = normal.scaled(j);
-                    const ship_impulse = impulse.scaled(1 / my_mass);
-                    const other_impulse = impulse.scaled(1 / other_mass);
-                    ship.vel.sub(ship_impulse);
-                    other.vel.add(other_impulse);
-                    // Deal HP damage relative to the change in velocity.
-                    // A very gentle bonk is something like impulse 20, while a
-                    // very hard bonk is around 300.
-                    // The basic ranger ship has 80 HP.
-                    const ship_damage = remap(20, 300, 0, 80, ship_impulse.length());
-                    const other_damage = remap(20, 300, 0, 80, other_impulse.length());
-                    ship.hp -= ship_damage;
-                    other.hp -= other_damage;
-
-                    const shrapnel_amt = @floatToInt(
-                        u32,
-                        @floor(remap_clamped(0, 100, 0, 30, ship_damage + other_damage)),
-                    );
-                    const shrapnel_center = ship.pos.plus(other.pos).scaled(0.5);
-                    const avg_vel = ship.vel.plus(other.vel).scaled(0.5);
-                    for (0..shrapnel_amt) |_| {
-                        const shrapnel_animation = game.shrapnel_animations[
-                            std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
-                        ];
-                        // Spawn slightly off center from collision point.
-                        const random_offset = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                            .scaled(std.crypto.random.float(f32) * 10);
-                        // Give them random velocities.
-                        const base_vel = if (std.crypto.random.boolean()) ship.vel else other.vel;
-                        const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                            .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
-                        _ = entities.create(.{ .particle = .{
-                            .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
-                            .pos = shrapnel_center.plus(random_offset),
-                            .vel = avg_vel.plus(random_vel),
-                            .rotation = 2 * math.pi * std.crypto.random.float(f32),
-                            .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                            .duration = 2,
-                        } });
-                    }
-                }
-
-                // gravity if the ship is outside the ring
-                if (ship.pos.distanceSqrd(display_center) > display_radius * display_radius) {
-                    const gravity = 400;
-                    const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
-                    ship.vel.add(gravity_v);
-                    // punishment for leaving the circle
-                    ship.hp -= dt * 0.1;
-                }
-
-                const rotate_input = // convert to 1.0 or -1.0
-                    @intToFloat(f32, @boolToInt(ship.input.right)) -
-                    @intToFloat(f32, @boolToInt(ship.input.left));
-                ship.rotation = @mod(
-                    ship.rotation + rotate_input * ship.rotation_vel * dt,
-                    2 * math.pi,
-                );
-
-                // convert to 1.0 or 0.0
-                const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
-                const thrust = V.unit(ship.rotation);
-                ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
-
-                if (ship.turret) |*turret| {
-                    turret.cooldown -= dt;
-                    if (ship.input.fire and turret.cooldown <= 0) {
-                        turret.cooldown = turret.cooldown_amount;
-                        _ = entities.create(.{
-                            .bullet = .{
-                                .sprite = game.bullet_small,
-                                .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
-                                .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
-                                .duration = turret.bullet_duration,
-                                .radius = 2,
-                                .damage = turret.bullet_damage,
-                            },
-                        });
-                    }
-                }
-            }
-        }
-
-        {
-            var it = entities.iterator(.{.particle});
-            while (it.next()) |entity| {
-                const particle = entity.comps.particle;
-                particle.duration -= dt;
-                if (particle.anim_playback.index == .none or particle.duration <= 0) {
-                    entities.remove(entity.handle);
-                    continue;
-                }
-                particle.pos.add(particle.vel.scaled(dt));
-                particle.rotation = @mod(
-                    particle.rotation + particle.rotation_vel * dt,
-                    2 * math.pi,
-                );
-            }
-        }
-
-        // Display
-
-        sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
-        sdlAssertZero(c.SDL_RenderClear(renderer));
-
-        for (stars) |star| {
-            const sprite = assets.sprite(switch (star.kind) {
-                .small => game.star_small,
-                .large => game.star_large,
-                .planet_red => game.planet_red,
-            });
-            const dst_rect: c.SDL_Rect = .{
-                .x = star.x,
-                .y = star.y,
-                .w = sprite.rect.w,
-                .h = sprite.rect.h,
-            };
-            sdlAssertZero(c.SDL_RenderCopy(
-                renderer,
-                sprite.texture,
-                null,
-                &dst_rect,
-            ));
-        }
-
-        {
-            const sprite = assets.sprite(game.ring_bg);
-            sdlAssertZero(c.SDL_RenderCopy(
-                renderer,
-                sprite.texture,
-                null,
-                &sprite.toSdlRect(display_center),
-            ));
-        }
-
-        {
-            var it = entities.iterator(.{.ship});
-            while (it.next()) |entity| {
-                const ship = entity.comps.ship;
-                const sprite = assets.animate(&ship.anim_playback, dt);
-                sdlAssertZero(c.SDL_RenderCopyEx(
-                    renderer,
-                    sprite.texture,
-                    null, // source rectangle
-                    &sprite.toSdlRect(ship.pos),
-                    // The ship asset images point up instead of to the right.
-                    toDegrees(ship.rotation + math.pi / 2.0),
-                    null, // center of rotation
-                    c.SDL_FLIP_NONE,
-                ));
-
-                // HP bar
-                if (ship.hp < ship.max_hp) {
-                    const health_bar_size: V = .{ .x = 32, .y = 4 };
-                    var start = ship.pos.minus(health_bar_size.scaled(0.5)).floored();
-                    start.y -= ship.radius + health_bar_size.y;
-                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
-                    sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
-                        start.minus(.{ .x = 1, .y = 1 }),
-                        health_bar_size.plus(.{ .x = 2, .y = 2 }),
-                    )));
-                    const hp_percent = ship.hp / ship.max_hp;
-                    if (hp_percent > 0.45) {
-                        sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
-                    } else {
-                        sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
-                    }
-                    sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
-                        start,
-                        .{ .x = health_bar_size.x * hp_percent, .y = health_bar_size.y },
-                    )));
-                }
-            }
-        }
-
-        {
-            var it = entities.iterator(.{.bullet});
-            while (it.next()) |entity| {
-                const bullet = entity.comps.bullet;
-                const sprite = assets.sprite(bullet.sprite);
-                sdlAssertZero(c.SDL_RenderCopyEx(
-                    renderer,
-                    sprite.texture,
-                    null, // source rectangle
-                    &sprite.toSdlRect(bullet.pos),
-                    // The bullet asset images point up instead of to the right.
-                    toDegrees(bullet.vel.angle() + math.pi / 2.0),
-                    null, // center of rotation
-                    c.SDL_FLIP_NONE,
-                ));
-            }
-        }
-
-        {
-            var it = entities.iterator(.{.particle});
-            while (it.next()) |entity| {
-                const particle = entity.comps.particle;
-                const sprite = assets.animate(&particle.anim_playback, dt);
-                sdlAssertZero(c.SDL_RenderCopyEx(
-                    renderer,
-                    sprite.texture,
-                    null, // source rectangle
-                    &sprite.toSdlRect(particle.pos),
-                    toDegrees(particle.rotation),
-                    null, // center of rotation
-                    c.SDL_FLIP_NONE,
-                ));
-            }
-        }
-
-        c.SDL_RenderPresent(renderer);
+        if (poll()) return;
+        update(&entities, &game, dt);
+        render(assets, &entities, stars, game, dt);
 
         var last_dt = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
         dt = lerp(dt, last_dt, 0.1);
     }
+}
+
+fn poll() bool {
+    var event: c.SDL_Event = undefined;
+    while (c.SDL_PollEvent(&event) != 0) {
+        switch (event.type) {
+            c.SDL_QUIT => return true,
+            c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
+                c.SDL_SCANCODE_ESCAPE => return true,
+                else => {},
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn update(entities: *Entities, game: *Game, dt: f32) void {
+    {
+        var it = entities.iterator(.{ .controller, .ship });
+        while (it.next()) |entity| {
+            const controller = entity.comps.controller.*;
+            const ship = entity.comps.ship;
+            ship.input = .{};
+            // left/right on the left joystick
+            const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
+            // up/down on the left joystick
+            //const y_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTY);
+
+            const dead_zone = 10000;
+            ship.input.left = ship.input.left or x_axis < -dead_zone;
+            ship.input.right = ship.input.right or x_axis > dead_zone;
+            ship.input.forward = ship.input.forward or
+                c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
+            ship.input.fire = ship.input.fire or
+                c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
+            //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
+            //std.debug.print("input: {any}\n", .{ship.input});
+        }
+    }
+
+    {
+        var it = entities.iterator(.{.ship});
+        while (it.next()) |entity| {
+            const ship = entity.comps.ship;
+            if (!ship.prev_input.forward and ship.input.forward) {
+                ship.setAnimation(ship.accel);
+            } else if (ship.prev_input.forward and !ship.input.forward) {
+                ship.setAnimation(ship.still);
+            }
+            ship.prev_input = ship.input;
+        }
+    }
+
+    {
+        var bullet_it = entities.iterator(.{.bullet});
+        while (bullet_it.next()) |bullet_entity| {
+            const bullet = bullet_entity.comps.bullet;
+
+            bullet.pos.add(bullet.vel.scaled(dt));
+
+            bullet.duration -= dt;
+            if (bullet.duration <= 0) {
+                entities.remove(bullet_entity.handle);
+                continue;
+            }
+
+            {
+                var ship_it = entities.iterator(.{.ship});
+                while (ship_it.next()) |ship_entity| {
+                    const ship = ship_entity.comps.ship;
+                    if (ship.pos.distanceSqrd(bullet.pos) <
+                        ship.radius * ship.radius + bullet.radius * bullet.radius)
+                    {
+                        ship.hp -= bullet.damage;
+
+                        // spawn shrapnel here
+                        const shrapnel_animation = game.shrapnel_animations[
+                            std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                        ];
+                        const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                            .scaled(bullet.vel.length() * 0.2);
+                        _ = entities.create(.{ .particle = .{
+                            .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
+                            .pos = ship.pos,
+                            .vel = ship.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
+                            .rotation = 2 * math.pi * std.crypto.random.float(f32),
+                            .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                            .duration = 2,
+                        } });
+
+                        entities.remove(bullet_entity.handle);
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        var it = entities.iterator(.{.ship});
+        while (it.next()) |entity| {
+            const ship = entity.comps.ship;
+            ship.pos.add(ship.vel.scaled(dt));
+
+            // explode ships that reach 0 hp
+            if (ship.hp <= 0) {
+                // spawn explosion here
+                _ = entities.create(.{ .particle = .{
+                    .anim_playback = .{ .index = game.explosion_animation, .time_passed = 0 },
+                    .pos = ship.pos,
+                    .vel = ship.vel,
+                    .rotation = 0,
+                    .rotation_vel = 0,
+                    .duration = 100,
+                } });
+                // give player their next ship
+                const player = &game.players[ship.player];
+                player.ship_progression_index += 1;
+                if (player.ship_progression_index >= player.ship_progression.len) {
+                    // this player would lose the game, but instead let's just
+                    // give them another ship
+                    player.ship_progression_index = 0;
+                }
+                const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
+                ship.* = game.initShip(ship.player, new_pos);
+                continue;
+            }
+
+            // bonk
+            var other_it = it;
+            while (other_it.next()) |other_entity| {
+                const other = other_entity.comps.ship;
+                const added_radii = ship.radius + other.radius;
+                if (ship.pos.distanceSqrd(other.pos) > added_radii * added_radii) continue;
+
+                // calculate normal
+                const normal = other.pos.minus(ship.pos).normalized();
+                // calculate relative velocity
+                const rv = other.vel.minus(ship.vel);
+                // calculate relative velocity in terms of the normal direction
+                const vel_along_normal = rv.dot(normal);
+                // do not resolve if velocities are separating
+                if (vel_along_normal > 0) continue;
+                // calculate restitution
+                const e = @min(ship.collision_damping, other.collision_damping);
+                // calculate impulse scalar
+                var j: f32 = -(1.0 + e) * vel_along_normal;
+                const my_mass = mass(ship.density, ship.radius);
+                const other_mass = mass(other.density, other.radius);
+                j /= 1.0 / my_mass + 1.0 / other_mass;
+                // apply impulse
+                const impulse = normal.scaled(j);
+                const ship_impulse = impulse.scaled(1 / my_mass);
+                const other_impulse = impulse.scaled(1 / other_mass);
+                ship.vel.sub(ship_impulse);
+                other.vel.add(other_impulse);
+                // Deal HP damage relative to the change in velocity.
+                // A very gentle bonk is something like impulse 20, while a
+                // very hard bonk is around 300.
+                // The basic ranger ship has 80 HP.
+                const ship_damage = remap(20, 300, 0, 80, ship_impulse.length());
+                const other_damage = remap(20, 300, 0, 80, other_impulse.length());
+                ship.hp -= ship_damage;
+                other.hp -= other_damage;
+
+                const shrapnel_amt = @floatToInt(
+                    u32,
+                    @floor(remap_clamped(0, 100, 0, 30, ship_damage + other_damage)),
+                );
+                const shrapnel_center = ship.pos.plus(other.pos).scaled(0.5);
+                const avg_vel = ship.vel.plus(other.vel).scaled(0.5);
+                for (0..shrapnel_amt) |_| {
+                    const shrapnel_animation = game.shrapnel_animations[
+                        std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                    ];
+                    // Spawn slightly off center from collision point.
+                    const random_offset = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                        .scaled(std.crypto.random.float(f32) * 10);
+                    // Give them random velocities.
+                    const base_vel = if (std.crypto.random.boolean()) ship.vel else other.vel;
+                    const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                        .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
+                    _ = entities.create(.{ .particle = .{
+                        .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
+                        .pos = shrapnel_center.plus(random_offset),
+                        .vel = avg_vel.plus(random_vel),
+                        .rotation = 2 * math.pi * std.crypto.random.float(f32),
+                        .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                        .duration = 2,
+                    } });
+                }
+            }
+
+            // gravity if the ship is outside the ring
+            if (ship.pos.distanceSqrd(display_center) > display_radius * display_radius) {
+                const gravity = 400;
+                const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
+                ship.vel.add(gravity_v);
+                // punishment for leaving the circle
+                ship.hp -= dt * 0.1;
+            }
+
+            const rotate_input = // convert to 1.0 or -1.0
+                @intToFloat(f32, @boolToInt(ship.input.right)) -
+                @intToFloat(f32, @boolToInt(ship.input.left));
+            ship.rotation = @mod(
+                ship.rotation + rotate_input * ship.rotation_vel * dt,
+                2 * math.pi,
+            );
+
+            // convert to 1.0 or 0.0
+            const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
+            const thrust = V.unit(ship.rotation);
+            ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
+
+            if (ship.turret) |*turret| {
+                turret.cooldown -= dt;
+                if (ship.input.fire and turret.cooldown <= 0) {
+                    turret.cooldown = turret.cooldown_amount;
+                    _ = entities.create(.{
+                        .bullet = .{
+                            .sprite = game.bullet_small,
+                            .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
+                            .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
+                            .duration = turret.bullet_duration,
+                            .radius = 2,
+                            .damage = turret.bullet_damage,
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    {
+        var it = entities.iterator(.{.particle});
+        while (it.next()) |entity| {
+            const particle = entity.comps.particle;
+            particle.duration -= dt;
+            if (particle.anim_playback.index == .none or particle.duration <= 0) {
+                entities.remove(entity.handle);
+                continue;
+            }
+            particle.pos.add(particle.vel.scaled(dt));
+            particle.rotation = @mod(
+                particle.rotation + particle.rotation_vel * dt,
+                2 * math.pi,
+            );
+        }
+    }
+}
+
+// TODO(mason): allow passing in const for rendering to make sure no modifications
+fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, dt: f32) void {
+    const renderer = assets.renderer;
+
+    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
+    sdlAssertZero(c.SDL_RenderClear(renderer));
+
+    for (stars) |star| {
+        const sprite = assets.sprite(switch (star.kind) {
+            .small => game.star_small,
+            .large => game.star_large,
+            .planet_red => game.planet_red,
+        });
+        const dst_rect: c.SDL_Rect = .{
+            .x = star.x,
+            .y = star.y,
+            .w = sprite.rect.w,
+            .h = sprite.rect.h,
+        };
+        sdlAssertZero(c.SDL_RenderCopy(
+            renderer,
+            sprite.texture,
+            null,
+            &dst_rect,
+        ));
+    }
+
+    {
+        const sprite = assets.sprite(game.ring_bg);
+        sdlAssertZero(c.SDL_RenderCopy(
+            renderer,
+            sprite.texture,
+            null,
+            &sprite.toSdlRect(display_center),
+        ));
+    }
+
+    {
+        var it = entities.iterator(.{.ship});
+        while (it.next()) |entity| {
+            const ship = entity.comps.ship;
+            const sprite = assets.animate(&ship.anim_playback, dt);
+            sdlAssertZero(c.SDL_RenderCopyEx(
+                renderer,
+                sprite.texture,
+                null, // source rectangle
+                &sprite.toSdlRect(ship.pos),
+                // The ship asset images point up instead of to the right.
+                toDegrees(ship.rotation + math.pi / 2.0),
+                null, // center of rotation
+                c.SDL_FLIP_NONE,
+            ));
+
+            // HP bar
+            if (ship.hp < ship.max_hp) {
+                const health_bar_size: V = .{ .x = 32, .y = 4 };
+                var start = ship.pos.minus(health_bar_size.scaled(0.5)).floored();
+                start.y -= ship.radius + health_bar_size.y;
+                sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
+                sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
+                    start.minus(.{ .x = 1, .y = 1 }),
+                    health_bar_size.plus(.{ .x = 2, .y = 2 }),
+                )));
+                const hp_percent = ship.hp / ship.max_hp;
+                if (hp_percent > 0.45) {
+                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
+                } else {
+                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
+                }
+                sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
+                    start,
+                    .{ .x = health_bar_size.x * hp_percent, .y = health_bar_size.y },
+                )));
+            }
+        }
+    }
+
+    {
+        var it = entities.iterator(.{.bullet});
+        while (it.next()) |entity| {
+            const bullet = entity.comps.bullet;
+            const sprite = assets.sprite(bullet.sprite);
+            sdlAssertZero(c.SDL_RenderCopyEx(
+                renderer,
+                sprite.texture,
+                null, // source rectangle
+                &sprite.toSdlRect(bullet.pos),
+                // The bullet asset images point up instead of to the right.
+                toDegrees(bullet.vel.angle() + math.pi / 2.0),
+                null, // center of rotation
+                c.SDL_FLIP_NONE,
+            ));
+        }
+    }
+
+    {
+        var it = entities.iterator(.{.particle});
+        while (it.next()) |entity| {
+            const particle = entity.comps.particle;
+            const sprite = assets.animate(&particle.anim_playback, dt);
+            sdlAssertZero(c.SDL_RenderCopyEx(
+                renderer,
+                sprite.texture,
+                null, // source rectangle
+                &sprite.toSdlRect(particle.pos),
+                toDegrees(particle.rotation),
+                null, // center of rotation
+                c.SDL_FLIP_NONE,
+            ));
+        }
+    }
+
+    c.SDL_RenderPresent(renderer);
 }
 
 const Player = struct {
