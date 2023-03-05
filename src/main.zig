@@ -15,6 +15,7 @@ const display_center: V = .{
 const display_radius = display_height / 2.0;
 
 const ecs = @import("ecs.zig");
+// TODO(mason): some of these have shared behaviors we can factor out e.g. sprites, newtonian mechanics
 const Entities = ecs.Entities(.{
     .bullet = Bullet,
     .ship = Ship,
@@ -28,6 +29,7 @@ const EntityHandle = ecs.EntityHandle;
 pub fn main() !void {
     const gpa = std.heap.c_allocator;
 
+    // Init SDL
     if (!(c.SDL_SetHintWithPriority(
         c.SDL_HINT_NO_SIGNAL_HANDLERS,
         "1",
@@ -63,15 +65,17 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyRenderer(renderer);
 
+    // Load assets
     var assets = try Assets.init(gpa, renderer);
     defer assets.deinit();
 
     var game = try Game.init(&assets);
 
-    // TODO(mason): some of these have shared behaviors we can factor out e.g. sprites, newtonian mechanics
+    // Create initial entities
     var entities = try Entities.init(gpa);
     defer entities.deinit(gpa);
 
+    // Set up players
     {
         var controllers = [2]?*c.SDL_GameController{ null, null };
         {
@@ -156,6 +160,7 @@ pub fn main() !void {
         }
     }
 
+    // Create a meteor
     {
         const speed = 100 + std.crypto.random.float(f32) * 400;
         _ = entities.create(.{
@@ -171,9 +176,11 @@ pub fn main() !void {
         });
     }
 
+    // Create stars
     var stars: [150]Star = undefined;
     generateStars(&stars);
 
+    // Run sim
     var delta_s: f32 = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
@@ -203,6 +210,7 @@ fn poll() bool {
 }
 
 fn update(entities: *Entities, game: *Game, delta_s: f32) void {
+    // Update input
     {
         var it = entities.iterator(.{ .input, .ship });
         while (it.next()) |entity| {
@@ -217,6 +225,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
+    // Update ship animations
     {
         var it = entities.iterator(.{.ship});
         while (it.next()) |entity| {
@@ -230,52 +239,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
-    {
-        var bullet_it = entities.iterator(.{.bullet});
-        while (bullet_it.next()) |bullet_entity| {
-            const bullet = bullet_entity.comps.bullet;
-
-            bullet.pos.add(bullet.vel.scaled(delta_s));
-
-            bullet.duration -= delta_s;
-            if (bullet.duration <= 0) {
-                entities.remove(bullet_entity.handle);
-                continue;
-            }
-
-            {
-                var ship_it = entities.iterator(.{ .ship, .rb });
-                while (ship_it.next()) |ship_entity| {
-                    const ship = ship_entity.comps.ship;
-                    const rb = ship_entity.comps.rb;
-                    if (rb.pos.distanceSqrd(bullet.pos) <
-                        rb.radius * rb.radius + bullet.radius * bullet.radius)
-                    {
-                        ship.hp -= bullet.damage;
-
-                        // spawn shrapnel here
-                        const shrapnel_animation = game.shrapnel_animations[
-                            std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
-                        ];
-                        const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                            .scaled(bullet.vel.length() * 0.2);
-                        _ = entities.create(.{ .particle = .{
-                            .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
-                            .pos = rb.pos,
-                            .vel = rb.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
-                            .rotation = 2 * math.pi * std.crypto.random.float(f32),
-                            .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                            .duration = 2,
-                        } });
-
-                        entities.remove(bullet_entity.handle);
-                        continue;
-                    }
-                }
-            }
-        }
-    }
-
+    // Update rbs
     {
         var it = entities.iterator(.{.rb});
         while (it.next()) |entity| {
@@ -369,6 +333,53 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
+    // Update bullets
+    {
+        var bullet_it = entities.iterator(.{ .bullet, .rb });
+        while (bullet_it.next()) |bullet_entity| {
+            const bullet = bullet_entity.comps.bullet;
+            const rb = bullet_entity.comps.rb;
+
+            bullet.duration -= delta_s;
+            if (bullet.duration <= 0) {
+                entities.remove(bullet_entity.handle);
+                continue;
+            }
+
+            {
+                var ship_it = entities.iterator(.{ .ship, .rb });
+                while (ship_it.next()) |ship_entity| {
+                    const ship = ship_entity.comps.ship;
+                    const ship_rb = ship_entity.comps.rb;
+                    if (ship_rb.pos.distanceSqrd(rb.pos) <
+                        ship_rb.radius * ship_rb.radius + rb.radius * rb.radius)
+                    {
+                        ship.hp -= bullet.damage;
+
+                        // spawn shrapnel here
+                        const shrapnel_animation = game.shrapnel_animations[
+                            std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                        ];
+                        const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                            .scaled(rb.vel.length() * 0.2);
+                        _ = entities.create(.{ .particle = .{
+                            .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
+                            .pos = ship_rb.pos,
+                            .vel = ship_rb.vel.plus(rb.vel.scaled(0.2)).plus(random_vector),
+                            .rotation = 2 * math.pi * std.crypto.random.float(f32),
+                            .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                            .duration = 2,
+                        } });
+
+                        entities.remove(bullet_entity.handle);
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    // Update ships
     {
         var it = entities.iterator(.{ .ship, .rb });
         while (it.next()) |entity| {
@@ -424,11 +435,20 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     _ = entities.create(.{
                         .bullet = .{
                             .sprite = game.bullet_small,
+                            .duration = turret.bullet_duration,
+                            .damage = turret.bullet_damage,
+                        },
+                        .rb = .{
                             .pos = rb.pos.plus(V.unit(rb.rotation + turret.angle).scaled(turret.radius)),
                             .vel = V.unit(rb.rotation).scaled(turret.bullet_speed).plus(rb.vel),
-                            .duration = turret.bullet_duration,
                             .radius = 2,
-                            .damage = turret.bullet_damage,
+                            // XXX: use rotation to make face the right way?
+                            .rotation = 0,
+                            .collision_damping = 0,
+                            // XXX: whoa what if bullets had mass lol
+                            // XXX: lol bullets collide with ships (and maybe other bullets?) need to fix that
+                            // TODO(mason): modify math to accept 0 and inf mass
+                            .density = 0.001,
                         },
                     });
                 }
@@ -436,6 +456,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
+    // Update particles
     {
         var it = entities.iterator(.{.particle});
         while (it.next()) |entity| {
@@ -550,17 +571,18 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
     }
 
     {
-        var it = entities.iterator(.{.bullet});
+        var it = entities.iterator(.{ .bullet, .rb });
         while (it.next()) |entity| {
             const bullet = entity.comps.bullet;
+            const rb = entity.comps.rb;
             const sprite = assets.sprite(bullet.sprite);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
                 null, // source rectangle
-                &sprite.toSdlRect(bullet.pos),
+                &sprite.toSdlRect(rb.pos),
                 // The bullet asset images point up instead of to the right.
-                toDegrees(bullet.vel.angle() + math.pi / 2.0),
+                toDegrees(rb.vel.angle() + math.pi / 2.0),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -668,14 +690,8 @@ const Input = struct {
 
 const Bullet = struct {
     sprite: Sprite.Index,
-    /// pixels
-    pos: V,
-    /// pixels per second
-    vel: V,
     /// seconds
     duration: f32,
-    /// pixels
-    radius: f32,
     /// Amount of HP the bullet removes on hit.
     damage: f32,
 };
