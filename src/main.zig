@@ -18,6 +18,7 @@ const ecs = @import("ecs.zig");
 const Entities = ecs.Entities(.{
     .bullet = Bullet,
     .ship = Ship,
+    .rb = RigidBody,
     .controller = *c.SDL_GameController,
     .particle = Particle,
 });
@@ -92,19 +93,22 @@ pub fn main() !void {
         }
 
         for (controllers, 0..) |controller, i| {
-            const ship = game.initShip(0, .{
+            var ship_template = game.initShip(@intCast(u2, i));
+            ship_template.rb.pos = .{
                 .x = 500 + 500 * @intToFloat(f32, i),
                 .y = 500,
-            });
+            };
             // TODO(mason): this is an example of where addComponent would be convenient
             if (controller) |con| {
                 _ = entities.create(.{
-                    .ship = ship,
+                    .ship = ship_template.ship,
+                    .rb = ship_template.rb,
                     .controller = con,
                 });
             } else {
                 _ = entities.create(.{
-                    .ship = ship,
+                    .ship = ship_template.ship,
+                    .rb = ship_template.rb,
                 });
             }
         }
@@ -192,11 +196,12 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
             }
 
             {
-                var ship_it = entities.iterator(.{.ship});
+                var ship_it = entities.iterator(.{ .ship, .rb });
                 while (ship_it.next()) |ship_entity| {
                     const ship = ship_entity.comps.ship;
-                    if (ship.pos.distanceSqrd(bullet.pos) <
-                        ship.radius * ship.radius + bullet.radius * bullet.radius)
+                    const rb = ship_entity.comps.rb;
+                    if (rb.pos.distanceSqrd(bullet.pos) <
+                        rb.radius * rb.radius + bullet.radius * bullet.radius)
                     {
                         ship.hp -= bullet.damage;
 
@@ -208,8 +213,8 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
                             .scaled(bullet.vel.length() * 0.2);
                         _ = entities.create(.{ .particle = .{
                             .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
-                            .pos = ship.pos,
-                            .vel = ship.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
+                            .pos = rb.pos,
+                            .vel = rb.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
                             .rotation = 2 * math.pi * std.crypto.random.float(f32),
                             .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                             .duration = 2,
@@ -224,18 +229,19 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
     }
 
     {
-        var it = entities.iterator(.{.ship});
+        var it = entities.iterator(.{ .ship, .rb });
         while (it.next()) |entity| {
             const ship = entity.comps.ship;
-            ship.pos.add(ship.vel.scaled(dt));
+            const rb = entity.comps.rb;
+            rb.pos.add(rb.vel.scaled(dt));
 
             // explode ships that reach 0 hp
             if (ship.hp <= 0) {
                 // spawn explosion here
                 _ = entities.create(.{ .particle = .{
                     .anim_playback = .{ .index = game.explosion_animation, .time_passed = 0 },
-                    .pos = ship.pos,
-                    .vel = ship.vel,
+                    .pos = rb.pos,
+                    .vel = rb.vel,
                     .rotation = 0,
                     .rotation_vel = 0,
                     .duration = 100,
@@ -250,38 +256,41 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
                 }
                 const new_angle = math.pi * 2 * std.crypto.random.float(f32);
                 const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
-                ship.* = game.initShip(ship.player, new_pos);
+                var ship_template = game.initShip(ship.player);
+                ship_template.rb.pos = new_pos;
+                ship.* = ship_template.ship;
+                rb.* = ship_template.rb;
                 continue;
             }
 
             // bonk
             var other_it = it;
             while (other_it.next()) |other_entity| {
-                const other = other_entity.comps.ship;
-                const added_radii = ship.radius + other.radius;
-                if (ship.pos.distanceSqrd(other.pos) > added_radii * added_radii) continue;
+                const other = other_entity.comps;
+                const added_radii = rb.radius + other.rb.radius;
+                if (rb.pos.distanceSqrd(other.rb.pos) > added_radii * added_radii) continue;
 
                 // calculate normal
-                const normal = other.pos.minus(ship.pos).normalized();
+                const normal = other.rb.pos.minus(rb.pos).normalized();
                 // calculate relative velocity
-                const rv = other.vel.minus(ship.vel);
+                const rv = other.rb.vel.minus(rb.vel);
                 // calculate relative velocity in terms of the normal direction
                 const vel_along_normal = rv.dot(normal);
                 // do not resolve if velocities are separating
                 if (vel_along_normal > 0) continue;
                 // calculate restitution
-                const e = @min(ship.collision_damping, other.collision_damping);
+                const e = @min(rb.collision_damping, other.rb.collision_damping);
                 // calculate impulse scalar
                 var j: f32 = -(1.0 + e) * vel_along_normal;
-                const my_mass = mass(ship.density, ship.radius);
-                const other_mass = mass(other.density, other.radius);
+                const my_mass = mass(rb.density, rb.radius);
+                const other_mass = mass(other.rb.density, other.rb.radius);
                 j /= 1.0 / my_mass + 1.0 / other_mass;
                 // apply impulse
                 const impulse = normal.scaled(j);
                 const ship_impulse = impulse.scaled(1 / my_mass);
                 const other_impulse = impulse.scaled(1 / other_mass);
-                ship.vel.sub(ship_impulse);
-                other.vel.add(other_impulse);
+                rb.vel.sub(ship_impulse);
+                other.rb.vel.add(other_impulse);
                 // Deal HP damage relative to the change in velocity.
                 // A very gentle bonk is something like impulse 20, while a
                 // very hard bonk is around 300.
@@ -289,14 +298,14 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
                 const ship_damage = remap(20, 300, 0, 80, ship_impulse.length());
                 const other_damage = remap(20, 300, 0, 80, other_impulse.length());
                 ship.hp -= ship_damage;
-                other.hp -= other_damage;
+                other.ship.hp -= other_damage;
 
                 const shrapnel_amt = @floatToInt(
                     u32,
                     @floor(remap_clamped(0, 100, 0, 30, ship_damage + other_damage)),
                 );
-                const shrapnel_center = ship.pos.plus(other.pos).scaled(0.5);
-                const avg_vel = ship.vel.plus(other.vel).scaled(0.5);
+                const shrapnel_center = rb.pos.plus(other.rb.pos).scaled(0.5);
+                const avg_vel = rb.vel.plus(other.rb.vel).scaled(0.5);
                 for (0..shrapnel_amt) |_| {
                     const shrapnel_animation = game.shrapnel_animations[
                         std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
@@ -305,7 +314,7 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
                     const random_offset = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * 10);
                     // Give them random velocities.
-                    const base_vel = if (std.crypto.random.boolean()) ship.vel else other.vel;
+                    const base_vel = if (std.crypto.random.boolean()) rb.vel else other.rb.vel;
                     const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
                     _ = entities.create(.{ .particle = .{
@@ -320,10 +329,10 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
             }
 
             // gravity if the ship is outside the ring
-            if (ship.pos.distanceSqrd(display_center) > display_radius * display_radius) {
+            if (rb.pos.distanceSqrd(display_center) > display_radius * display_radius) {
                 const gravity = 400;
-                const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
-                ship.vel.add(gravity_v);
+                const gravity_v = display_center.minus(rb.pos).normalized().scaled(gravity * dt);
+                rb.vel.add(gravity_v);
                 // punishment for leaving the circle
                 ship.hp -= dt * 4;
             }
@@ -331,15 +340,15 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
             const rotate_input = // convert to 1.0 or -1.0
                 @intToFloat(f32, @boolToInt(ship.input.right)) -
                 @intToFloat(f32, @boolToInt(ship.input.left));
-            ship.rotation = @mod(
-                ship.rotation + rotate_input * ship.rotation_vel * dt,
+            rb.rotation = @mod(
+                rb.rotation + rotate_input * ship.rotation_vel * dt,
                 2 * math.pi,
             );
 
             // convert to 1.0 or 0.0
             const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
-            const thrust = V.unit(ship.rotation);
-            ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
+            const thrust = V.unit(rb.rotation);
+            rb.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
 
             if (ship.turret) |*turret| {
                 turret.cooldown -= dt;
@@ -348,8 +357,8 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
                     _ = entities.create(.{
                         .bullet = .{
                             .sprite = game.bullet_small,
-                            .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
-                            .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
+                            .pos = rb.pos.plus(V.unit(rb.rotation + turret.angle).scaled(turret.radius)),
+                            .vel = V.unit(rb.rotation).scaled(turret.bullet_speed).plus(rb.vel),
                             .duration = turret.bullet_duration,
                             .radius = 2,
                             .damage = turret.bullet_damage,
@@ -416,17 +425,18 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, dt: f
     }
 
     {
-        var it = entities.iterator(.{.ship});
+        var it = entities.iterator(.{ .ship, .rb });
         while (it.next()) |entity| {
             const ship = entity.comps.ship;
+            const rb = entity.comps.rb;
             const sprite = assets.animate(&ship.anim_playback, dt);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
                 null, // source rectangle
-                &sprite.toSdlRect(ship.pos),
+                &sprite.toSdlRect(rb.pos),
                 // The ship asset images point up instead of to the right.
-                toDegrees(ship.rotation + math.pi / 2.0),
+                toDegrees(rb.rotation + math.pi / 2.0),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -434,8 +444,8 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, dt: f
             // HP bar
             if (ship.hp < ship.max_hp) {
                 const health_bar_size: V = .{ .x = 32, .y = 4 };
-                var start = ship.pos.minus(health_bar_size.scaled(0.5)).floored();
-                start.y -= ship.radius + health_bar_size.y;
+                var start = rb.pos.minus(health_bar_size.scaled(0.5)).floored();
+                start.y -= rb.radius + health_bar_size.y;
                 sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
                 sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
                     start.minus(.{ .x = 1, .y = 1 }),
@@ -576,10 +586,7 @@ const Turret = struct {
     bullet_damage: f32,
 };
 
-const Ship = struct {
-    still: Animation.Index,
-    accel: Animation.Index,
-    anim_playback: Animation.Playback,
+const RigidBody = struct {
     /// pixels
     pos: V,
     /// pixels per second
@@ -589,6 +596,12 @@ const Ship = struct {
     radius: f32,
     collision_damping: f32,
     density: f32,
+};
+
+const Ship = struct {
+    still: Animation.Index,
+    accel: Animation.Index,
+    anim_playback: Animation.Playback,
 
     /// radians per second
     rotation_vel: f32,
@@ -649,13 +662,18 @@ const Sprite = struct {
     }
 };
 
+const ShipTemplate = struct {
+    ship: Ship,
+    rb: RigidBody,
+};
+
 const Game = struct {
     assets: *Assets,
 
     players: [2]Player,
 
-    ranger_template: Ship,
-    militia_template: Ship,
+    ranger_template: ShipTemplate,
+    militia_template: ShipTemplate,
 
     shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
     explosion_animation: Animation.Index,
@@ -745,54 +763,62 @@ const Game = struct {
 
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
-        const ranger_template: Ship = .{
-            .class = .ranger,
-            .input = .{},
-            .prev_input = .{},
-            .still = ranger_still,
-            .accel = ranger_accel,
-            .anim_playback = .{ .index = ranger_still, .time_passed = 0 },
-            .pos = .{ .x = 0, .y = 0 },
-            .vel = .{ .x = 0, .y = 0 },
-            .rotation = -math.pi / 2.0,
-            .rotation_vel = math.pi * 1.1,
-            .thrust = 150,
-            .turret = .{
-                .radius = ranger_radius,
-                .angle = 0,
-                .cooldown = 0,
-                .cooldown_amount = 0.2,
-                .bullet_speed = 500,
-                .bullet_duration = 0.5,
-                .bullet_damage = 10,
+        const ranger_template: ShipTemplate = .{
+            .ship = .{
+                .class = .ranger,
+                .input = .{},
+                .prev_input = .{},
+                .still = ranger_still,
+                .accel = ranger_accel,
+                .anim_playback = .{ .index = ranger_still, .time_passed = 0 },
+                .rotation_vel = math.pi * 1.1,
+                .thrust = 150,
+                .turret = .{
+                    .radius = ranger_radius,
+                    .angle = 0,
+                    .cooldown = 0,
+                    .cooldown_amount = 0.2,
+                    .bullet_speed = 500,
+                    .bullet_duration = 0.5,
+                    .bullet_damage = 10,
+                },
+                .hp = 80,
+                .max_hp = 80,
+                .player = undefined,
             },
-            .radius = ranger_radius,
-            .collision_damping = 0.4,
-            .density = 0.02,
-            .hp = 80,
-            .max_hp = 80,
-            .player = undefined,
+            .rb = .{
+                .pos = .{ .x = 0, .y = 0 },
+                .vel = .{ .x = 0, .y = 0 },
+                .rotation = -math.pi / 2.0,
+                .collision_damping = 0.4,
+                .radius = ranger_radius,
+                .density = 0.02,
+            },
         };
 
-        const militia_template: Ship = .{
-            .class = .militia,
-            .input = .{},
-            .prev_input = .{},
-            .still = militia_still,
-            .accel = militia_accel,
-            .anim_playback = .{ .index = militia_still, .time_passed = 0 },
-            .pos = .{ .x = 0, .y = 0 },
-            .vel = .{ .x = 0, .y = 0 },
-            .rotation = -math.pi / 2.0,
-            .rotation_vel = math.pi * 1.2,
-            .thrust = 300,
-            .turret = null,
-            .radius = militia_radius,
-            .collision_damping = 0.4,
-            .density = 0.02,
-            .hp = 80,
-            .max_hp = 80,
-            .player = undefined,
+        const militia_template: ShipTemplate = .{
+            .ship = .{
+                .class = .militia,
+                .input = .{},
+                .prev_input = .{},
+                .still = militia_still,
+                .accel = militia_accel,
+                .anim_playback = .{ .index = militia_still, .time_passed = 0 },
+                .rotation_vel = math.pi * 1.2,
+                .thrust = 300,
+                .turret = null,
+                .hp = 80,
+                .max_hp = 80,
+                .player = undefined,
+            },
+            .rb = .{
+                .pos = .{ .x = 0, .y = 0 },
+                .vel = .{ .x = 0, .y = 0 },
+                .rotation = -math.pi / 2.0,
+                .radius = militia_radius,
+                .collision_damping = 0.4,
+                .density = 0.02,
+            },
         };
 
         return .{
@@ -822,14 +848,13 @@ const Game = struct {
         };
     }
 
-    fn initShip(game: *Game, player_index: u2, pos: V) Ship {
+    fn initShip(game: *Game, player_index: u2) ShipTemplate {
         const player = game.players[player_index];
         var ship = switch (player.ship_progression[player.ship_progression_index]) {
             .ranger => game.ranger_template,
             .militia => game.militia_template,
         };
-        ship.pos = pos;
-        ship.player = player_index;
+        ship.ship.player = player_index;
         return ship;
     }
 };
