@@ -53,6 +53,8 @@ pub fn main() !void {
     var assets = try Assets.init(gpa, renderer);
     defer assets.deinit();
 
+    var game = try Game.init(&assets);
+
     // TODO(mason): some of these have shared behaviors we can factor out e.g. sprites, newtonian mechanics
     var entities = try Entities(.{
         .bullet = Bullet,
@@ -61,123 +63,6 @@ pub fn main() !void {
         .particle = Particle,
     }).init(gpa);
     defer entities.deinit(gpa);
-
-    const ring_bg = try assets.loadSprite("img/ring.png");
-    const star_small = try assets.loadSprite("img/star/small.png");
-    const star_large = try assets.loadSprite("img/star/large.png");
-    const planet_red = try assets.loadSprite("img/planet-red.png");
-    const bullet_small = try assets.loadSprite("img/bullet/small.png");
-
-    const shrapnel_sprites = [_]Sprite.Index{
-        try assets.loadSprite("img/shrapnel/01.png"),
-        try assets.loadSprite("img/shrapnel/02.png"),
-        try assets.loadSprite("img/shrapnel/03.png"),
-    };
-    const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
-        try assets.addAnimation(&.{shrapnel_sprites[0]}, null, 30),
-        try assets.addAnimation(&.{shrapnel_sprites[1]}, null, 30),
-        try assets.addAnimation(&.{shrapnel_sprites[2]}, null, 30),
-    };
-
-    const ranger_sprites = [_]Sprite.Index{
-        try assets.loadSprite("img/ship/ranger0.png"),
-        try assets.loadSprite("img/ship/ranger1.png"),
-        try assets.loadSprite("img/ship/ranger2.png"),
-        try assets.loadSprite("img/ship/ranger3.png"),
-    };
-    const ranger_still = try assets.addAnimation(&.{
-        ranger_sprites[0],
-    }, null, 30);
-    const ranger_steady_thrust = try assets.addAnimation(&.{
-        ranger_sprites[2],
-        ranger_sprites[3],
-    }, null, 10);
-    const ranger_accel = try assets.addAnimation(&.{
-        ranger_sprites[0],
-        ranger_sprites[1],
-    }, ranger_steady_thrust, 10);
-
-    const militia_sprites = [_]Sprite.Index{
-        try assets.loadSprite("img/ship/militia0.png"),
-        try assets.loadSprite("img/ship/militia1.png"),
-        try assets.loadSprite("img/ship/militia2.png"),
-        try assets.loadSprite("img/ship/militia3.png"),
-    };
-    const militia_still = try assets.addAnimation(&.{
-        militia_sprites[0],
-    }, null, 30);
-    const militia_steady_thrust = try assets.addAnimation(&.{
-        militia_sprites[2],
-        militia_sprites[3],
-    }, null, 10);
-    const militia_accel = try assets.addAnimation(&.{
-        militia_sprites[0],
-        militia_sprites[1],
-    }, militia_steady_thrust, 10);
-
-    const explosion_animation = try assets.addAnimation(&.{
-        try assets.loadSprite("img/explosion/01.png"),
-        try assets.loadSprite("img/explosion/02.png"),
-        try assets.loadSprite("img/explosion/03.png"),
-        try assets.loadSprite("img/explosion/04.png"),
-        try assets.loadSprite("img/explosion/05.png"),
-        try assets.loadSprite("img/explosion/06.png"),
-        try assets.loadSprite("img/explosion/07.png"),
-        try assets.loadSprite("img/explosion/08.png"),
-        try assets.loadSprite("img/explosion/09.png"),
-        try assets.loadSprite("img/explosion/10.png"),
-        try assets.loadSprite("img/explosion/11.png"),
-        try assets.loadSprite("img/explosion/12.png"),
-    }, .none, 30);
-
-    const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
-    const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
-
-    const ranger_template: Ship = .{
-        .input = .{},
-        .prev_input = .{},
-        .still = ranger_still,
-        .accel = ranger_accel,
-        .anim_playback = .{ .index = ranger_still, .time_passed = 0 },
-        .pos = .{ .x = 0, .y = 0 },
-        .vel = .{ .x = 0, .y = 0 },
-        .rotation = -math.pi / 2.0,
-        .rotation_vel = math.pi * 1.1,
-        .thrust = 150,
-        .turret = .{
-            .radius = ranger_radius,
-            .angle = 0,
-            .cooldown = 0,
-            .cooldown_amount = 0.2,
-            .bullet_speed = 500,
-            .bullet_duration = 0.5,
-            .bullet_damage = 10,
-        },
-        .radius = ranger_radius,
-        .collision_damping = 0.4,
-        .density = 0.02,
-        .hp = 80,
-        .max_hp = 80,
-    };
-
-    const militia_template: Ship = .{
-        .input = .{},
-        .prev_input = .{},
-        .still = militia_still,
-        .accel = militia_accel,
-        .anim_playback = .{ .index = militia_still, .time_passed = 0 },
-        .pos = .{ .x = 0, .y = 0 },
-        .vel = .{ .x = 0, .y = 0 },
-        .rotation = -math.pi / 2.0,
-        .rotation_vel = math.pi * 1.2,
-        .thrust = 300,
-        .turret = null,
-        .radius = militia_radius,
-        .collision_damping = 0.4,
-        .density = 0.02,
-        .hp = 80,
-        .max_hp = 80,
-    };
 
     {
         var controllers = [2]?*c.SDL_GameController{ null, null };
@@ -201,11 +86,10 @@ pub fn main() !void {
         }
 
         for (controllers, 0..) |controller, i| {
-            var ship = if (i == 0) ranger_template else militia_template;
-            ship.pos = .{
+            const ship = game.initShip(0, .{
                 .x = 500 + 500 * @intToFloat(f32, i),
                 .y = 500,
-            };
+            });
             // TODO(mason): this is an example of where addComponent would be convenient
             if (controller) |con| {
                 _ = entities.create(.{
@@ -304,8 +188,8 @@ pub fn main() !void {
                             ship.hp -= bullet.damage;
 
                             // spawn shrapnel here
-                            const shrapnel_animation = shrapnel_animations[
-                                std.crypto.random.uintLessThanBiased(usize, shrapnel_animations.len)
+                            const shrapnel_animation = game.shrapnel_animations[
+                                std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
                             ];
                             const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                                 .scaled(bullet.vel.length() * 0.2);
@@ -336,17 +220,24 @@ pub fn main() !void {
                 if (ship.hp <= 0) {
                     // spawn explosion here
                     _ = entities.create(.{ .particle = .{
-                        .anim_playback = .{ .index = explosion_animation, .time_passed = 0 },
+                        .anim_playback = .{ .index = game.explosion_animation, .time_passed = 0 },
                         .pos = ship.pos,
                         .vel = ship.vel,
                         .rotation = 0,
                         .rotation_vel = 0,
                         .duration = 100,
                     } });
-                    // delete ship and spawn it somewhere else
-                    ship.* = ranger_template;
+                    // give player their next ship
+                    const player = &game.players[ship.player];
+                    player.ship_progression_index += 1;
+                    if (player.ship_progression_index >= player.ship_progression.len) {
+                        // this player would lose the game, but instead let's just
+                        // give them another ship
+                        player.ship_progression_index = 0;
+                    }
                     const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                    ship.pos = display_center.plus(V.unit(new_angle).scaled(500));
+                    const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
+                    ship.* = game.initShip(ship.player, new_pos);
                     continue;
                 }
 
@@ -394,8 +285,8 @@ pub fn main() !void {
                     const shrapnel_center = ship.pos.plus(other.pos).scaled(0.5);
                     const avg_vel = ship.vel.plus(other.vel).scaled(0.5);
                     for (0..shrapnel_amt) |_| {
-                        const shrapnel_animation = shrapnel_animations[
-                            std.crypto.random.uintLessThanBiased(usize, shrapnel_animations.len)
+                        const shrapnel_animation = game.shrapnel_animations[
+                            std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
                         ];
                         // Spawn slightly off center from collision point.
                         const random_offset = V.unit(std.crypto.random.float(f32) * math.pi * 2)
@@ -420,6 +311,8 @@ pub fn main() !void {
                     const gravity = 400;
                     const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
                     ship.vel.add(gravity_v);
+                    // punishment for leaving the circle
+                    ship.hp -= dt * 0.1;
                 }
 
                 const rotate_input = // convert to 1.0 or -1.0
@@ -441,7 +334,7 @@ pub fn main() !void {
                         turret.cooldown = turret.cooldown_amount;
                         _ = entities.create(.{
                             .bullet = .{
-                                .sprite = bullet_small,
+                                .sprite = game.bullet_small,
                                 .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
                                 .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
                                 .duration = turret.bullet_duration,
@@ -478,9 +371,9 @@ pub fn main() !void {
 
         for (stars) |star| {
             const sprite = assets.sprite(switch (star.kind) {
-                .small => star_small,
-                .large => star_large,
-                .planet_red => planet_red,
+                .small => game.star_small,
+                .large => game.star_large,
+                .planet_red => game.planet_red,
             });
             const dst_rect: c.SDL_Rect = .{
                 .x = star.x,
@@ -497,7 +390,7 @@ pub fn main() !void {
         }
 
         {
-            const sprite = assets.sprite(ring_bg);
+            const sprite = assets.sprite(game.ring_bg);
             sdlAssertZero(c.SDL_RenderCopy(
                 renderer,
                 sprite.texture,
@@ -587,6 +480,12 @@ pub fn main() !void {
         dt = lerp(dt, last_dt, 0.1);
     }
 }
+
+const Player = struct {
+    index: u2,
+    ship_progression_index: u32,
+    ship_progression: []const Ship.Class,
+};
 
 pub fn sdlAssertZero(ret: c_int) void {
     if (ret == 0) return;
@@ -695,6 +594,11 @@ const Ship = struct {
     hp: f32,
     max_hp: f32,
 
+    class: Class,
+    player: u2,
+
+    const Class = enum { ranger, militia };
+
     const Input = packed struct {
         fire: bool = false,
         forward: bool = false,
@@ -733,6 +637,191 @@ const Sprite = struct {
     }
 };
 
+const Game = struct {
+    assets: *Assets,
+
+    players: [2]Player,
+
+    ranger_template: Ship,
+    militia_template: Ship,
+
+    shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
+    explosion_animation: Animation.Index,
+
+    ring_bg: Sprite.Index,
+    star_small: Sprite.Index,
+    star_large: Sprite.Index,
+    planet_red: Sprite.Index,
+    bullet_small: Sprite.Index,
+
+    const shrapnel_sprite_names = [_][]const u8{
+        "img/shrapnel/01.png",
+        "img/shrapnel/02.png",
+        "img/shrapnel/03.png",
+    };
+
+    fn init(assets: *Assets) !Game {
+        const ring_bg = try assets.loadSprite("img/ring.png");
+        const star_small = try assets.loadSprite("img/star/small.png");
+        const star_large = try assets.loadSprite("img/star/large.png");
+        const planet_red = try assets.loadSprite("img/planet-red.png");
+        const bullet_small = try assets.loadSprite("img/bullet/small.png");
+
+        var shrapnel_sprites: [shrapnel_sprite_names.len]Sprite.Index = undefined;
+        for (&shrapnel_sprites) |*s| {
+            s.* = try assets.loadSprite("img/shrapnel/01.png");
+            s.* = try assets.loadSprite("img/shrapnel/02.png");
+            s.* = try assets.loadSprite("img/shrapnel/03.png");
+        }
+
+        const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
+            try assets.addAnimation(&.{shrapnel_sprites[0]}, null, 30),
+            try assets.addAnimation(&.{shrapnel_sprites[1]}, null, 30),
+            try assets.addAnimation(&.{shrapnel_sprites[2]}, null, 30),
+        };
+
+        const ranger_sprites = [_]Sprite.Index{
+            try assets.loadSprite("img/ship/ranger0.png"),
+            try assets.loadSprite("img/ship/ranger1.png"),
+            try assets.loadSprite("img/ship/ranger2.png"),
+            try assets.loadSprite("img/ship/ranger3.png"),
+        };
+        const ranger_still = try assets.addAnimation(&.{
+            ranger_sprites[0],
+        }, null, 30);
+        const ranger_steady_thrust = try assets.addAnimation(&.{
+            ranger_sprites[2],
+            ranger_sprites[3],
+        }, null, 10);
+        const ranger_accel = try assets.addAnimation(&.{
+            ranger_sprites[0],
+            ranger_sprites[1],
+        }, ranger_steady_thrust, 10);
+
+        const militia_sprites = [_]Sprite.Index{
+            try assets.loadSprite("img/ship/militia0.png"),
+            try assets.loadSprite("img/ship/militia1.png"),
+            try assets.loadSprite("img/ship/militia2.png"),
+            try assets.loadSprite("img/ship/militia3.png"),
+        };
+        const militia_still = try assets.addAnimation(&.{
+            militia_sprites[0],
+        }, null, 30);
+        const militia_steady_thrust = try assets.addAnimation(&.{
+            militia_sprites[2],
+            militia_sprites[3],
+        }, null, 10);
+        const militia_accel = try assets.addAnimation(&.{
+            militia_sprites[0],
+            militia_sprites[1],
+        }, militia_steady_thrust, 10);
+
+        const explosion_animation = try assets.addAnimation(&.{
+            try assets.loadSprite("img/explosion/01.png"),
+            try assets.loadSprite("img/explosion/02.png"),
+            try assets.loadSprite("img/explosion/03.png"),
+            try assets.loadSprite("img/explosion/04.png"),
+            try assets.loadSprite("img/explosion/05.png"),
+            try assets.loadSprite("img/explosion/06.png"),
+            try assets.loadSprite("img/explosion/07.png"),
+            try assets.loadSprite("img/explosion/08.png"),
+            try assets.loadSprite("img/explosion/09.png"),
+            try assets.loadSprite("img/explosion/10.png"),
+            try assets.loadSprite("img/explosion/11.png"),
+            try assets.loadSprite("img/explosion/12.png"),
+        }, .none, 30);
+
+        const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
+        const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
+        const ranger_template: Ship = .{
+            .class = .ranger,
+            .input = .{},
+            .prev_input = .{},
+            .still = ranger_still,
+            .accel = ranger_accel,
+            .anim_playback = .{ .index = ranger_still, .time_passed = 0 },
+            .pos = .{ .x = 0, .y = 0 },
+            .vel = .{ .x = 0, .y = 0 },
+            .rotation = -math.pi / 2.0,
+            .rotation_vel = math.pi * 1.1,
+            .thrust = 150,
+            .turret = .{
+                .radius = ranger_radius,
+                .angle = 0,
+                .cooldown = 0,
+                .cooldown_amount = 0.2,
+                .bullet_speed = 500,
+                .bullet_duration = 0.5,
+                .bullet_damage = 10,
+            },
+            .radius = ranger_radius,
+            .collision_damping = 0.4,
+            .density = 0.02,
+            .hp = 80,
+            .max_hp = 80,
+            .player = undefined,
+        };
+
+        const militia_template: Ship = .{
+            .class = .militia,
+            .input = .{},
+            .prev_input = .{},
+            .still = militia_still,
+            .accel = militia_accel,
+            .anim_playback = .{ .index = militia_still, .time_passed = 0 },
+            .pos = .{ .x = 0, .y = 0 },
+            .vel = .{ .x = 0, .y = 0 },
+            .rotation = -math.pi / 2.0,
+            .rotation_vel = math.pi * 1.2,
+            .thrust = 300,
+            .turret = null,
+            .radius = militia_radius,
+            .collision_damping = 0.4,
+            .density = 0.02,
+            .hp = 80,
+            .max_hp = 80,
+            .player = undefined,
+        };
+
+        return .{
+            .assets = assets,
+            .players = .{
+                .{
+                    .index = 0,
+                    .ship_progression_index = 0,
+                    .ship_progression = &.{ .ranger, .militia },
+                },
+                .{
+                    .index = 1,
+                    .ship_progression_index = 0,
+                    .ship_progression = &.{ .ranger, .militia },
+                },
+            },
+            .shrapnel_animations = shrapnel_animations,
+            .explosion_animation = explosion_animation,
+            .ranger_template = ranger_template,
+            .militia_template = militia_template,
+
+            .ring_bg = ring_bg,
+            .star_small = star_small,
+            .star_large = star_large,
+            .planet_red = planet_red,
+            .bullet_small = bullet_small,
+        };
+    }
+
+    fn initShip(game: *Game, player_index: u2, pos: V) Ship {
+        const player = game.players[player_index];
+        var ship = switch (player.ship_progression[player.ship_progression_index]) {
+            .ranger => game.ranger_template,
+            .militia => game.militia_template,
+        };
+        ship.pos = pos;
+        ship.player = player_index;
+        return ship;
+    }
+};
+
 const Assets = struct {
     gpa: Allocator,
     renderer: *c.SDL_Renderer,
@@ -751,6 +840,7 @@ const Assets = struct {
                 assets_dir_path, @errorName(err),
             });
         };
+
         return .{
             .gpa = gpa,
             .renderer = renderer,
