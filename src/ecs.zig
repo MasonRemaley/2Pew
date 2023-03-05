@@ -21,7 +21,7 @@ const invalid_entity_index = std.math.maxInt(SlotIndex);
 // XXX: can now tweak for perf. note that lower numbers are better
 // tests though, may wanna make configurable for that reason.
 const page_size = 4096;
-// XXX: comptime assert page size > header size?
+
 // XXX: set reasonable values for these
 const max_pages = max_entities / 32;
 const max_archetypes = 40000;
@@ -41,7 +41,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // rational.
         const Entity = entity: {
             var fields: [std.meta.fields(@TypeOf(componentTypes)).len]Type.StructField = undefined;
-            inline for (std.meta.fields(@TypeOf(componentTypes)), 0..) |registered, i| {
+            for (std.meta.fields(@TypeOf(componentTypes)), 0..) |registered, i| {
                 fields[i] = Type.StructField{
                     .name = registered.name,
                     .type = @field(componentTypes, registered.name),
@@ -87,6 +87,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
             handle_array: u16,
 
             fn init(page_pool: *ArrayListUnmanaged(*PageHeader), archetype: Archetype) !*PageHeader {
+                comptime assert(@sizeOf(PageHeader) < page_size);
+
                 var ptr: u16 = 0;
 
                 // Store the header, no alignment necessary since we start out page aligned
@@ -321,7 +323,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         pub fn createChecked(self: *@This(), entity: anytype) !EntityHandle {
             const archetype = comptime archetype: {
                 var archetype = Archetype.initEmpty();
-                inline for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
+                for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
                     archetype.set(std.meta.fieldIndex(Entity, fieldName).?);
                 }
                 break :archetype archetype;
@@ -478,7 +480,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 const Components = entity: {
                     var fields: [std.meta.fields(@TypeOf(components)).len]Type.StructField = undefined;
                     var i = 0;
-                    inline for (components) |component| {
+                    for (components) |component| {
                         const entityFieldEnum: FieldEnum(Entity) = component;
                         const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
                         const FieldType = *entityField.type;
@@ -506,7 +508,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 const ComponentArrays = entity: {
                     var fields: [std.meta.fields(@TypeOf(components)).len]Type.StructField = undefined;
                     var i = 0;
-                    inline for (components) |component| {
+                    for (components) |component| {
                         const entityFieldEnum: FieldEnum(Entity) = component;
                         const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
                         const FieldType = [*]entityField.type;
@@ -548,7 +550,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         // TODO: replace with getter if possible
                         .archetype = comptime archetype: {
                             var archetype = Archetype.initEmpty();
-                            inline for (components) |field| {
+                            for (components) |field| {
                                 const entityField: FieldEnum(Entity) = field;
                                 archetype.set(@enumToInt(entityField));
                             }
