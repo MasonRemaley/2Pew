@@ -21,6 +21,7 @@ const Entities = ecs.Entities(.{
     .rb = RigidBody,
     .controller = *c.SDL_GameController,
     .particle = Particle,
+    .rock = Rock,
 });
 const EntityHandle = ecs.EntityHandle;
 
@@ -112,6 +113,21 @@ pub fn main() !void {
                 });
             }
         }
+    }
+
+    {
+        const speed = 100 + std.crypto.random.float(f32) * 400;
+        _ = entities.create(.{
+            .rock = .{},
+            .rb = .{
+                .pos = display_center.plus(.{ .x = 0, .y = 300 }),
+                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+                .rotation = 0,
+                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
+                .collision_damping = 1,
+                .density = 0.10,
+            },
+        });
     }
 
     var stars: [150]Star = undefined;
@@ -484,6 +500,23 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, dt: f
     }
 
     {
+        var it = entities.iterator(.{ .rock, .rb });
+        while (it.next()) |entity| {
+            const rb = entity.comps.rb;
+            const sprite = assets.sprite(game.rock_sprite);
+            sdlAssertZero(c.SDL_RenderCopyEx(
+                renderer,
+                sprite.texture,
+                null, // source rectangle
+                &sprite.toSdlRect(rb.pos),
+                toDegrees(rb.rotation),
+                null, // center of rotation
+                c.SDL_FLIP_NONE,
+            ));
+        }
+    }
+
+    {
         var it = entities.iterator(.{.bullet});
         while (it.next()) |entity| {
             const bullet = entity.comps.bullet;
@@ -522,7 +555,6 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, dt: f
 }
 
 const Player = struct {
-    index: u2,
     ship_progression_index: u32,
     ship_progression: []const Ship.Class,
 };
@@ -702,10 +734,18 @@ const Game = struct {
     planet_red: Sprite.Index,
     bullet_small: Sprite.Index,
 
+    rock_sprite: Sprite.Index,
+
     const shrapnel_sprite_names = [_][]const u8{
         "img/shrapnel/01.png",
         "img/shrapnel/02.png",
         "img/shrapnel/03.png",
+    };
+
+    const rock_sprite_names = [_][]const u8{
+        "img/rock-a.png",
+        "img/rock-b.png",
+        "img/rock-c.png",
     };
 
     fn init(assets: *Assets) !Game {
@@ -716,10 +756,13 @@ const Game = struct {
         const bullet_small = try assets.loadSprite("img/bullet/small.png");
 
         var shrapnel_sprites: [shrapnel_sprite_names.len]Sprite.Index = undefined;
-        for (&shrapnel_sprites) |*s| {
-            s.* = try assets.loadSprite("img/shrapnel/01.png");
-            s.* = try assets.loadSprite("img/shrapnel/02.png");
-            s.* = try assets.loadSprite("img/shrapnel/03.png");
+        for (&shrapnel_sprites, shrapnel_sprite_names) |*s, name| {
+            s.* = try assets.loadSprite(name);
+        }
+
+        var rock_sprites: [rock_sprite_names.len]Sprite.Index = undefined;
+        for (&rock_sprites, rock_sprite_names) |*s, name| {
+            s.* = try assets.loadSprite(name);
         }
 
         const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
@@ -843,12 +886,10 @@ const Game = struct {
             .assets = assets,
             .players = .{
                 .{
-                    .index = 0,
                     .ship_progression_index = 0,
                     .ship_progression = &.{ .ranger, .militia },
                 },
                 .{
-                    .index = 1,
                     .ship_progression_index = 0,
                     .ship_progression = &.{ .ranger, .militia },
                 },
@@ -863,6 +904,7 @@ const Game = struct {
             .star_large = star_large,
             .planet_red = planet_red,
             .bullet_small = bullet_small,
+            .rock_sprite = rock_sprites[0],
         };
     }
 
@@ -1000,6 +1042,8 @@ const Star = struct {
 
     const Kind = enum { large, small, planet_red };
 };
+
+const Rock = struct {};
 
 fn generateStars(stars: []Star) void {
     for (stars) |*star| {
