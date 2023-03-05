@@ -312,7 +312,7 @@ pub fn main() !void {
                     const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
                     ship.vel.add(gravity_v);
                     // punishment for leaving the circle
-                    ship.hp -= dt * 0.1;
+                    ship.hp -= dt * 4;
                 }
 
                 const rotate_input = // convert to 1.0 or -1.0
