@@ -56,39 +56,9 @@ pub fn main() !void {
     var entities = try Entities(.{
         .bullet = Bullet,
         .ship = Ship,
-        .player = Player,
+        .controller = *c.SDL_GameController,
     }).init(gpa);
     defer entities.deinit(gpa);
-
-    {
-        var controllers = [2]?*c.SDL_GameController{ null, null };
-        {
-            var player_index: u32 = 0;
-            for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
-                const i = @intCast(u31, i_usize);
-                if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
-                    const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
-                        panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
-                    };
-                    if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
-                        controllers[i] = sdl_controller;
-                        player_index += 1;
-                        if (player_index >= controllers.len) break;
-                    } else {
-                        c.SDL_GameControllerClose(sdl_controller);
-                    }
-                }
-            }
-        }
-        _ = entities.create(.{ .player = .{
-            .ship = null,
-            .controller = controllers[0],
-        } });
-        _ = entities.create(.{ .player = .{
-            .ship = null,
-            .controller = controllers[1],
-        } });
-    }
 
     const ring_bg = try assets.loadSprite("img/ring.png");
     const star_small = try assets.loadSprite("img/star/small.png");
@@ -204,16 +174,43 @@ pub fn main() !void {
     };
 
     {
-        var it = entities.iterator(.{.player});
-        var i: usize = 0;
-        while (it.next()) |entity| : (i += 1) {
-            var player = entity.comps.player;
+        var controllers = [2]?*c.SDL_GameController{ null, null };
+        {
+            var player_index: u32 = 0;
+            for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
+                const i = @intCast(u31, i_usize);
+                if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
+                    const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
+                        panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
+                    };
+                    if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
+                        controllers[i] = sdl_controller;
+                        player_index += 1;
+                        if (player_index >= controllers.len) break;
+                    } else {
+                        c.SDL_GameControllerClose(sdl_controller);
+                    }
+                }
+            }
+        }
+
+        for (controllers, 0..) |controller, i| {
             var ship = if (i == 0) ranger_template else militia_template;
             ship.pos = .{
                 .x = 500 + 500 * @intToFloat(f32, i),
                 .y = 500,
             };
-            player.ship = entities.create(.{ .ship = ship });
+            // TODO(mason): this is an example of where addComponent would be convenient
+            if (controller) |con| {
+                _ = entities.create(.{
+                    .ship = ship,
+                    .controller = con,
+                });
+            } else {
+                _ = entities.create(.{
+                    .ship = ship,
+                });
+            }
         }
     }
 
@@ -246,27 +243,32 @@ pub fn main() !void {
         }
 
         {
-            var it = entities.iterator(.{.player});
+            var it = entities.iterator(.{ .controller, .ship });
             while (it.next()) |entity| {
-                const player = entity.comps.player;
-                const ship = entities.getComponent(player.ship.?, .ship).?;
+                const controller = entity.comps.controller.*;
+                const ship = entity.comps.ship;
                 ship.input = .{};
-                if (player.controller) |controller| {
-                    // left/right on the left joystick
-                    const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
-                    // up/down on the left joystick
-                    //const y_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTY);
+                // left/right on the left joystick
+                const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
+                // up/down on the left joystick
+                //const y_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTY);
 
-                    const dead_zone = 10000;
-                    ship.input.left = ship.input.left or x_axis < -dead_zone;
-                    ship.input.right = ship.input.right or x_axis > dead_zone;
-                    ship.input.forward = ship.input.forward or
-                        c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
-                    ship.input.fire = ship.input.fire or
-                        c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
-                    //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
-                    //std.debug.print("input: {any}\n", .{ship.input});
-                }
+                const dead_zone = 10000;
+                ship.input.left = ship.input.left or x_axis < -dead_zone;
+                ship.input.right = ship.input.right or x_axis > dead_zone;
+                ship.input.forward = ship.input.forward or
+                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
+                ship.input.fire = ship.input.fire or
+                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
+                //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
+                //std.debug.print("input: {any}\n", .{ship.input});
+            }
+        }
+
+        {
+            var it = entities.iterator(.{.ship});
+            while (it.next()) |entity| {
+                const ship = entity.comps.ship;
                 if (!ship.prev_input.forward and ship.input.forward) {
                     ship.setAnimation(ship.accel);
                 } else if (ship.prev_input.forward and !ship.input.forward) {
@@ -519,12 +521,6 @@ pub fn sdlAssertZero(ret: c_int) void {
     if (ret == 0) return;
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
-
-// TODO: just make a controller component
-const Player = struct {
-    controller: ?*c.SDL_GameController,
-    ship: ?EntityHandle,
-};
 
 const Bullet = struct {
     sprite: Sprite.Index,
