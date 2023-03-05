@@ -99,23 +99,41 @@ pub fn main() !void {
         try assets.addAnimation(&.{shrapnel_sprites[2]}, null, 30),
     };
 
-    const ship_sprites = [_]Sprite.Index{
+    const ranger_sprites = [_]Sprite.Index{
         try assets.loadSprite("img/ship/ranger0.png"),
         try assets.loadSprite("img/ship/ranger1.png"),
         try assets.loadSprite("img/ship/ranger2.png"),
         try assets.loadSprite("img/ship/ranger3.png"),
     };
-    const ship_still = try assets.addAnimation(&.{
-        ship_sprites[0],
+    const ranger_still = try assets.addAnimation(&.{
+        ranger_sprites[0],
     }, null, 30);
-    const ship_steady_thrust = try assets.addAnimation(&.{
-        ship_sprites[2],
-        ship_sprites[3],
+    const ranger_steady_thrust = try assets.addAnimation(&.{
+        ranger_sprites[2],
+        ranger_sprites[3],
     }, null, 10);
-    const ship_accel = try assets.addAnimation(&.{
-        ship_sprites[0],
-        ship_sprites[1],
-    }, ship_steady_thrust, 10);
+    const ranger_accel = try assets.addAnimation(&.{
+        ranger_sprites[0],
+        ranger_sprites[1],
+    }, ranger_steady_thrust, 10);
+
+    const militia_sprites = [_]Sprite.Index{
+        try assets.loadSprite("img/ship/militia0.png"),
+        try assets.loadSprite("img/ship/militia1.png"),
+        try assets.loadSprite("img/ship/militia2.png"),
+        try assets.loadSprite("img/ship/militia3.png"),
+    };
+    const militia_still = try assets.addAnimation(&.{
+        militia_sprites[0],
+    }, null, 30);
+    const militia_steady_thrust = try assets.addAnimation(&.{
+        militia_sprites[2],
+        militia_sprites[3],
+    }, null, 10);
+    const militia_accel = try assets.addAnimation(&.{
+        militia_sprites[0],
+        militia_sprites[1],
+    }, militia_steady_thrust, 10);
 
     const explosion_animation = try assets.addAnimation(&.{
         try assets.loadSprite("img/explosion/01.png"),
@@ -132,31 +150,47 @@ pub fn main() !void {
         try assets.loadSprite("img/explosion/12.png"),
     }, .none, 30);
 
-    const ship_radius = @intToFloat(f32, assets.sprite(ship_sprites[0]).rect.w) / 2.0;
-
-    const ship_turret: Turret = .{
-        .radius = ship_radius,
-        .angle = 0,
-        .cooldown = 0,
-        .cooldown_amount = 0.2,
-        .bullet_speed = 500,
-        .bullet_duration = 0.5,
-        .bullet_damage = 10,
-    };
+    const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
+    const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
 
     const ranger_template: Ship = .{
         .input = .{},
         .prev_input = .{},
-        .still = ship_still,
-        .accel = ship_accel,
-        .anim_playback = .{ .index = ship_still, .time_passed = 0 },
+        .still = ranger_still,
+        .accel = ranger_accel,
+        .anim_playback = .{ .index = ranger_still, .time_passed = 0 },
         .pos = .{ .x = 0, .y = 0 },
         .vel = .{ .x = 0, .y = 0 },
         .rotation = -math.pi / 2.0,
         .rotation_vel = math.pi * 1.1,
         .thrust = 150,
-        .turret = ship_turret,
-        .radius = ship_radius,
+        .turret = .{
+            .radius = ranger_radius,
+            .angle = 0,
+            .cooldown = 0,
+            .cooldown_amount = 0.2,
+            .bullet_speed = 500,
+            .bullet_duration = 0.5,
+            .bullet_damage = 10,
+        },
+        .radius = ranger_radius,
+        .hp = 80,
+        .max_hp = 80,
+    };
+
+    const militia_template: Ship = .{
+        .input = .{},
+        .prev_input = .{},
+        .still = militia_still,
+        .accel = militia_accel,
+        .anim_playback = .{ .index = militia_still, .time_passed = 0 },
+        .pos = .{ .x = 0, .y = 0 },
+        .vel = .{ .x = 0, .y = 0 },
+        .rotation = -math.pi / 2.0,
+        .rotation_vel = math.pi * 1.2,
+        .thrust = 300,
+        .turret = null,
+        .radius = militia_radius,
         .hp = 80,
         .max_hp = 80,
     };
@@ -164,7 +198,11 @@ pub fn main() !void {
     var ships = std.ArrayList(Ship).init(gpa);
     defer ships.deinit();
     for (players, 0..) |_, i| {
-        try ships.append(ranger_template);
+        if (i == 0) {
+            try ships.append(ranger_template);
+        } else {
+            try ships.append(militia_template);
+        }
         ships.items[ships.items.len - 1].pos = .{
             .x = 500 + 500 * @intToFloat(f32, i),
             .y = 500,
@@ -293,7 +331,7 @@ pub fn main() !void {
 
             // gravity if the ship is outside the ring
             if (ship.pos.distanceSqrd(display_center) > display_radius * display_radius) {
-                const gravity = 200;
+                const gravity = 400;
                 const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
                 ship.vel.add(gravity_v);
             }
@@ -311,8 +349,7 @@ pub fn main() !void {
             const thrust = V.unit(ship.rotation);
             ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
 
-            const turret = &ship.turret;
-            {
+            if (ship.turret) |*turret| {
                 turret.cooldown -= dt;
                 if (ship.input.fire and turret.cooldown <= 0) {
                     turret.cooldown = turret.cooldown_amount;
@@ -562,7 +599,7 @@ const Ship = struct {
     /// notice when a button is first pressed.
     prev_input: Input,
 
-    turret: Turret,
+    turret: ?Turret,
 
     hp: f32,
     max_hp: f32,
