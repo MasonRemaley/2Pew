@@ -20,6 +20,11 @@ pub fn add(v: *Vec2d, other: Vec2d) void {
     v.y += other.y;
 }
 
+pub fn sub(v: *Vec2d, other: Vec2d) void {
+    v.x -= other.x;
+    v.y -= other.y;
+}
+
 pub fn plus(v: Vec2d, other: Vec2d) Vec2d {
     return .{
         .x = v.x + other.x,
@@ -70,6 +75,10 @@ pub fn normalized(v: Vec2d) Vec2d {
     } else {
         return v.scaled(1.0 / len);
     }
+}
+
+pub fn dot(v: Vec2d, other: Vec2d) f32 {
+    return v.x * other.x + v.y * other.y;
 }
 
 const Vec2d = @This();

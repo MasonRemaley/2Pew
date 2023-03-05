@@ -152,6 +152,8 @@ pub fn main() !void {
             .bullet_damage = 10,
         },
         .radius = ranger_radius,
+        .collision_damping = 0.4,
+        .density = 0.02,
         .hp = 80,
         .max_hp = 80,
     };
@@ -169,6 +171,8 @@ pub fn main() !void {
         .thrust = 300,
         .turret = null,
         .radius = militia_radius,
+        .collision_damping = 0.4,
+        .density = 0.02,
         .hp = 80,
         .max_hp = 80,
     };
@@ -345,6 +349,34 @@ pub fn main() !void {
                     const new_angle = math.pi * 2 * std.crypto.random.float(f32);
                     ship.pos = display_center.plus(V.unit(new_angle).scaled(500));
                     continue;
+                }
+
+                // bonk
+                var other_it = it;
+                while (other_it.next()) |other_entity| {
+                    const other = other_entity.comps.ship;
+                    const added_radii = ship.radius + other.radius;
+                    if (ship.pos.distanceSqrd(other.pos) > added_radii * added_radii) continue;
+
+                    // calculate normal
+                    const normal = other.pos.minus(ship.pos).normalized();
+                    // calculate relative velocity
+                    const rv = other.vel.minus(ship.vel);
+                    // calculate relative velocity in terms of the normal direction
+                    const vel_along_normal = rv.dot(normal);
+                    // do not resolve if velocities are separating
+                    if (vel_along_normal > 0) continue;
+                    // calculate restitution
+                    const e = @min(ship.collision_damping, other.collision_damping);
+                    // calculate impulse scalar
+                    var j: f32 = -(1.0 + e) * vel_along_normal;
+                    const my_mass = mass(ship.density, ship.radius);
+                    const other_mass = mass(other.density, other.radius);
+                    j /= 1.0 / my_mass + 1.0 / other_mass;
+                    // apply impulse
+                    const impulse = normal.scaled(j);
+                    ship.vel.sub(impulse.scaled(1 / my_mass));
+                    other.vel.add(impulse.scaled(1 / other_mass));
                 }
 
                 // gravity if the ship is outside the ring
@@ -605,6 +637,8 @@ const Ship = struct {
     /// radians
     rotation: f32,
     radius: f32,
+    collision_damping: f32,
+    density: f32,
 
     /// radians per second
     rotation_vel: f32,
@@ -815,6 +849,10 @@ fn sdlRect(top_left_pos: V, size: V) c.SDL_Rect {
 
 fn lerp(start: f32, end: f32, t: f32) f32 {
     return (1.0 - t) * start + t * end;
+}
+
+fn mass(density: f32, radius: f32) f32 {
+    return density * math.pi * radius * radius;
 }
 
 test {
