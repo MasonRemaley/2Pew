@@ -85,6 +85,7 @@ pub fn main() !void {
     const ring_bg = try assets.loadSprite("img/ring.png");
     const star_small = try assets.loadSprite("img/star/small.png");
     const star_large = try assets.loadSprite("img/star/large.png");
+    const planet_red = try assets.loadSprite("img/planet-red.png");
     const bullet_small = try assets.loadSprite("img/bullet/small.png");
 
     const shrapnel_sprites = [_]Sprite.Index{
@@ -356,6 +357,7 @@ pub fn main() !void {
             const sprite = assets.sprite(switch (star.kind) {
                 .small => star_small,
                 .large => star_large,
+                .planet_red => planet_red,
             });
             const dst_rect: c.SDL_Rect = .{
                 .x = star.x,
@@ -722,7 +724,7 @@ const Star = struct {
     y: i32,
     kind: Kind,
 
-    const Kind = enum { large, small };
+    const Kind = enum { large, small, planet_red };
 };
 
 fn generateStars(stars: []Star) void {
@@ -730,9 +732,11 @@ fn generateStars(stars: []Star) void {
         star.* = .{
             .x = std.crypto.random.uintLessThanBiased(u31, display_width),
             .y = std.crypto.random.uintLessThanBiased(u31, display_height),
-            .kind = std.crypto.random.enumValue(Star.Kind),
+            .kind = @intToEnum(Star.Kind, std.crypto.random.uintLessThanBiased(u8, 2)),
         };
     }
+    // Overwrite the last one so it shows up on top
+    stars[stars.len - 1].kind = .planet_red;
 }
 
 /// In this game we use (1, 0) as the 0-rotation vector.
