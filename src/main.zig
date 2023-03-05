@@ -380,6 +380,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     }
                 }
             }
+
+            rb.rotation = rb.vel.angle() + math.pi / 2.0;
         }
     }
 
@@ -438,7 +440,6 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     turret.cooldown = turret.cooldown_amount;
                     _ = entities.create(.{
                         .bullet = .{
-                            .sprite = game.bullet_small,
                             .duration = turret.bullet_duration,
                             .damage = turret.bullet_damage,
                         },
@@ -455,6 +456,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .density = 0.001,
                             .layer = .projectile,
                         },
+                        .sprite = game.bullet_small,
                     });
                 }
             }
@@ -484,9 +486,11 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta_s: f32) void {
     const renderer = assets.renderer;
 
+    // Clear screen
     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
     sdlAssertZero(c.SDL_RenderClear(renderer));
 
+    // Draw stars
     for (stars) |star| {
         const sprite = assets.sprite(switch (star.kind) {
             .small => game.star_small,
@@ -507,6 +511,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         ));
     }
 
+    // Draw ring
     {
         const sprite = assets.sprite(game.ring_bg);
         sdlAssertZero(c.SDL_RenderCopy(
@@ -517,6 +522,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         ));
     }
 
+    // Draw ships
     {
         var it = entities.iterator(.{ .ship, .rb });
         while (it.next()) |entity| {
@@ -558,6 +564,8 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         }
     }
 
+    // Draw sprites
+    // TODO(mason): sort draw calls somehow (can the sdl renderer do depth buffers?)
     {
         var it = entities.iterator(.{ .sprite, .rb });
         while (it.next()) |entity| {
@@ -575,25 +583,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         }
     }
 
-    {
-        var it = entities.iterator(.{ .bullet, .rb });
-        while (it.next()) |entity| {
-            const bullet = entity.comps.bullet;
-            const rb = entity.comps.rb;
-            const sprite = assets.sprite(bullet.sprite);
-            sdlAssertZero(c.SDL_RenderCopyEx(
-                renderer,
-                sprite.texture,
-                null, // source rectangle
-                &sprite.toSdlRect(rb.pos),
-                // The bullet asset images point up instead of to the right.
-                toDegrees(rb.vel.angle() + math.pi / 2.0),
-                null, // center of rotation
-                c.SDL_FLIP_NONE,
-            ));
-        }
-    }
-
+    // Draw particles
     {
         var it = entities.iterator(.{.particle});
         while (it.next()) |entity| {
@@ -694,7 +684,6 @@ const Input = struct {
 };
 
 const Bullet = struct {
-    sprite: Sprite.Index,
     /// seconds
     duration: f32,
     /// Amount of HP the bullet removes on hit.
