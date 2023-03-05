@@ -53,10 +53,12 @@ pub fn main() !void {
     var assets = try Assets.init(gpa, renderer);
     defer assets.deinit();
 
+    // TODO(mason): some of these have shared behaviors we can factor out e.g. sprites, newtonian mechanics
     var entities = try Entities(.{
         .bullet = Bullet,
         .ship = Ship,
         .controller = *c.SDL_GameController,
+        .decoration = Decoration,
     }).init(gpa);
     defer entities.deinit(gpa);
 
@@ -221,9 +223,6 @@ pub fn main() !void {
     var stars: [150]Star = undefined;
     generateStars(&stars);
 
-    var decorations = std.ArrayList(Decoration).init(gpa);
-    defer decorations.deinit();
-
     const display_center: V = .{
         .x = display_width / 2.0,
         .y = display_height / 2.0,
@@ -291,7 +290,7 @@ pub fn main() !void {
 
                 bullet.duration -= dt;
                 if (bullet.duration <= 0) {
-                    entities.removeEntity(bullet_entity.handle);
+                    entities.remove(bullet_entity.handle);
                     continue;
                 }
 
@@ -310,16 +309,16 @@ pub fn main() !void {
                             ];
                             const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                                 .scaled(bullet.vel.length() * 0.2);
-                            try decorations.append(.{
+                            _ = entities.create(.{ .decoration = .{
                                 .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
                                 .pos = ship.pos,
                                 .vel = ship.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
                                 .rotation = 2 * math.pi * std.crypto.random.float(f32),
                                 .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                                 .duration = 2,
-                            });
+                            } });
 
-                            entities.removeEntity(bullet_entity.handle);
+                            entities.remove(bullet_entity.handle);
                             continue;
                         }
                     }
@@ -336,14 +335,14 @@ pub fn main() !void {
                 // explode ships that reach 0 hp
                 if (ship.hp <= 0) {
                     // spawn explosion here
-                    try decorations.append(.{
+                    _ = entities.create(.{ .decoration = .{
                         .anim_playback = .{ .index = explosion_animation, .time_passed = 0 },
                         .pos = ship.pos,
                         .vel = ship.vel,
                         .rotation = 0,
                         .rotation_vel = 0,
                         .duration = 100,
-                    });
+                    } });
                     // delete ship and spawn it somewhere else
                     ship.* = ranger_template;
                     const new_angle = math.pi * 2 * std.crypto.random.float(f32);
@@ -419,12 +418,12 @@ pub fn main() !void {
         }
 
         {
-            var i: usize = 0;
-            while (i < decorations.items.len) {
-                const decoration = &decorations.items[i];
+            var it = entities.iterator(.{.decoration});
+            while (it.next()) |entity| {
+                const decoration = entity.comps.decoration;
                 decoration.duration -= dt;
                 if (decoration.anim_playback.index == .none or decoration.duration <= 0) {
-                    _ = decorations.swapRemove(i);
+                    entities.remove(entity.handle);
                     continue;
                 }
                 decoration.pos.add(decoration.vel.scaled(dt));
@@ -432,7 +431,6 @@ pub fn main() !void {
                     decoration.rotation + decoration.rotation_vel * dt,
                     2 * math.pi,
                 );
-                i += 1;
             }
         }
 
@@ -529,17 +527,21 @@ pub fn main() !void {
             }
         }
 
-        for (decorations.items) |*decoration| {
-            const sprite = assets.animate(&decoration.anim_playback, dt);
-            sdlAssertZero(c.SDL_RenderCopyEx(
-                renderer,
-                sprite.texture,
-                null, // source rectangle
-                &sprite.toSdlRect(decoration.pos),
-                toDegrees(decoration.rotation),
-                null, // center of rotation
-                c.SDL_FLIP_NONE,
-            ));
+        {
+            var it = entities.iterator(.{.decoration});
+            while (it.next()) |entity| {
+                const decoration = entity.comps.decoration;
+                const sprite = assets.animate(&decoration.anim_playback, dt);
+                sdlAssertZero(c.SDL_RenderCopyEx(
+                    renderer,
+                    sprite.texture,
+                    null, // source rectangle
+                    &sprite.toSdlRect(decoration.pos),
+                    toDegrees(decoration.rotation),
+                    null, // center of rotation
+                    c.SDL_FLIP_NONE,
+                ));
+            }
         }
 
         c.SDL_RenderPresent(renderer);

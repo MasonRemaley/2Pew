@@ -167,7 +167,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 unreachable;
             }
 
-            fn removeEntity(self: *PageHeader, index: usize) void {
+            fn remove(self: *PageHeader, index: usize) void {
                 self.len -= 1;
                 self.handleArray()[index].index = invalid_entity_index;
             }
@@ -406,7 +406,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 std.debug.panic("failed to create entity: {}", .{err});
         }
 
-        fn removeEntityChecked(self: *@This(), entity: EntityHandle) !void {
+        fn removeChecked(self: *@This(), entity: EntityHandle) !void {
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
             if (entity.index >= self.slots.len) {
@@ -423,7 +423,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const slot = &self.slots[entity.index];
             const page = slot.page;
             const was_full = page.len == page.capacity;
-            page.removeEntity(slot.index_in_page);
+            page.remove(slot.index_in_page);
 
             // If this page didn't have space before but does now, move it to the front of the page
             // list
@@ -443,8 +443,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
             self.free_slot_indices[top] = entity.index;
         }
 
-        pub fn removeEntity(self: *@This(), entity: EntityHandle) void {
-            return self.removeEntityChecked(entity) catch |err|
+        pub fn remove(self: *@This(), entity: EntityHandle) void {
+            return self.removeChecked(entity) catch |err|
                 std.debug.panic("failed to remove entity {}: {}", .{ entity, err });
         }
 
@@ -645,7 +645,7 @@ test "limits" {
 
     // Remove all the entities
     while (created.popOrNull()) |entity| {
-        entities.removeEntity(entity);
+        entities.remove(entity);
     }
     try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
@@ -675,7 +675,7 @@ test "limits" {
     {
         const entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
         entities.slots[entity.index].generation = entity.generation;
-        entities.removeEntity(entity);
+        entities.remove(entity);
         try std.testing.expectEqual(
             EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
             entities.create(.{}),
@@ -695,10 +695,10 @@ test "free list" {
 
     try std.testing.expectEqual(entities.slots[entity_0_0.index].index_in_page, 0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
-    entities.removeEntity(entity_1_0);
+    entities.remove(entity_1_0);
     try std.testing.expectEqual(entities.slots[entity_3_0.index].index_in_page, 3);
     try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 0 }, entity_3_0);
-    entities.removeEntity(entity_3_0);
+    entities.remove(entity_3_0);
 
     const entity_3_1 = entities.create(.{});
     const entity_1_1 = entities.create(.{});
@@ -725,9 +725,9 @@ test "safety" {
     defer entities.deinit(allocator);
 
     const entity = entities.create(.{});
-    entities.removeEntity(entity);
-    try std.testing.expectError(error.BadGeneration, entities.removeEntityChecked(entity));
-    try std.testing.expectError(error.BadIndex, entities.removeEntityChecked(EntityHandle{
+    entities.remove(entity);
+    try std.testing.expectError(error.BadGeneration, entities.removeChecked(entity));
+    try std.testing.expectError(error.BadIndex, entities.removeChecked(EntityHandle{
         .index = 1,
         .generation = 0,
     }));
@@ -823,7 +823,7 @@ test "random data" {
                     if (truth.items.len > 0) {
                         const index = rnd.random().uintLessThan(usize, truth.items.len);
                         const removed = truth.orderedRemove(index);
-                        entities.removeEntity(removed.handle);
+                        entities.remove(removed.handle);
                     }
                 }
             },

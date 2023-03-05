@@ -80,7 +80,7 @@ fn benchEcs() !void {
 
     // Remove all entities
     for (all.items) |entity| {
-        entities.removeEntity(entity);
+        entities.remove(entity);
     }
     std.debug.print("\tremove(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 }
