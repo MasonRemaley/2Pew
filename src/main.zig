@@ -53,34 +53,41 @@ pub fn main() !void {
     var assets = try Assets.init(gpa, renderer);
     defer assets.deinit();
 
-    var players: [2]Player = .{
-        .{
-            .controller = null,
-            .ship = null,
-        },
-        .{
-            .controller = null,
-            .ship = null,
-        },
-    };
+    var entities = try Entities(.{
+        .bullet = Bullet,
+        .ship = Ship,
+        .player = Player,
+    }).init(gpa);
+    defer entities.deinit(gpa);
 
     {
-        var player_index: u32 = 0;
-        for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
-            const i = @intCast(u31, i_usize);
-            if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
-                const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
-                    panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
-                };
-                if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
-                    players[player_index].controller = sdl_controller;
-                    player_index += 1;
-                    if (player_index >= players.len) break;
-                } else {
-                    c.SDL_GameControllerClose(sdl_controller);
+        var controllers = [2]?*c.SDL_GameController{ null, null };
+        {
+            var player_index: u32 = 0;
+            for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
+                const i = @intCast(u31, i_usize);
+                if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
+                    const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
+                        panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
+                    };
+                    if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
+                        controllers[i] = sdl_controller;
+                        player_index += 1;
+                        if (player_index >= controllers.len) break;
+                    } else {
+                        c.SDL_GameControllerClose(sdl_controller);
+                    }
                 }
             }
         }
+        _ = entities.create(.{ .player = .{
+            .ship = null,
+            .controller = controllers[0],
+        } });
+        _ = entities.create(.{ .player = .{
+            .ship = null,
+            .controller = controllers[1],
+        } });
     }
 
     const ring_bg = try assets.loadSprite("img/ring.png");
@@ -196,19 +203,18 @@ pub fn main() !void {
         .max_hp = 80,
     };
 
-    var entities = try Entities(.{
-        .bullet = Bullet,
-        .ship = Ship,
-    }).init(gpa);
-    defer entities.deinit(gpa);
-
-    for (&players, 0..) |*player, i| {
-        var ship = if (i == 0) ranger_template else militia_template;
-        ship.pos = .{
-            .x = 500 + 500 * @intToFloat(f32, i),
-            .y = 500,
-        };
-        player.ship = entities.create(.{ .ship = ship });
+    {
+        var it = entities.iterator(.{.player});
+        var i: usize = 0;
+        while (it.next()) |entity| : (i += 1) {
+            var player = entity.comps.player;
+            var ship = if (i == 0) ranger_template else militia_template;
+            ship.pos = .{
+                .x = 500 + 500 * @intToFloat(f32, i),
+                .y = 500,
+            };
+            player.ship = entities.create(.{ .ship = ship });
+        }
     }
 
     var stars: [150]Star = undefined;
@@ -239,31 +245,35 @@ pub fn main() !void {
             }
         }
 
-        for (players) |player| {
-            const ship = entities.getComponent(player.ship.?, .ship).?;
-            ship.input = .{};
-            if (player.controller) |controller| {
-                // left/right on the left joystick
-                const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
-                // up/down on the left joystick
-                //const y_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTY);
+        {
+            var it = entities.iterator(.{.player});
+            while (it.next()) |entity| {
+                const player = entity.comps.player;
+                const ship = entities.getComponent(player.ship.?, .ship).?;
+                ship.input = .{};
+                if (player.controller) |controller| {
+                    // left/right on the left joystick
+                    const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
+                    // up/down on the left joystick
+                    //const y_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTY);
 
-                const dead_zone = 10000;
-                ship.input.left = ship.input.left or x_axis < -dead_zone;
-                ship.input.right = ship.input.right or x_axis > dead_zone;
-                ship.input.forward = ship.input.forward or
-                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
-                ship.input.fire = ship.input.fire or
-                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
-                //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
-                //std.debug.print("input: {any}\n", .{ship.input});
+                    const dead_zone = 10000;
+                    ship.input.left = ship.input.left or x_axis < -dead_zone;
+                    ship.input.right = ship.input.right or x_axis > dead_zone;
+                    ship.input.forward = ship.input.forward or
+                        c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
+                    ship.input.fire = ship.input.fire or
+                        c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
+                    //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
+                    //std.debug.print("input: {any}\n", .{ship.input});
+                }
+                if (!ship.prev_input.forward and ship.input.forward) {
+                    ship.setAnimation(ship.accel);
+                } else if (ship.prev_input.forward and !ship.input.forward) {
+                    ship.setAnimation(ship.still);
+                }
+                ship.prev_input = ship.input;
             }
-            if (!ship.prev_input.forward and ship.input.forward) {
-                ship.setAnimation(ship.accel);
-            } else if (ship.prev_input.forward and !ship.input.forward) {
-                ship.setAnimation(ship.still);
-            }
-            ship.prev_input = ship.input;
         }
 
         {
