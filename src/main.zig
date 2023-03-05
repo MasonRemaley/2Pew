@@ -58,7 +58,7 @@ pub fn main() !void {
         .bullet = Bullet,
         .ship = Ship,
         .controller = *c.SDL_GameController,
-        .decoration = Decoration,
+        .particle = Particle,
     }).init(gpa);
     defer entities.deinit(gpa);
 
@@ -309,7 +309,7 @@ pub fn main() !void {
                             ];
                             const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                                 .scaled(bullet.vel.length() * 0.2);
-                            _ = entities.create(.{ .decoration = .{
+                            _ = entities.create(.{ .particle = .{
                                 .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
                                 .pos = ship.pos,
                                 .vel = ship.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
@@ -335,7 +335,7 @@ pub fn main() !void {
                 // explode ships that reach 0 hp
                 if (ship.hp <= 0) {
                     // spawn explosion here
-                    _ = entities.create(.{ .decoration = .{
+                    _ = entities.create(.{ .particle = .{
                         .anim_playback = .{ .index = explosion_animation, .time_passed = 0 },
                         .pos = ship.pos,
                         .vel = ship.vel,
@@ -404,7 +404,7 @@ pub fn main() !void {
                         const base_vel = if (std.crypto.random.boolean()) ship.vel else other.vel;
                         const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                             .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
-                        _ = entities.create(.{ .decoration = .{
+                        _ = entities.create(.{ .particle = .{
                             .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
                             .pos = shrapnel_center.plus(random_offset),
                             .vel = avg_vel.plus(random_vel),
@@ -455,17 +455,17 @@ pub fn main() !void {
         }
 
         {
-            var it = entities.iterator(.{.decoration});
+            var it = entities.iterator(.{.particle});
             while (it.next()) |entity| {
-                const decoration = entity.comps.decoration;
-                decoration.duration -= dt;
-                if (decoration.anim_playback.index == .none or decoration.duration <= 0) {
+                const particle = entity.comps.particle;
+                particle.duration -= dt;
+                if (particle.anim_playback.index == .none or particle.duration <= 0) {
                     entities.remove(entity.handle);
                     continue;
                 }
-                decoration.pos.add(decoration.vel.scaled(dt));
-                decoration.rotation = @mod(
-                    decoration.rotation + decoration.rotation_vel * dt,
+                particle.pos.add(particle.vel.scaled(dt));
+                particle.rotation = @mod(
+                    particle.rotation + particle.rotation_vel * dt,
                     2 * math.pi,
                 );
             }
@@ -565,16 +565,16 @@ pub fn main() !void {
         }
 
         {
-            var it = entities.iterator(.{.decoration});
+            var it = entities.iterator(.{.particle});
             while (it.next()) |entity| {
-                const decoration = entity.comps.decoration;
-                const sprite = assets.animate(&decoration.anim_playback, dt);
+                const particle = entity.comps.particle;
+                const sprite = assets.animate(&particle.anim_playback, dt);
                 sdlAssertZero(c.SDL_RenderCopyEx(
                     renderer,
                     sprite.texture,
                     null, // source rectangle
-                    &sprite.toSdlRect(decoration.pos),
-                    toDegrees(decoration.rotation),
+                    &sprite.toSdlRect(particle.pos),
+                    toDegrees(particle.rotation),
                     null, // center of rotation
                     c.SDL_FLIP_NONE,
                 ));
@@ -607,7 +607,7 @@ const Bullet = struct {
     damage: f32,
 };
 
-const Decoration = struct {
+const Particle = struct {
     anim_playback: Animation.Playback,
     /// pixels
     pos: V,
