@@ -96,16 +96,16 @@ pub fn perfArrayList() !void {
     };
 
     var timer = try std.time.Timer.start();
-    var array = std.ArrayList(Entity).init(allocator);
+    var array = try std.ArrayList(Entity).initCapacity(allocator, ecs.max_entities);
     defer array.deinit();
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Create entities
     _ = timer.lap();
     for (0..(ecs.max_entities - 1)) |_| {
-        try array.append(.{ .x = 24, .y = 12 });
+        array.appendAssumeCapacity(.{ .x = 24, .y = 12 });
     }
-    try array.append(.{ .x = 24, .y = 12, .z = 13 });
+    array.appendAssumeCapacity(.{ .x = 24, .y = 12, .z = 13 });
     std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Iter over entities
@@ -150,15 +150,16 @@ pub fn benchMultiArrayList() !void {
 
     var timer = try std.time.Timer.start();
     var array = std.MultiArrayList(Entity){};
+    try array.setCapacity(allocator, ecs.max_entities);
     defer array.deinit(allocator);
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Create entities
     _ = timer.lap();
     for (0..(ecs.max_entities - 1)) |_| {
-        try array.append(allocator, .{ .x = 24, .y = 12 });
+        array.appendAssumeCapacity(.{ .x = 24, .y = 12 });
     }
-    try array.append(allocator, .{ .x = 24, .y = 12, .z = 13 });
+    array.appendAssumeCapacity(.{ .x = 24, .y = 12, .z = 13 });
     std.debug.print("\tfill: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Iter over entities

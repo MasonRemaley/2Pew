@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const FieldEnum = std.meta.FieldEnum;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const ArrayListAlignedUnmanaged = std.ArrayListAlignedUnmanaged;
 const Type = std.builtin.Type;
 
 const SlotIndex = u32;
@@ -17,6 +18,8 @@ const EntityGeneration = switch (builtin.mode) {
 
 pub const max_entities: SlotIndex = 1000000;
 const invalid_entity_index = std.math.maxInt(SlotIndex);
+const page_size = std.mem.page_size;
+const pages = max_entities / 32;
 
 pub const EntityHandle = struct {
     index: SlotIndex,
@@ -79,9 +82,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 handle_array: u16,
             };
 
-            const BackingType = [std.mem.page_size]u8;
+            const BackingType = [page_size]u8;
 
-            fn init(allocator: Allocator, archetype: Archetype) !*Page {
+            fn init(page_pool: *ArrayListAlignedUnmanaged(*Page, std.mem.page_size), archetype: Archetype) !*Page {
                 var ptr: u16 = 0;
 
                 // Store the header, no alignment necessary since we start out page aligned
@@ -107,7 +110,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                 const padding_conservative = max_component_alignment - 1;
                 const entity_size = @sizeOf(EntityHandle) + components_size;
-                const conservative_capacity = (std.mem.page_size - ptr - padding_conservative) / entity_size;
+                const conservative_capacity = (page_size - ptr - padding_conservative) / entity_size;
 
                 assert(conservative_capacity > 0);
 
@@ -117,7 +120,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 ptr = std.mem.alignForwardGeneric(u16, ptr, max_component_alignment);
                 const component_arrays = ptr;
 
-                var page = @ptrCast(*Page, try allocator.create(BackingType));
+                // XXX: safety check this, and warn halfway?
+                var page_index = page_pool.items.len;
+                page_pool.items.len += 1;
+                var page = page_pool.items[page_index];
                 page.header().* = .{
                     .next = null,
                     .prev = null,
@@ -141,8 +147,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 allocator.destroy(self.data());
             }
 
-            fn data(self: *Page) *[std.mem.page_size]u8 {
-                return @ptrCast(*[std.mem.page_size]u8, self);
+            fn data(self: *Page) *[page_size]u8 {
+                return @ptrCast(*[page_size]u8, self);
             }
 
             fn header(self: *Page) *Header {
@@ -261,7 +267,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         slots: []EntitySlot,
         free_slot_indices: []SlotIndex,
-        pages: ArrayListUnmanaged(*Page),
+        page_pool: ArrayListAlignedUnmanaged(*Page, std.mem.page_size),
         page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList),
         // XXX: eventually don't store this, once we don't allocate after init!
         allocator: Allocator,
@@ -280,7 +286,16 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     break :free_slot_indices free_slot_indices;
                 },
                 .page_lists = .{},
-                .pages = .{},
+                .page_pool = page_pool: {
+                    var page_pool = try ArrayListAlignedUnmanaged(*Page, std.mem.page_size).initCapacity(allocator, pages);
+                    _ = page_pool.addManyAsArrayAssumeCapacity(pages);
+                    // XXX: create all with one call?
+                    for (page_pool.items) |*page| {
+                        page.* = @ptrCast(*Page, try allocator.create(Page.BackingType));
+                    }
+                    page_pool.items.len = 0;
+                    break :page_pool page_pool;
+                },
             };
         }
 
@@ -288,10 +303,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
             self.allocator.free(self.slots);
             self.allocator.free(self.free_slot_indices);
             self.page_lists.deinit(self.allocator);
-            for (self.pages.items) |page| {
+            self.page_pool.items.len = pages;
+            for (self.page_pool.items) |page| {
                 page.deinit(self.allocator);
             }
-            self.pages.deinit(self.allocator);
+            self.page_pool.deinit(self.allocator);
         }
 
         fn createChecked(self: *@This(), entity: anytype) ?EntityHandle {
@@ -335,8 +351,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     archetype,
                 ) catch unreachable;
                 if (!entry.found_existing) {
-                    const newPage = Page.init(self.allocator, archetype) catch unreachable;
-                    self.pages.append(self.allocator, newPage) catch unreachable;
+                    const newPage = Page.init(&self.page_pool, archetype) catch unreachable;
                     entry.value_ptr.* = PageList{};
                     entry.value_ptr.*.prepend(newPage);
                 }
@@ -346,8 +361,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // TODO: only possiblly necessary if didn't juts create one
             // If the head does not have space, create a new head that has space
             if (page_list.head.?.header().len == page_list.head.?.header().capacity) {
-                const newPage = Page.init(self.allocator, archetype) catch unreachable;
-                self.pages.append(self.allocator, newPage) catch unreachable;
+                const newPage = Page.init(&self.page_pool, archetype) catch unreachable;
                 page_list.prepend(newPage);
             }
             const page = page_list.head.?;
@@ -598,7 +612,7 @@ test "limits" {
         // TODO: break this out into constant?
         const EntitySlot = Entities(.{}).EntitySlot;
         const IndexInPage = std.meta.fields(EntitySlot)[std.meta.fieldIndex(EntitySlot, "index_in_page").?].type;
-        assert(std.math.maxInt(IndexInPage) > std.mem.page_size);
+        assert(std.math.maxInt(IndexInPage) > page_size);
     }
 
     var entities = try Entities(.{}).init(std.heap.page_allocator);
@@ -613,13 +627,13 @@ test "limits" {
         try created.append(entity);
     }
     try std.testing.expect(entities.createChecked(.{}) == null);
-    const page_pool_size = entities.pages.items.len;
+    const page_pool_size = entities.page_pool.items.len;
 
     // Remove all the entities
     while (created.popOrNull()) |entity| {
         entities.removeEntity(entity);
     }
-    try std.testing.expectEqual(page_pool_size, entities.pages.items.len);
+    try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
     // Assert that all pages are empty
     {
@@ -641,7 +655,7 @@ test "limits" {
         );
     }
     try std.testing.expect(entities.createChecked(.{}) == null);
-    try std.testing.expectEqual(page_pool_size, entities.pages.items.len);
+    try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
     // Wrap a generation counter
     {
