@@ -94,7 +94,7 @@ pub fn main() !void {
         }
 
         const controller_default = Input.ControllerMap{
-            .rotate = .{
+            .turn = .{
                 .controller_axis = c.SDL_CONTROLLER_AXIS_LEFTX,
             },
             .forward = .{
@@ -105,7 +105,7 @@ pub fn main() !void {
             },
         };
         const keyboard_wasd = Input.KeyboardMap{
-            .rotate = .{
+            .turn = .{
                 .key_positive = c.SDL_SCANCODE_D,
                 .key_negative = c.SDL_SCANCODE_A,
             },
@@ -117,7 +117,7 @@ pub fn main() !void {
             },
         };
         const keyboard_arrows = Input.KeyboardMap{
-            .rotate = .{
+            .turn = .{
                 .key_positive = c.SDL_SCANCODE_RIGHT,
                 .key_negative = c.SDL_SCANCODE_LEFT,
             },
@@ -174,16 +174,16 @@ pub fn main() !void {
     var stars: [150]Star = undefined;
     generateStars(&stars);
 
-    var dt: f32 = 1.0 / 60.0;
+    var delta_s: f32 = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
     while (true) {
         if (poll()) return;
-        update(&entities, &game, dt);
-        render(assets, &entities, stars, game, dt);
+        update(&entities, &game, delta_s);
+        render(assets, &entities, stars, game, delta_s);
 
         var last_dt = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
-        dt = lerp(dt, last_dt, 0.1);
+        delta_s = lerp(delta_s, last_dt, 0.1);
     }
 }
 
@@ -202,15 +202,15 @@ fn poll() bool {
     return false;
 }
 
-fn update(entities: *Entities, game: *Game, dt: f32) void {
+fn update(entities: *Entities, game: *Game, delta_s: f32) void {
     {
         var it = entities.iterator(.{ .input, .ship });
         while (it.next()) |entity| {
             const input = entity.comps.input.*;
             const ship = entity.comps.ship;
             ship.input = .{
-                .left = input.isNegative(.rotate),
-                .right = input.isPositive(.rotate),
+                .left = input.isNegative(.turn),
+                .right = input.isPositive(.turn),
                 .forward = input.isPositive(.forward),
                 .fire = input.isPositive(.fire),
             };
@@ -235,9 +235,9 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
         while (bullet_it.next()) |bullet_entity| {
             const bullet = bullet_entity.comps.bullet;
 
-            bullet.pos.add(bullet.vel.scaled(dt));
+            bullet.pos.add(bullet.vel.scaled(delta_s));
 
-            bullet.duration -= dt;
+            bullet.duration -= delta_s;
             if (bullet.duration <= 0) {
                 entities.remove(bullet_entity.handle);
                 continue;
@@ -280,7 +280,7 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
         var it = entities.iterator(.{.rb});
         while (it.next()) |entity| {
             const rb = entity.comps.rb;
-            rb.pos.add(rb.vel.scaled(dt));
+            rb.pos.add(rb.vel.scaled(delta_s));
 
             // bonk
             var other_it = it;
@@ -359,11 +359,11 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
             // gravity if the ship is outside the ring
             if (rb.pos.distanceSqrd(display_center) > display_radius * display_radius) {
                 const gravity = 400;
-                const gravity_v = display_center.minus(rb.pos).normalized().scaled(gravity * dt);
+                const gravity_v = display_center.minus(rb.pos).normalized().scaled(gravity * delta_s);
                 rb.vel.add(gravity_v);
                 if (entities.getComponent(entity.handle, .ship)) |ship| {
                     // punishment for leaving the circle
-                    ship.hp -= dt * 4;
+                    ship.hp -= delta_s * 4;
                 }
             }
         }
@@ -404,21 +404,21 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
             }
 
             // TODO(mason): make most recent input take precedence on keyboard?
-            const rotate_input = // convert to 1.0 or -1.0
+            const turn_input = // convert to 1.0 or -1.0
                 @intToFloat(f32, @boolToInt(ship.input.right)) -
                 @intToFloat(f32, @boolToInt(ship.input.left));
             rb.rotation = @mod(
-                rb.rotation + rotate_input * ship.rotation_vel * dt,
+                rb.rotation + turn_input * ship.turn_speed * delta_s,
                 2 * math.pi,
             );
 
             // convert to 1.0 or 0.0
             const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
             const thrust = V.unit(rb.rotation);
-            rb.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
+            rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
 
             if (ship.turret) |*turret| {
-                turret.cooldown -= dt;
+                turret.cooldown -= delta_s;
                 if (ship.input.fire and turret.cooldown <= 0) {
                     turret.cooldown = turret.cooldown_amount;
                     _ = entities.create(.{
@@ -440,14 +440,14 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
         var it = entities.iterator(.{.particle});
         while (it.next()) |entity| {
             const particle = entity.comps.particle;
-            particle.duration -= dt;
+            particle.duration -= delta_s;
             if (particle.anim_playback.index == .none or particle.duration <= 0) {
                 entities.remove(entity.handle);
                 continue;
             }
-            particle.pos.add(particle.vel.scaled(dt));
+            particle.pos.add(particle.vel.scaled(delta_s));
             particle.rotation = @mod(
-                particle.rotation + particle.rotation_vel * dt,
+                particle.rotation + particle.rotation_vel * delta_s,
                 2 * math.pi,
             );
         }
@@ -455,7 +455,7 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, dt: f32) void {
+fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta_s: f32) void {
     const renderer = assets.renderer;
 
     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
@@ -496,7 +496,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, dt: f
         while (it.next()) |entity| {
             const ship = entity.comps.ship;
             const rb = entity.comps.rb;
-            const sprite = assets.animate(&ship.anim_playback, dt);
+            const sprite = assets.animate(&ship.anim_playback, delta_s);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
@@ -571,7 +571,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, dt: f
         var it = entities.iterator(.{.particle});
         while (it.next()) |entity| {
             const particle = entity.comps.particle;
-            const sprite = assets.animate(&particle.anim_playback, dt);
+            const sprite = assets.animate(&particle.anim_playback, delta_s);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
@@ -619,7 +619,7 @@ const Input = struct {
 
     fn ActionMap(comptime Action: type) type {
         return struct {
-            rotate: Action,
+            turn: Action,
             forward: Action,
             fire: Action,
         };
@@ -756,7 +756,7 @@ const Ship = struct {
     anim_playback: Animation.Playback,
 
     /// radians per second
-    rotation_vel: f32,
+    turn_speed: f32,
     /// pixels per second squared
     thrust: f32,
 
@@ -934,7 +934,7 @@ const Game = struct {
                 .still = ranger_still,
                 .accel = ranger_accel,
                 .anim_playback = .{ .index = ranger_still, .time_passed = 0 },
-                .rotation_vel = math.pi * 1.1,
+                .turn_speed = math.pi * 1.1,
                 .thrust = 150,
                 .turret = .{
                     .radius = ranger_radius,
@@ -967,7 +967,7 @@ const Game = struct {
                 .still = militia_still,
                 .accel = militia_accel,
                 .anim_playback = .{ .index = militia_still, .time_passed = 0 },
-                .rotation_vel = math.pi * 1.2,
+                .turn_speed = math.pi * 1.2,
                 .thrust = 300,
                 .turret = null,
                 .hp = 80,
@@ -1059,13 +1059,13 @@ const Assets = struct {
         a.* = undefined;
     }
 
-    fn animate(a: Assets, anim: *Animation.Playback, dt: f32) Sprite {
+    fn animate(a: Assets, anim: *Animation.Playback, delta_s: f32) Sprite {
         const animation = a.animations.items[@enumToInt(anim.index)];
         const frame_index = @floatToInt(u32, @floor(anim.time_passed * animation.fps));
         const frame = animation.start + frame_index;
-        // TODO: for large dt can cause out of bounds index
+        // TODO: for large delta_s can cause out of bounds index
         const frame_sprite = a.sprite(a.frames.items[frame]);
-        anim.time_passed += dt;
+        anim.time_passed += delta_s;
         const end_time = @intToFloat(f32, animation.len) / animation.fps;
         if (anim.time_passed >= end_time) {
             anim.time_passed -= end_time;
