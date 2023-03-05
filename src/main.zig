@@ -173,8 +173,8 @@ pub fn main() !void {
     var stars: [150]Star = undefined;
     generateStars(&stars);
 
-    var entities = try Entities(.{ .bullet = Bullet }).init();
-    defer entities.deinit();
+    var entities = try Entities(.{ .bullet = Bullet }).init(gpa);
+    defer entities.deinit(gpa);
 
     var decorations = std.ArrayList(Decoration).init(gpa);
     defer decorations.deinit();
