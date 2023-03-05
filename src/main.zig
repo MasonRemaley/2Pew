@@ -190,8 +190,14 @@ pub fn main() !void {
         update(&entities, &game, delta_s);
         render(assets, &entities, stars, game, delta_s);
 
-        var last_dt = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
-        delta_s = lerp(delta_s, last_dt, 0.1);
+        // TODO(mason): we also want a min frame time so we don't get supririsng floating point
+        // results if it's too close to zero!
+        // Adjust our expectd delta time a little every frame. We cap it at `max_frame_time` to
+        // prevent e.g. a slow alt tab from messing things up too much.
+        const delta_rwa_bias = 0.05;
+        const max_frame_time = 1.0 / 30.0;
+        var last_delta_s = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
+        delta_s = lerp(delta_s, std.math.min(last_delta_s, max_frame_time), delta_rwa_bias);
     }
 }
 
