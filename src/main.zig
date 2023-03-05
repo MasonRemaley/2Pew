@@ -19,7 +19,7 @@ const Entities = ecs.Entities(.{
     .bullet = Bullet,
     .ship = Ship,
     .rb = RigidBody,
-    .input_map = InputMap,
+    .input = Input,
     .particle = Particle,
     .rock = Rock,
 });
@@ -93,22 +93,56 @@ pub fn main() !void {
             }
         }
 
-        var key_maps = [2]?KeyMap{
-            .{
-                .left = c.SDL_SCANCODE_A,
-                .right = c.SDL_SCANCODE_D,
-                .forward = c.SDL_SCANCODE_W,
-                .fire = c.SDL_SCANCODE_S,
+        const controller_default = Input.ControllerMap{
+            .rotate = .{
+                .controller_axis = c.SDL_CONTROLLER_AXIS_LEFTX,
             },
-            .{
-                .left = c.SDL_SCANCODE_LEFT,
-                .right = c.SDL_SCANCODE_RIGHT,
-                .forward = c.SDL_SCANCODE_UP,
-                .fire = c.SDL_SCANCODE_DOWN,
+            .forward = .{
+                .controller_button_positive = c.SDL_CONTROLLER_BUTTON_B,
+            },
+            .fire = .{
+                .controller_button_positive = c.SDL_CONTROLLER_BUTTON_A,
+            },
+        };
+        const keyboard_wasd = Input.KeyboardMap{
+            .rotate = .{
+                .key_positive = c.SDL_SCANCODE_D,
+                .key_negative = c.SDL_SCANCODE_A,
+            },
+            .forward = .{
+                .key_positive = c.SDL_SCANCODE_W,
+            },
+            .fire = .{
+                .key_positive = c.SDL_SCANCODE_S,
+            },
+        };
+        const keyboard_arrows = Input.KeyboardMap{
+            .rotate = .{
+                .key_positive = c.SDL_SCANCODE_RIGHT,
+                .key_negative = c.SDL_SCANCODE_LEFT,
+            },
+            .forward = .{
+                .key_positive = c.SDL_SCANCODE_UP,
+            },
+            .fire = .{
+                .key_positive = c.SDL_SCANCODE_DOWN,
             },
         };
 
-        for (controllers, key_maps, 0..) |controller, key_map, i| {
+        var input_devices = [_]Input{
+            .{
+                .controller = controllers[0],
+                .controller_map = controller_default,
+                .keyboard_map = keyboard_wasd,
+            },
+            .{
+                .controller = controllers[1],
+                .controller_map = controller_default,
+                .keyboard_map = keyboard_arrows,
+            },
+        };
+
+        for (input_devices, 0..) |input, i| {
             var ship_template = game.initShip(@intCast(u2, i));
             ship_template.rb.pos = .{
                 .x = 500 + 500 * @intToFloat(f32, i),
@@ -117,10 +151,7 @@ pub fn main() !void {
             _ = entities.create(.{
                 .ship = ship_template.ship,
                 .rb = ship_template.rb,
-                .input_map = .{
-                    .controller = controller,
-                    .key_map = key_map,
-                },
+                .input = input,
             });
         }
     }
@@ -173,32 +204,16 @@ fn poll() bool {
 
 fn update(entities: *Entities, game: *Game, dt: f32) void {
     {
-        var it = entities.iterator(.{ .input_map, .ship });
+        var it = entities.iterator(.{ .input, .ship });
         while (it.next()) |entity| {
-            const input_map = entity.comps.input_map.*;
+            const input = entity.comps.input.*;
             const ship = entity.comps.ship;
-
-            ship.input = .{};
-
-            if (input_map.controller) |controller| {
-                const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
-                const dead_zone = 10000;
-                ship.input.left = ship.input.left or x_axis < -dead_zone;
-                ship.input.right = ship.input.right or x_axis > dead_zone;
-                ship.input.forward = ship.input.forward or
-                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
-                ship.input.fire = ship.input.fire or
-                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
-            }
-
-            if (input_map.key_map) |key_map| {
-                const keys = c.SDL_GetKeyboardState(null);
-                // TODO(mason): add nicer behavior than canceling if both left & right are down (most recent gets precedence)
-                ship.input.left = ship.input.left or keys[key_map.left] == 1;
-                ship.input.right = ship.input.right or keys[key_map.right] == 1;
-                ship.input.forward = ship.input.forward or keys[key_map.forward] == 1;
-                ship.input.fire = ship.input.fire or keys[key_map.fire] == 1;
-            }
+            ship.input = .{
+                .left = input.isNegative(.rotate),
+                .right = input.isPositive(.rotate),
+                .forward = input.isPositive(.forward),
+                .fire = input.isPositive(.fire),
+            };
         }
     }
 
@@ -388,6 +403,7 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
                 continue;
             }
 
+            // TODO(mason): make most recent input take precedence on keyboard?
             const rotate_input = // convert to 1.0 or -1.0
                 @intToFloat(f32, @boolToInt(ship.input.right)) -
                 @intToFloat(f32, @boolToInt(ship.input.left));
@@ -581,16 +597,73 @@ pub fn sdlAssertZero(ret: c_int) void {
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
 
-const KeyMap = struct {
-    left: u16,
-    right: u16,
-    forward: u16,
-    fire: u16,
-};
+const Input = struct {
+    pub const ControllerAction = struct {
+        controller_axis: ?c.SDL_GameControllerAxis = null,
+        controller_button_positive: ?c.SDL_GameControllerButton = null,
+        controller_button_negative: ?c.SDL_GameControllerButton = null,
+        dead_zone: u15 = 10000,
+    };
 
-const InputMap = struct {
+    pub const KeyboardAction = struct {
+        key_positive: ?u16 = null,
+        key_negative: ?u16 = null,
+    };
+
+    pub const KeyboardMap = ActionMap(KeyboardAction);
+    pub const ControllerMap = ActionMap(ControllerAction);
+
     controller: ?*c.SDL_GameController,
-    key_map: ?KeyMap,
+    controller_map: ControllerMap,
+    keyboard_map: KeyboardMap,
+
+    fn ActionMap(comptime Action: type) type {
+        return struct {
+            rotate: Action,
+            forward: Action,
+            fire: Action,
+        };
+    }
+
+    pub fn isPositive(self: *const @This(), comptime action: std.meta.FieldEnum(ControllerMap)) bool {
+        const keyboard_action = @field(self.keyboard_map, std.meta.fieldNames(ControllerMap)[@enumToInt(action)]);
+        const key = if (keyboard_action.key_positive) |key|
+            c.SDL_GetKeyboardState(null)[key] == 1
+        else
+            false;
+
+        const controller_action = @field(self.controller_map, std.meta.fieldNames(ControllerMap)[@enumToInt(action)]);
+        const button = if (controller_action.controller_button_positive) |button|
+            c.SDL_GameControllerGetButton(self.controller, button) != 0
+        else
+            false;
+        const axis = if (controller_action.controller_axis) |axis|
+            c.SDL_GameControllerGetAxis(self.controller, axis) > controller_action.dead_zone
+        else
+            false;
+
+        return key or button or axis;
+    }
+
+    pub fn isNegative(self: *const @This(), comptime action: std.meta.FieldEnum(ControllerMap)) bool {
+        const keyboard_action = @field(self.keyboard_map, std.meta.fieldNames(ControllerMap)[@enumToInt(action)]);
+        const key = if (keyboard_action.key_negative) |key|
+            c.SDL_GetKeyboardState(null)[key] == 1
+        else
+            false;
+
+        const controller_action = @field(self.controller_map, std.meta.fieldNames(ControllerMap)[@enumToInt(action)]);
+        const button = if (controller_action.controller_button_negative) |button|
+            c.SDL_GameControllerGetButton(self.controller, button) != 0
+        else
+            false;
+        const axis = if (controller_action.controller_axis) |axis|
+            c.SDL_GameControllerGetAxis(self.controller, axis) < -@as(i16, controller_action.dead_zone)
+        else
+            false;
+
+        return key or button or axis;
+    }
 };
 
 const Bullet = struct {
@@ -688,10 +761,10 @@ const Ship = struct {
     thrust: f32,
 
     /// Player or AI decisions on what they want the ship to do.
-    input: Input,
+    input: InputState,
     /// Keeps track of the input from last frame so that the game logic can
     /// notice when a button is first pressed.
-    prev_input: Input,
+    prev_input: InputState,
 
     turret: ?Turret,
 
@@ -703,7 +776,7 @@ const Ship = struct {
 
     const Class = enum { ranger, militia };
 
-    const Input = packed struct {
+    const InputState = packed struct {
         fire: bool = false,
         forward: bool = false,
         left: bool = false,
