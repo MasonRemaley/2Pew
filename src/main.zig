@@ -160,7 +160,7 @@ pub fn main() !void {
         }
     }
 
-    // Create a meteor
+    // Create rock
     {
         const speed = 100 + std.crypto.random.float(f32) * 400;
         _ = entities.create(.{
@@ -172,6 +172,7 @@ pub fn main() !void {
                 .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
                 .collision_damping = 1,
                 .density = 0.10,
+                .layer = .hazard,
             },
         });
     }
@@ -250,6 +251,9 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             var other_it = it;
             while (other_it.next()) |other_entity| {
                 const other = other_entity.comps;
+
+                if (!RigidBody.collides.get(rb.layer, other.rb.layer)) continue;
+
                 const added_radii = rb.radius + other.rb.radius;
                 if (rb.pos.distanceSqrd(other.rb.pos) > added_radii * added_radii) continue;
 
@@ -449,6 +453,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             // XXX: lol bullets collide with ships (and maybe other bullets?) need to fix that
                             // TODO(mason): modify math to accept 0 and inf mass
                             .density = 0.001,
+                            .layer = .projectile,
                         },
                     });
                 }
@@ -696,6 +701,8 @@ const Bullet = struct {
     damage: f32,
 };
 
+// TODO(mason): we can use rb here but...if we do break out Collider into a separate component so we're not
+// running an n^2 algorithm on every particle!
 const Particle = struct {
     anim_playback: Animation.Playback,
     /// pixels
@@ -755,6 +762,7 @@ const Turret = struct {
 };
 
 // See https://www.anthropicstudios.com/2020/03/30/symmetric-matrices/
+// TODO(mason): packed?
 fn SymmetricMatrix(comptime Enum: type, comptime Value: type) type {
     // The length is equal to the upper right half of the matrix, ounding up. We calculate it by
     // dividing the full size of the matrix by two, and then adding back the half of the diagonal
@@ -787,7 +795,7 @@ fn SymmetricMatrix(comptime Enum: type, comptime Value: type) type {
             return tri + col;
         }
 
-        pub fn get(self: *@This(), a: Enum, b: Enum) Value {
+        pub fn get(self: *const @This(), a: Enum, b: Enum) Value {
             return self.values[index(a, b)];
         }
 
@@ -832,6 +840,18 @@ test "symmetric matrix" {
 }
 
 const RigidBody = struct {
+    const Layer = enum {
+        vehicle,
+        hazard,
+        projectile,
+    };
+
+    const collides: SymmetricMatrix(Layer, bool) = collides: {
+        var m = SymmetricMatrix(Layer, bool).init(true);
+        m.set(.vehicle, .projectile, false);
+        break :collides m;
+    };
+
     /// pixels
     pos: V,
     /// pixels per second
@@ -841,6 +861,7 @@ const RigidBody = struct {
     radius: f32,
     collision_damping: f32,
     density: f32,
+    layer: Layer,
 };
 
 const Ship = struct {
@@ -1049,6 +1070,7 @@ const Game = struct {
                 .collision_damping = 0.4,
                 .radius = ranger_radius,
                 .density = 0.02,
+                .layer = .vehicle,
             },
         };
 
@@ -1074,6 +1096,7 @@ const Game = struct {
                 .radius = militia_radius,
                 .collision_damping = 0.4,
                 .density = 0.02,
+                .layer = .vehicle,
             },
         };
 
