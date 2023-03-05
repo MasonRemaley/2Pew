@@ -10,6 +10,7 @@ const display_width = 1920;
 const display_height = 1080;
 const ecs = @import("ecs.zig");
 const Entities = ecs.Entities;
+const EntityHandle = ecs.EntityHandle;
 
 pub fn main() !void {
     const gpa = std.heap.c_allocator;
@@ -55,11 +56,11 @@ pub fn main() !void {
     var players: [2]Player = .{
         .{
             .controller = null,
-            .ship = 0,
+            .ship = null,
         },
         .{
             .controller = null,
-            .ship = 1,
+            .ship = null,
         },
     };
 
@@ -195,25 +196,23 @@ pub fn main() !void {
         .max_hp = 80,
     };
 
-    var ships = std.ArrayList(Ship).init(gpa);
-    defer ships.deinit();
-    for (players, 0..) |_, i| {
-        if (i == 0) {
-            try ships.append(ranger_template);
-        } else {
-            try ships.append(militia_template);
-        }
-        ships.items[ships.items.len - 1].pos = .{
+    var entities = try Entities(.{
+        .bullet = Bullet,
+        .ship = Ship,
+    }).init(gpa);
+    defer entities.deinit(gpa);
+
+    for (&players, 0..) |*player, i| {
+        var ship = if (i == 0) ranger_template else militia_template;
+        ship.pos = .{
             .x = 500 + 500 * @intToFloat(f32, i),
             .y = 500,
         };
+        player.ship = entities.create(.{ .ship = ship });
     }
 
     var stars: [150]Star = undefined;
     generateStars(&stars);
-
-    var entities = try Entities(.{ .bullet = Bullet }).init(gpa);
-    defer entities.deinit(gpa);
 
     var decorations = std.ArrayList(Decoration).init(gpa);
     defer decorations.deinit();
@@ -241,7 +240,7 @@ pub fn main() !void {
         }
 
         for (players) |player| {
-            const ship = &ships.items[player.ship];
+            const ship = entities.getComponent(player.ship.?, .ship).?;
             ship.input = .{};
             if (player.controller) |controller| {
                 // left/right on the left joystick
@@ -268,101 +267,109 @@ pub fn main() !void {
         }
 
         {
-            var it = entities.iterator(.{.bullet});
-            while (it.next()) |entity| {
-                const bullet = entity.comps.bullet;
+            var bullet_it = entities.iterator(.{.bullet});
+            while (bullet_it.next()) |bullet_entity| {
+                const bullet = bullet_entity.comps.bullet;
 
                 bullet.pos.add(bullet.vel.scaled(dt));
 
                 bullet.duration -= dt;
                 if (bullet.duration <= 0) {
-                    entities.removeEntity(entity.handle);
+                    entities.removeEntity(bullet_entity.handle);
                     continue;
                 }
 
-                for (ships.items) |*ship| {
-                    if (ship.pos.distanceSqrd(bullet.pos) <
-                        ship.radius * ship.radius + bullet.radius * bullet.radius)
-                    {
-                        ship.hp -= bullet.damage;
+                {
+                    var ship_it = entities.iterator(.{.ship});
+                    while (ship_it.next()) |ship_entity| {
+                        const ship = ship_entity.comps.ship;
+                        if (ship.pos.distanceSqrd(bullet.pos) <
+                            ship.radius * ship.radius + bullet.radius * bullet.radius)
+                        {
+                            ship.hp -= bullet.damage;
 
-                        // spawn shrapnel here
-                        const shrapnel_animation = shrapnel_animations[
-                            std.crypto.random.uintLessThanBiased(usize, shrapnel_animations.len)
-                        ];
-                        const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                            .scaled(bullet.vel.length() * 0.2);
-                        try decorations.append(.{
-                            .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
-                            .pos = ship.pos,
-                            .vel = ship.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
-                            .rotation = 2 * math.pi * std.crypto.random.float(f32),
-                            .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                            .duration = 2,
-                        });
+                            // spawn shrapnel here
+                            const shrapnel_animation = shrapnel_animations[
+                                std.crypto.random.uintLessThanBiased(usize, shrapnel_animations.len)
+                            ];
+                            const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                                .scaled(bullet.vel.length() * 0.2);
+                            try decorations.append(.{
+                                .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
+                                .pos = ship.pos,
+                                .vel = ship.vel.plus(bullet.vel.scaled(0.2)).plus(random_vector),
+                                .rotation = 2 * math.pi * std.crypto.random.float(f32),
+                                .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                                .duration = 2,
+                            });
 
-                        entities.removeEntity(entity.handle);
-                        continue;
+                            entities.removeEntity(bullet_entity.handle);
+                            continue;
+                        }
                     }
                 }
             }
         }
 
-        for (ships.items) |*ship| {
-            ship.pos.add(ship.vel.scaled(dt));
+        {
+            var it = entities.iterator(.{.ship});
+            while (it.next()) |entity| {
+                const ship = entity.comps.ship;
+                ship.pos.add(ship.vel.scaled(dt));
 
-            // explode ships that reach 0 hp
-            if (ship.hp <= 0) {
-                // spawn explosion here
-                try decorations.append(.{
-                    .anim_playback = .{ .index = explosion_animation, .time_passed = 0 },
-                    .pos = ship.pos,
-                    .vel = ship.vel,
-                    .rotation = 0,
-                    .rotation_vel = 0,
-                    .duration = 100,
-                });
-                // delete ship and spawn it somewhere else
-                ship.* = ranger_template;
-                const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                ship.pos = display_center.plus(V.unit(new_angle).scaled(500));
-                continue;
-            }
-
-            // gravity if the ship is outside the ring
-            if (ship.pos.distanceSqrd(display_center) > display_radius * display_radius) {
-                const gravity = 400;
-                const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
-                ship.vel.add(gravity_v);
-            }
-
-            const rotate_input = // convert to 1.0 or -1.0
-                @intToFloat(f32, @boolToInt(ship.input.right)) -
-                @intToFloat(f32, @boolToInt(ship.input.left));
-            ship.rotation = @mod(
-                ship.rotation + rotate_input * ship.rotation_vel * dt,
-                2 * math.pi,
-            );
-
-            // convert to 1.0 or 0.0
-            const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
-            const thrust = V.unit(ship.rotation);
-            ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
-
-            if (ship.turret) |*turret| {
-                turret.cooldown -= dt;
-                if (ship.input.fire and turret.cooldown <= 0) {
-                    turret.cooldown = turret.cooldown_amount;
-                    _ = entities.create(.{
-                        .bullet = .{
-                            .sprite = bullet_small,
-                            .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
-                            .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
-                            .duration = turret.bullet_duration,
-                            .radius = 2,
-                            .damage = turret.bullet_damage,
-                        },
+                // explode ships that reach 0 hp
+                if (ship.hp <= 0) {
+                    // spawn explosion here
+                    try decorations.append(.{
+                        .anim_playback = .{ .index = explosion_animation, .time_passed = 0 },
+                        .pos = ship.pos,
+                        .vel = ship.vel,
+                        .rotation = 0,
+                        .rotation_vel = 0,
+                        .duration = 100,
                     });
+                    // delete ship and spawn it somewhere else
+                    ship.* = ranger_template;
+                    const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                    ship.pos = display_center.plus(V.unit(new_angle).scaled(500));
+                    continue;
+                }
+
+                // gravity if the ship is outside the ring
+                if (ship.pos.distanceSqrd(display_center) > display_radius * display_radius) {
+                    const gravity = 400;
+                    const gravity_v = display_center.minus(ship.pos).normalized().scaled(gravity * dt);
+                    ship.vel.add(gravity_v);
+                }
+
+                const rotate_input = // convert to 1.0 or -1.0
+                    @intToFloat(f32, @boolToInt(ship.input.right)) -
+                    @intToFloat(f32, @boolToInt(ship.input.left));
+                ship.rotation = @mod(
+                    ship.rotation + rotate_input * ship.rotation_vel * dt,
+                    2 * math.pi,
+                );
+
+                // convert to 1.0 or 0.0
+                const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
+                const thrust = V.unit(ship.rotation);
+                ship.vel.add(thrust.scaled(thrust_input * ship.thrust * dt));
+
+                if (ship.turret) |*turret| {
+                    turret.cooldown -= dt;
+                    if (ship.input.fire and turret.cooldown <= 0) {
+                        turret.cooldown = turret.cooldown_amount;
+                        _ = entities.create(.{
+                            .bullet = .{
+                                .sprite = bullet_small,
+                                .pos = ship.pos.plus(V.unit(ship.rotation + turret.angle).scaled(turret.radius)),
+                                .vel = V.unit(ship.rotation).scaled(turret.bullet_speed).plus(ship.vel),
+                                .duration = turret.bullet_duration,
+                                .radius = 2,
+                                .damage = turret.bullet_damage,
+                            },
+                        });
+                    }
                 }
             }
         }
@@ -420,39 +427,43 @@ pub fn main() !void {
             ));
         }
 
-        for (ships.items) |*ship| {
-            const sprite = assets.animate(&ship.anim_playback, dt);
-            sdlAssertZero(c.SDL_RenderCopyEx(
-                renderer,
-                sprite.texture,
-                null, // source rectangle
-                &sprite.toSdlRect(ship.pos),
-                // The ship asset images point up instead of to the right.
-                toDegrees(ship.rotation + math.pi / 2.0),
-                null, // center of rotation
-                c.SDL_FLIP_NONE,
-            ));
+        {
+            var it = entities.iterator(.{.ship});
+            while (it.next()) |entity| {
+                const ship = entity.comps.ship;
+                const sprite = assets.animate(&ship.anim_playback, dt);
+                sdlAssertZero(c.SDL_RenderCopyEx(
+                    renderer,
+                    sprite.texture,
+                    null, // source rectangle
+                    &sprite.toSdlRect(ship.pos),
+                    // The ship asset images point up instead of to the right.
+                    toDegrees(ship.rotation + math.pi / 2.0),
+                    null, // center of rotation
+                    c.SDL_FLIP_NONE,
+                ));
 
-            // HP bar
-            if (ship.hp < ship.max_hp) {
-                const health_bar_size: V = .{ .x = 32, .y = 4 };
-                var start = ship.pos.minus(health_bar_size.scaled(0.5)).floored();
-                start.y -= ship.radius + health_bar_size.y;
-                sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
-                sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
-                    start.minus(.{ .x = 1, .y = 1 }),
-                    health_bar_size.plus(.{ .x = 2, .y = 2 }),
-                )));
-                const hp_percent = ship.hp / ship.max_hp;
-                if (hp_percent > 0.45) {
-                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
-                } else {
-                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
+                // HP bar
+                if (ship.hp < ship.max_hp) {
+                    const health_bar_size: V = .{ .x = 32, .y = 4 };
+                    var start = ship.pos.minus(health_bar_size.scaled(0.5)).floored();
+                    start.y -= ship.radius + health_bar_size.y;
+                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
+                    sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
+                        start.minus(.{ .x = 1, .y = 1 }),
+                        health_bar_size.plus(.{ .x = 2, .y = 2 }),
+                    )));
+                    const hp_percent = ship.hp / ship.max_hp;
+                    if (hp_percent > 0.45) {
+                        sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
+                    } else {
+                        sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
+                    }
+                    sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
+                        start,
+                        .{ .x = health_bar_size.x * hp_percent, .y = health_bar_size.y },
+                    )));
                 }
-                sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
-                    start,
-                    .{ .x = health_bar_size.x * hp_percent, .y = health_bar_size.y },
-                )));
             }
         }
 
@@ -499,9 +510,10 @@ pub fn sdlAssertZero(ret: c_int) void {
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
 
+// TODO: just make a controller component
 const Player = struct {
     controller: ?*c.SDL_GameController,
-    ship: u32,
+    ship: ?EntityHandle,
 };
 
 const Bullet = struct {
