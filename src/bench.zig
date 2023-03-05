@@ -5,9 +5,6 @@ const Entities = ecs.Entities;
 const EntityHandle = ecs.EntityHandle;
 
 pub fn main() !void {
-    if (builtin.mode != .ReleaseFast) {
-        std.debug.print("\nWARNING: bench run in {} mode\n\n", .{builtin.mode});
-    }
     std.debug.print("ECS:\n", .{});
     try benchEcs();
     std.debug.print("\n", .{});
@@ -16,10 +13,13 @@ pub fn main() !void {
     try perfArrayList();
     std.debug.print("\n", .{});
 
-    // XXX: was calling array twice before......
     std.debug.print("MultiArrayList:\n", .{});
     try benchMultiArrayList();
     std.debug.print("\n", .{});
+
+    if (builtin.mode != .ReleaseFast) {
+        std.debug.print("\nWARNING: bench run in {} mode\n\n", .{builtin.mode});
+    }
 }
 
 fn benchEcs() !void {
@@ -28,8 +28,8 @@ fn benchEcs() !void {
 
     // Init
     var timer = try std.time.Timer.start();
-    var entities = try Entities(.{ .x = u128, .y = u256, .z = u128 }).init(std.heap.page_allocator);
-    defer entities.deinit();
+    var entities = try Entities(.{ .x = u128, .y = u256, .z = u128 }).init(allocator);
+    defer entities.deinit(allocator);
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Create entities
