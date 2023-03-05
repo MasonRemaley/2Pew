@@ -19,7 +19,7 @@ const Entities = ecs.Entities(.{
     .bullet = Bullet,
     .ship = Ship,
     .rb = RigidBody,
-    .controller = *c.SDL_GameController,
+    .input_map = InputMap,
     .particle = Particle,
     .rock = Rock,
 });
@@ -93,25 +93,35 @@ pub fn main() !void {
             }
         }
 
-        for (controllers, 0..) |controller, i| {
+        var key_maps = [2]?KeyMap{
+            .{
+                .left = c.SDL_SCANCODE_A,
+                .right = c.SDL_SCANCODE_D,
+                .forward = c.SDL_SCANCODE_W,
+                .fire = c.SDL_SCANCODE_S,
+            },
+            .{
+                .left = c.SDL_SCANCODE_LEFT,
+                .right = c.SDL_SCANCODE_RIGHT,
+                .forward = c.SDL_SCANCODE_UP,
+                .fire = c.SDL_SCANCODE_DOWN,
+            },
+        };
+
+        for (controllers, key_maps, 0..) |controller, key_map, i| {
             var ship_template = game.initShip(@intCast(u2, i));
             ship_template.rb.pos = .{
                 .x = 500 + 500 * @intToFloat(f32, i),
                 .y = 500,
             };
-            // TODO(mason): this is an example of where addComponent would be convenient
-            if (controller) |con| {
-                _ = entities.create(.{
-                    .ship = ship_template.ship,
-                    .rb = ship_template.rb,
-                    .controller = con,
-                });
-            } else {
-                _ = entities.create(.{
-                    .ship = ship_template.ship,
-                    .rb = ship_template.rb,
-                });
-            }
+            _ = entities.create(.{
+                .ship = ship_template.ship,
+                .rb = ship_template.rb,
+                .input_map = .{
+                    .controller = controller,
+                    .key_map = key_map,
+                },
+            });
         }
     }
 
@@ -163,25 +173,32 @@ fn poll() bool {
 
 fn update(entities: *Entities, game: *Game, dt: f32) void {
     {
-        var it = entities.iterator(.{ .controller, .ship });
+        var it = entities.iterator(.{ .input_map, .ship });
         while (it.next()) |entity| {
-            const controller = entity.comps.controller.*;
+            const input_map = entity.comps.input_map.*;
             const ship = entity.comps.ship;
-            ship.input = .{};
-            // left/right on the left joystick
-            const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
-            // up/down on the left joystick
-            //const y_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTY);
 
-            const dead_zone = 10000;
-            ship.input.left = ship.input.left or x_axis < -dead_zone;
-            ship.input.right = ship.input.right or x_axis > dead_zone;
-            ship.input.forward = ship.input.forward or
-                c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
-            ship.input.fire = ship.input.fire or
-                c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
-            //std.debug.print("x_axis: {any} y_axis: {any}\n", .{ x_axis, y_axis });
-            //std.debug.print("input: {any}\n", .{ship.input});
+            ship.input = .{};
+
+            if (input_map.controller) |controller| {
+                const x_axis = c.SDL_GameControllerGetAxis(controller, c.SDL_CONTROLLER_AXIS_LEFTX);
+                const dead_zone = 10000;
+                ship.input.left = ship.input.left or x_axis < -dead_zone;
+                ship.input.right = ship.input.right or x_axis > dead_zone;
+                ship.input.forward = ship.input.forward or
+                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_B) != 0;
+                ship.input.fire = ship.input.fire or
+                    c.SDL_GameControllerGetButton(controller, c.SDL_CONTROLLER_BUTTON_A) != 0;
+            }
+
+            if (input_map.key_map) |key_map| {
+                const keys = c.SDL_GetKeyboardState(null);
+                // TODO(mason): add nicer behavior than canceling if both left & right are down (most recent gets precedence)
+                ship.input.left = ship.input.left or keys[key_map.left] == 1;
+                ship.input.right = ship.input.right or keys[key_map.right] == 1;
+                ship.input.forward = ship.input.forward or keys[key_map.forward] == 1;
+                ship.input.fire = ship.input.fire or keys[key_map.fire] == 1;
+            }
         }
     }
 
@@ -563,6 +580,18 @@ pub fn sdlAssertZero(ret: c_int) void {
     if (ret == 0) return;
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
+
+const KeyMap = struct {
+    left: u16,
+    right: u16,
+    forward: u16,
+    fire: u16,
+};
+
+const InputMap = struct {
+    controller: ?*c.SDL_GameController,
+    key_map: ?KeyMap,
+};
 
 const Bullet = struct {
     sprite: Sprite.Index,
