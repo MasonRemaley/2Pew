@@ -21,7 +21,7 @@ const Entities = ecs.Entities(.{
     .rb = RigidBody,
     .input = Input,
     .particle = Particle,
-    .rock = Rock,
+    .sprite = Sprite.Index,
 });
 const EntityHandle = ecs.EntityHandle;
 
@@ -159,7 +159,7 @@ pub fn main() !void {
     {
         const speed = 100 + std.crypto.random.float(f32) * 400;
         _ = entities.create(.{
-            .rock = .{},
+            .sprite = game.rock_sprite,
             .rb = .{
                 .pos = display_center.plus(.{ .x = 0, .y = 300 }),
                 .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
@@ -533,10 +533,10 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
     }
 
     {
-        var it = entities.iterator(.{ .rock, .rb });
+        var it = entities.iterator(.{ .sprite, .rb });
         while (it.next()) |entity| {
             const rb = entity.comps.rb;
-            const sprite = assets.sprite(game.rock_sprite);
+            const sprite = assets.sprite(entity.comps.sprite.*);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
@@ -1144,8 +1144,6 @@ const Star = struct {
 
     const Kind = enum { large, small, planet_red };
 };
-
-const Rock = struct {};
 
 fn generateStars(stars: []Star) void {
     for (stars) |*star| {
