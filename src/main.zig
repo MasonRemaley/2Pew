@@ -17,7 +17,7 @@ const display_radius = display_height / 2.0;
 const ecs = @import("ecs.zig");
 // TODO(mason): some of these have shared behaviors we can factor out e.g. sprites, newtonian mechanics
 const Entities = ecs.Entities(.{
-    .bullet = Bullet,
+    .projectile = Projectile,
     .ship = Ship,
     .rb = RigidBody,
     .input = Input,
@@ -337,16 +337,16 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
-    // Update bullets
+    // Update projectiles
     {
-        var bullet_it = entities.iterator(.{ .bullet, .rb });
-        while (bullet_it.next()) |bullet_entity| {
-            const bullet = bullet_entity.comps.bullet;
-            const rb = bullet_entity.comps.rb;
+        var projectile_it = entities.iterator(.{ .projectile, .rb });
+        while (projectile_it.next()) |projectile_entity| {
+            const projectile = projectile_entity.comps.projectile;
+            const rb = projectile_entity.comps.rb;
 
-            bullet.duration -= delta_s;
-            if (bullet.duration <= 0) {
-                entities.remove(bullet_entity.handle);
+            projectile.duration -= delta_s;
+            if (projectile.duration <= 0) {
+                entities.remove(projectile_entity.handle);
                 continue;
             }
 
@@ -358,7 +358,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     if (ship_rb.pos.distanceSqrd(rb.pos) <
                         ship_rb.radius * ship_rb.radius + rb.radius * rb.radius)
                     {
-                        ship.hp -= bullet.damage;
+                        ship.hp -= projectile.damage;
 
                         // spawn shrapnel here
                         const shrapnel_animation = game.shrapnel_animations[
@@ -375,7 +375,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .duration = 2,
                         } });
 
-                        entities.remove(bullet_entity.handle);
+                        entities.remove(projectile_entity.handle);
                         continue;
                     }
                 }
@@ -439,13 +439,13 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 if (ship.input.fire and turret.cooldown <= 0) {
                     turret.cooldown = turret.cooldown_amount;
                     _ = entities.create(.{
-                        .bullet = .{
-                            .duration = turret.bullet_duration,
-                            .damage = turret.bullet_damage,
+                        .projectile = .{
+                            .duration = turret.projectile_duration,
+                            .damage = turret.projectile_damage,
                         },
                         .rb = .{
                             .pos = rb.pos.plus(V.unit(rb.rotation + turret.angle).scaled(turret.radius)),
-                            .vel = V.unit(rb.rotation).scaled(turret.bullet_speed).plus(rb.vel),
+                            .vel = V.unit(rb.rotation).scaled(turret.projectile_speed).plus(rb.vel),
                             .radius = 2,
                             // XXX: use rotation to make face the right way?
                             .rotation = 0,
@@ -683,10 +683,10 @@ const Input = struct {
     }
 };
 
-const Bullet = struct {
+const Projectile = struct {
     /// seconds
     duration: f32,
-    /// Amount of HP the bullet removes on hit.
+    /// Amount of HP the projectile removes on hit.
     damage: f32,
 };
 
@@ -743,11 +743,11 @@ const Turret = struct {
     cooldown_amount: f32,
 
     /// pixels per second
-    bullet_speed: f32,
+    projectile_speed: f32,
     /// seconds
-    bullet_duration: f32,
-    /// Amount of HP the bullet removes upon landing a hit.
-    bullet_damage: f32,
+    projectile_duration: f32,
+    /// Amount of HP the projectile removes upon landing a hit.
+    projectile_damage: f32,
 };
 
 // See https://www.anthropicstudios.com/2020/03/30/symmetric-matrices/
@@ -1044,9 +1044,9 @@ const Game = struct {
                     .angle = 0,
                     .cooldown = 0,
                     .cooldown_amount = 0.2,
-                    .bullet_speed = 500,
-                    .bullet_duration = 0.5,
-                    .bullet_damage = 10,
+                    .projectile_speed = 500,
+                    .projectile_duration = 0.5,
+                    .projectile_damage = 10,
                 },
                 .hp = 80,
                 .max_hp = 80,
