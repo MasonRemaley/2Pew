@@ -229,39 +229,10 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
     }
 
     {
-        var it = entities.iterator(.{ .ship, .rb });
+        var it = entities.iterator(.{.rb});
         while (it.next()) |entity| {
-            const ship = entity.comps.ship;
             const rb = entity.comps.rb;
             rb.pos.add(rb.vel.scaled(dt));
-
-            // explode ships that reach 0 hp
-            if (ship.hp <= 0) {
-                // spawn explosion here
-                _ = entities.create(.{ .particle = .{
-                    .anim_playback = .{ .index = game.explosion_animation, .time_passed = 0 },
-                    .pos = rb.pos,
-                    .vel = rb.vel,
-                    .rotation = 0,
-                    .rotation_vel = 0,
-                    .duration = 100,
-                } });
-                // give player their next ship
-                const player = &game.players[ship.player];
-                player.ship_progression_index += 1;
-                if (player.ship_progression_index >= player.ship_progression.len) {
-                    // this player would lose the game, but instead let's just
-                    // give them another ship
-                    player.ship_progression_index = 0;
-                }
-                const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
-                var ship_template = game.initShip(ship.player);
-                ship_template.rb.pos = new_pos;
-                ship.* = ship_template.ship;
-                rb.* = ship_template.rb;
-                continue;
-            }
 
             // bonk
             var other_it = it;
@@ -291,18 +262,27 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
                 const other_impulse = impulse.scaled(1 / other_mass);
                 rb.vel.sub(ship_impulse);
                 other.rb.vel.add(other_impulse);
+
                 // Deal HP damage relative to the change in velocity.
                 // A very gentle bonk is something like impulse 20, while a
                 // very hard bonk is around 300.
                 // The basic ranger ship has 80 HP.
-                const ship_damage = remap(20, 300, 0, 80, ship_impulse.length());
-                const other_damage = remap(20, 300, 0, 80, other_impulse.length());
-                ship.hp -= ship_damage;
-                other.ship.hp -= other_damage;
+                var total_ship_damage: f32 = 0;
+
+                if (entities.getComponent(entity.handle, .ship)) |ship| {
+                    const ship_damage = remap(20, 300, 0, 80, ship_impulse.length());
+                    ship.hp -= ship_damage;
+                    total_ship_damage += ship_damage;
+                }
+                if (entities.getComponent(other_entity.handle, .ship)) |ship| {
+                    const other_damage = remap(20, 300, 0, 80, other_impulse.length());
+                    ship.hp -= other_damage;
+                    total_ship_damage += other_damage;
+                }
 
                 const shrapnel_amt = @floatToInt(
                     u32,
-                    @floor(remap_clamped(0, 100, 0, 30, ship_damage + other_damage)),
+                    @floor(remap_clamped(0, 100, 0, 30, total_ship_damage)),
                 );
                 const shrapnel_center = rb.pos.plus(other.rb.pos).scaled(0.5);
                 const avg_vel = rb.vel.plus(other.rb.vel).scaled(0.5);
@@ -333,8 +313,46 @@ fn update(entities: *Entities, game: *Game, dt: f32) void {
                 const gravity = 400;
                 const gravity_v = display_center.minus(rb.pos).normalized().scaled(gravity * dt);
                 rb.vel.add(gravity_v);
-                // punishment for leaving the circle
-                ship.hp -= dt * 4;
+                if (entities.getComponent(entity.handle, .ship)) |ship| {
+                    // punishment for leaving the circle
+                    ship.hp -= dt * 4;
+                }
+            }
+        }
+    }
+
+    {
+        var it = entities.iterator(.{ .ship, .rb });
+        while (it.next()) |entity| {
+            const ship = entity.comps.ship;
+            const rb = entity.comps.rb;
+
+            // explode ships that reach 0 hp
+            if (ship.hp <= 0) {
+                // spawn explosion here
+                _ = entities.create(.{ .particle = .{
+                    .anim_playback = .{ .index = game.explosion_animation, .time_passed = 0 },
+                    .pos = rb.pos,
+                    .vel = rb.vel,
+                    .rotation = 0,
+                    .rotation_vel = 0,
+                    .duration = 100,
+                } });
+                // give player their next ship
+                const player = &game.players[ship.player];
+                player.ship_progression_index += 1;
+                if (player.ship_progression_index >= player.ship_progression.len) {
+                    // this player would lose the game, but instead let's just
+                    // give them another ship
+                    player.ship_progression_index = 0;
+                }
+                const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
+                var ship_template = game.initShip(ship.player);
+                ship_template.rb.pos = new_pos;
+                ship.* = ship_template.ship;
+                rb.* = ship_template.rb;
+                continue;
             }
 
             const rotate_input = // convert to 1.0 or -1.0
@@ -848,6 +866,7 @@ const Game = struct {
         };
     }
 
+    // TODO(mason): make this not weird
     fn initShip(game: *Game, player_index: u2) ShipTemplate {
         const player = game.players[player_index];
         var ship = switch (player.ship_progression[player.ship_progression_index]) {
