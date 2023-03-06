@@ -36,10 +36,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // `Archetype` is a bit set with a bit for each component type.
         const Archetype: type = std.bit_set.IntegerBitSet(std.meta.fields(Entity).len);
 
+        // TODO: rename to components?
         // `Entity` has a field for every possible component type. This is for convenience, it is
         // not used at runtime. Fields are sorted from greatest to least alignment, see `PageHeader` for
         // rational.
-        const Entity = entity: {
+        pub const Entity = entity: {
             var fields: [std.meta.fields(@TypeOf(componentTypes)).len]Type.StructField = undefined;
             for (std.meta.fields(@TypeOf(componentTypes)), 0..) |registered, i| {
                 fields[i] = Type.StructField{
@@ -614,6 +615,31 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return Iterator(components).init(self);
         }
     };
+}
+
+// TODO(mason): could also do this a little more dynamically with a type with optionals for each
+// of the component fields
+pub fn PrefabUnion(comptime A: type, comptime B: type) type {
+    return @Type(Type{
+        .Struct = Type.Struct{
+            .layout = .Auto,
+            .backing_integer = null,
+            .fields = @typeInfo(A).Struct.fields ++ @typeInfo(B).Struct.fields,
+            .decls = &[_]Type.Declaration{},
+            .is_tuple = false,
+        },
+    });
+}
+
+pub fn prefabUnion(a: anytype, b: anytype) PrefabUnion(@TypeOf(a), @TypeOf(b)) {
+    var result: PrefabUnion(@TypeOf(a), @TypeOf(b)) = undefined;
+    inline for (@typeInfo(@TypeOf(a)).Struct.fields) |field| {
+        @field(result, field.name) = @field(a, field.name);
+    }
+    inline for (@typeInfo(@TypeOf(b)).Struct.fields) |field| {
+        @field(result, field.name) = @field(b, field.name);
+    }
+    return result;
 }
 
 test "limits" {

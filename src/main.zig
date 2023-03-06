@@ -5,6 +5,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const math = std.math;
 const V = @import("Vec2d.zig");
+const FieldEnum = std.meta.FieldEnum;
 
 const display_width = 1920;
 const display_height = 1080;
@@ -150,18 +151,17 @@ pub fn main() !void {
         };
 
         for (input_devices, 0..) |input, i| {
-            var ship_template = game.initShip(@intCast(u2, i));
-            ship_template.rb.pos = .{
-                .x = 500 + 500 * @intToFloat(f32, i),
-                .y = 500,
-            };
-            _ = entities.create(.{
-                .ship = ship_template.ship,
-                .rb = ship_template.rb,
-                .input = input,
-                .collider = ship_template.collider,
-                .animation = ship_template.animation,
-            });
+            var ship_prefab = game.getShipPrefab(
+                @intCast(u2, i),
+                .{
+                    .x = 500 + 500 * @intToFloat(f32, i),
+                    .y = 500,
+                },
+            );
+            _ = entities.create(ecs.prefabUnion(
+                ship_prefab,
+                .{ .input = input },
+            ));
         }
     }
 
@@ -475,16 +475,17 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 }
                 const new_angle = math.pi * 2 * std.crypto.random.float(f32);
                 const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
-                var ship_template = game.initShip(ship.player);
-                ship_template.rb.pos = new_pos;
-                ship.* = ship_template.ship;
-                rb.* = ship_template.rb;
-                // TODO(mason): now that i've separated stuff, it's easy to forget to replace one piece
-                // of the template. this caused a bug when i forgot to set animation. think about how
-                // to preven this in the future. also note that because of the lack of addComponent,
-                // I'm assuming these components already exist.
-                entities.getComponent(entity.handle, .collider).?.* = ship_template.collider;
-                entities.getComponent(entity.handle, .animation).?.* = ship_template.animation;
+
+                // TODO(mason): this loop assumes all ships have the same set of components because
+                // I haven't yet implemented `addComponent`. even then, though, it wouldn't know
+                // whether to *remove* components only used on one ship or that are added as
+                // temporary effects. i think we should actually be destroying this entity and
+                // creating a new one to replace it.
+                var ship_prefab = game.getShipPrefab(ship.player, new_pos);
+                inline for (@typeInfo(@TypeOf(ship_prefab)).Struct.fields) |field| {
+                    const entity_field = @intToEnum(FieldEnum(Entities.Entity), std.meta.fieldIndex(Entities.Entity, field.name).?);
+                    entities.getComponent(entity.handle, entity_field).?.* = @field(ship_prefab, field.name);
+                }
                 continue;
             }
 
@@ -713,7 +714,7 @@ const Input = struct {
         };
     }
 
-    pub fn isPositive(self: *const @This(), comptime action: std.meta.FieldEnum(ControllerMap)) bool {
+    pub fn isPositive(self: *const @This(), comptime action: FieldEnum(ControllerMap)) bool {
         const keyboard_action = @field(self.keyboard_map, std.meta.fieldNames(ControllerMap)[@enumToInt(action)]);
         const key = if (keyboard_action.key_positive) |key|
             c.SDL_GetKeyboardState(null)[key] == 1
@@ -733,7 +734,7 @@ const Input = struct {
         return key or button or axis;
     }
 
-    pub fn isNegative(self: *const @This(), comptime action: std.meta.FieldEnum(ControllerMap)) bool {
+    pub fn isNegative(self: *const @This(), comptime action: FieldEnum(ControllerMap)) bool {
         const keyboard_action = @field(self.keyboard_map, std.meta.fieldNames(ControllerMap)[@enumToInt(action)]);
         const key = if (keyboard_action.key_negative) |key|
             c.SDL_GetKeyboardState(null)[key] == 1
@@ -977,9 +978,7 @@ const Sprite = struct {
     }
 };
 
-// TODO(mason): we can just make anon structs as prefabs, and concat them as needed before creation.
-// if there's no builtin concat for anon structs i can write one.
-const ShipTemplate = struct {
+const ShipPrefab = struct {
     ship: Ship,
     rb: RigidBody,
     collider: Collider,
@@ -991,8 +990,8 @@ const Game = struct {
 
     players: [2]Player,
 
-    ranger_template: ShipTemplate,
-    militia_template: ShipTemplate,
+    ranger_template: ShipPrefab,
+    militia_template: ShipPrefab,
 
     shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
     explosion_animation: Animation.Index,
@@ -1093,7 +1092,7 @@ const Game = struct {
 
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
-        const ranger_template: ShipTemplate = .{
+        const ranger_template: ShipPrefab = .{
             .ship = .{
                 .class = .ranger,
                 .input = .{},
@@ -1133,7 +1132,7 @@ const Game = struct {
             },
         };
 
-        const militia_template: ShipTemplate = .{
+        const militia_template: ShipPrefab = .{
             .ship = .{
                 .class = .militia,
                 .input = .{},
@@ -1191,14 +1190,17 @@ const Game = struct {
         };
     }
 
-    // TODO(mason): make this not weird
-    fn initShip(game: *Game, player_index: u2) ShipTemplate {
+    // TODO(mason): instead of undefineds, make it an anonymous struct and leave off the values we
+    // don't want, and then have the prefab concat merge them in? being able to do that is a big
+    // advantage of doing the concat comptime
+    fn getShipPrefab(game: *Game, player_index: u2, pos: V) ShipPrefab {
         const player = game.players[player_index];
         var ship = switch (player.ship_progression[player.ship_progression_index]) {
             .ranger => game.ranger_template,
             .militia => game.militia_template,
         };
         ship.ship.player = player_index;
+        ship.rb.pos = pos;
         return ship;
     }
 };
