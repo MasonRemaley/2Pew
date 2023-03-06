@@ -23,6 +23,7 @@ const Entities = ecs.Entities(.{
     .input = Input,
     .particle = Particle,
     .sprite = Sprite.Index,
+    .collider = Collider,
 });
 const EntityHandle = ecs.EntityHandle;
 
@@ -156,6 +157,7 @@ pub fn main() !void {
                 .ship = ship_template.ship,
                 .rb = ship_template.rb,
                 .input = input,
+                .collider = ship_template.collider,
             });
         }
     }
@@ -170,9 +172,11 @@ pub fn main() !void {
                 .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
                 .rotation = 0,
                 .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
-                .collision_damping = 1,
                 .density = 0.10,
                 .layer = .hazard,
+            },
+            .collider = .{
+                .collision_damping = 1,
             },
         });
     }
@@ -248,9 +252,11 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
     // Update rbs
     {
-        var it = entities.iterator(.{.rb});
+        // XXX: apply some of this even without a collider
+        var it = entities.iterator(.{ .rb, .collider });
         while (it.next()) |entity| {
             const rb = entity.comps.rb;
+            const collider = entity.comps.collider;
             rb.pos.add(rb.vel.scaled(delta_s));
 
             // bonk
@@ -272,7 +278,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // do not resolve if velocities are separating
                 if (vel_along_normal > 0) continue;
                 // calculate restitution
-                const e = @min(rb.collision_damping, other.rb.collision_damping);
+                const e = @min(collider.collision_damping, other.collider.collision_damping);
                 // calculate impulse scalar
                 var j: f32 = -(1.0 + e) * vel_along_normal;
                 const my_mass = mass(rb.density, rb.radius);
@@ -345,6 +351,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
     // Update projectiles
     {
+        // XXX: mason hard to keep the components straight, make shorter handles names and get rid of comps
         var projectile_it = entities.iterator(.{ .projectile, .rb });
         while (projectile_it.next()) |projectile_entity| {
             const projectile = projectile_entity.comps.projectile;
@@ -452,17 +459,17 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         .rb = .{
                             .pos = rb.pos.plus(V.unit(rb.rotation + turret.angle).scaled(turret.radius)),
                             .vel = V.unit(rb.rotation).scaled(turret.projectile_speed).plus(rb.vel),
-                            .radius = 2,
-                            // XXX: use rotation to make face the right way?
+                            // XXX: rename to angle
                             .rotation = 0,
-                            .collision_damping = 0,
-                            // XXX: whoa what if bullets had mass lol
-                            // XXX: lol bullets collide with ships (and maybe other bullets?) need to fix that
+                            .radius = 2,
                             // TODO(mason): modify math to accept 0 and inf mass
                             .density = 0.001,
                             .layer = .projectile,
                         },
                         .sprite = game.bullet_small,
+                        .collider = .{
+                            .collision_damping = 0,
+                        },
                     });
                 }
             }
@@ -854,9 +861,12 @@ const RigidBody = struct {
     /// radians
     rotation: f32,
     radius: f32,
-    collision_damping: f32,
     density: f32,
     layer: Layer,
+};
+
+const Collider = struct {
+    collision_damping: f32,
 };
 
 const Ship = struct {
@@ -923,9 +933,12 @@ const Sprite = struct {
     }
 };
 
+// TODO(mason): we can just make anon structs as prefabs, and concat them as needed before creation.
+// if there's no builtin concat for anon structs i can write one.
 const ShipTemplate = struct {
     ship: Ship,
     rb: RigidBody,
+    collider: Collider,
 };
 
 const Game = struct {
@@ -1062,10 +1075,12 @@ const Game = struct {
                 .pos = .{ .x = 0, .y = 0 },
                 .vel = .{ .x = 0, .y = 0 },
                 .rotation = -math.pi / 2.0,
-                .collision_damping = 0.4,
                 .radius = ranger_radius,
                 .density = 0.02,
                 .layer = .vehicle,
+            },
+            .collider = .{
+                .collision_damping = 0.4,
             },
         };
 
@@ -1089,9 +1104,11 @@ const Game = struct {
                 .vel = .{ .x = 0, .y = 0 },
                 .rotation = -math.pi / 2.0,
                 .radius = militia_radius,
-                .collision_damping = 0.4,
                 .density = 0.02,
                 .layer = .vehicle,
+            },
+            .collider = .{
+                .collision_damping = 0.4,
             },
         };
 
@@ -1324,6 +1341,8 @@ fn remap_clamped(
     return lerp(start_out, end_out, ilerp_clamped(start_in, end_in, value));
 }
 
+// XXX: make method on rb? would need to move radius back there but that's fine. i want gravity to
+// be able to affect particles so wanna keep mass working without colliders!
 fn mass(density: f32, radius: f32) f32 {
     return density * math.pi * radius * radius;
 }
