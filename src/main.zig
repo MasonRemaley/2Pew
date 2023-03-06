@@ -471,16 +471,14 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 const new_angle = math.pi * 2 * std.crypto.random.float(f32);
                 const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
 
-                // TODO(mason): this loop assumes all ships have the same set of components because
-                // I haven't yet implemented `addComponent`. even then, though, it wouldn't know
-                // whether to *remove* components only used on one ship or that are added as
-                // temporary effects. i think we should actually be destroying this entity and
-                // creating a new one to replace it.
-                var ship_prefab = game.getShipPrefab(ship.player, new_pos);
-                inline for (@typeInfo(@TypeOf(ship_prefab)).Struct.fields) |field| {
-                    const entity_field = @intToEnum(FieldEnum(Entities.Entity), std.meta.fieldIndex(Entities.Entity, field.name).?);
-                    entities.getComponent(entity.handle, entity_field).?.* = @field(ship_prefab, field.name);
-                }
+                // Not all ships have the same components, so we destroy this ship and then create
+                // a new ship but carry over the input component!
+                const ship_prefab = game.getShipPrefab(ship.player, new_pos);
+                _ = entities.create(ecs.prefabUnion(
+                    ship_prefab,
+                    .{ .input = input.* },
+                ));
+                entities.remove(entity.handle);
                 continue;
             }
 
