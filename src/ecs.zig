@@ -68,6 +68,28 @@ pub fn Entities(comptime componentTypes: anytype) type {
             });
         };
 
+        pub const Prefab = prefab: {
+            var fields: [std.meta.fields(Entity).len]Type.StructField = undefined;
+            for (std.meta.fields(Entity), 0..) |field, i| {
+                fields[i] = Type.StructField{
+                    .name = field.name,
+                    .type = ?field.type,
+                    .default_value = &null,
+                    .is_comptime = false,
+                    .alignment = @alignOf(?field.type),
+                };
+            }
+            break :prefab @Type(Type{
+                .Struct = Type.Struct{
+                    .layout = .Auto,
+                    .backing_integer = null,
+                    .fields = &fields,
+                    .decls = &[_]Type.Declaration{},
+                    .is_tuple = false,
+                },
+            });
+        };
+
         // Each entity handle points to a slot which in turn points to the actual entity data.
         // This indirection allows the actual data to move without invalidating the handle.
         const EntitySlot = struct {
@@ -318,12 +340,22 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         // TODO: test the failure conditions here?
         pub fn createChecked(self: *@This(), entity: anytype) !EntityHandle {
-            const archetype = comptime archetype: {
-                var archetype = Archetype.initEmpty();
-                for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
-                    archetype.set(std.meta.fieldIndex(Entity, fieldName).?);
+            const archetype = archetype: {
+                if (@TypeOf(entity) == Prefab) {
+                    var archetype = Archetype.initEmpty();
+                    inline for (comptime std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
+                        if (@field(entity, fieldName) != null) {
+                            archetype.set(std.meta.fieldIndex(Entity, fieldName).?);
+                        }
+                    }
+                    break :archetype archetype;
+                } else comptime {
+                    var archetype = Archetype.initEmpty();
+                    for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
+                        archetype.set(std.meta.fieldIndex(Entity, fieldName).?);
+                    }
+                    break :archetype archetype;
                 }
-                break :archetype archetype;
             };
 
             // Find a free index for the entity
@@ -395,7 +427,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // Initialize the new entity
             inline for (std.meta.fields(@TypeOf(entity))) |f| {
                 const field = @intToEnum(FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?);
-                page.componentArray(field)[slot.index_in_page] = @field(entity, f.name);
+                if (@TypeOf(entity) == Prefab) {
+                    if (@field(entity, f.name)) |component| {
+                        page.componentArray(field)[slot.index_in_page] = component;
+                    }
+                } else {
+                    page.componentArray(field)[slot.index_in_page] = @field(entity, f.name);
+                }
             }
 
             // Return the handle to the entity
@@ -615,31 +653,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return Iterator(components).init(self);
         }
     };
-}
-
-// TODO(mason): could also do this a little more dynamically with a type with optionals for each
-// of the component fields
-pub fn PrefabUnion(comptime A: type, comptime B: type) type {
-    return @Type(Type{
-        .Struct = Type.Struct{
-            .layout = .Auto,
-            .backing_integer = null,
-            .fields = @typeInfo(A).Struct.fields ++ @typeInfo(B).Struct.fields,
-            .decls = &[_]Type.Declaration{},
-            .is_tuple = false,
-        },
-    });
-}
-
-pub fn prefabUnion(a: anytype, b: anytype) PrefabUnion(@TypeOf(a), @TypeOf(b)) {
-    var result: PrefabUnion(@TypeOf(a), @TypeOf(b)) = undefined;
-    inline for (@typeInfo(@TypeOf(a)).Struct.fields) |field| {
-        @field(result, field.name) = @field(a, field.name);
-    }
-    inline for (@typeInfo(@TypeOf(b)).Struct.fields) |field| {
-        @field(result, field.name) = @field(b, field.name);
-    }
-    return result;
 }
 
 test "limits" {
@@ -995,4 +1008,19 @@ test "minimal iter test" {
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
     }
+}
+
+// XXX: no longer need concat prefabs? still haven't solved undefined issue though
+test "prefabs" {
+    var allocator = std.heap.page_allocator;
+
+    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
+    defer entities.deinit(allocator);
+
+    var prefab: @TypeOf(entities).Prefab = .{ .y = 10, .z = 20 };
+    var instance = entities.create(prefab);
+
+    try std.testing.expect(entities.getComponent(instance, .x) == null);
+    try std.testing.expect(entities.getComponent(instance, .y).?.* == 10);
+    try std.testing.expect(entities.getComponent(instance, .z).?.* == 20);
 }

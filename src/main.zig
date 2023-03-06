@@ -28,6 +28,7 @@ const Entities = ecs.Entities(.{
     .animation = Animation.Playback,
     .collider = Collider,
 });
+const Prefab = Entities.Prefab;
 const EntityHandle = ecs.EntityHandle;
 
 pub fn main() !void {
@@ -151,17 +152,11 @@ pub fn main() !void {
         };
 
         for (input_devices, 0..) |input, i| {
-            var ship_prefab = game.getShipPrefab(
-                @intCast(u2, i),
-                .{
-                    .x = 500 + 500 * @intToFloat(f32, i),
-                    .y = 500,
-                },
-            );
-            _ = entities.create(ecs.prefabUnion(
-                ship_prefab,
-                .{ .input = input },
-            ));
+            const pos = .{
+                .x = 500 + 500 * @intToFloat(f32, i),
+                .y = 500,
+            };
+            _ = game.createShip(&entities, @intCast(u2, i), pos, input);
         }
     }
 
@@ -440,7 +435,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
             // explode ships that reach 0 hp
             if (ship.hp <= 0) {
-                // XXX: take velocity from before impact?
+                // TODO: take velocity from before impact?
                 // spawn explosion here
                 _ = entities.create(.{
                     .lifetime = .{
@@ -471,19 +466,12 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 const new_angle = math.pi * 2 * std.crypto.random.float(f32);
                 const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
 
-                // Not all ships have the same components, so we destroy this ship and then create
-                // a new ship but carry over the input component!
-                const ship_prefab = game.getShipPrefab(ship.player, new_pos);
-                _ = entities.create(ecs.prefabUnion(
-                    ship_prefab,
-                    .{ .input = input.* },
-                ));
+                // Create a new ship from this ship's input, and then destroy it!
+                _ = game.createShip(entities, ship.player, new_pos, input.*);
                 entities.remove(entity.handle);
                 continue;
             }
 
-            // XXX: make function that does this?
-            // TODO(mason): make most recent input take precedence on keyboard?
             rb.angle = @mod(
                 rb.angle + input.getAxis(.turn) * ship.turn_speed * delta_s,
                 2 * math.pi,
@@ -995,20 +983,10 @@ const Sprite = struct {
     }
 };
 
-const ShipPrefab = struct {
-    ship: Ship,
-    rb: RigidBody,
-    collider: Collider,
-    animation: Animation.Playback,
-};
-
 const Game = struct {
     assets: *Assets,
 
     players: [2]Player,
-
-    ranger_template: ShipPrefab,
-    militia_template: ShipPrefab,
 
     shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
     explosion_animation: Animation.Index,
@@ -1021,6 +999,14 @@ const Game = struct {
 
     rock_sprite: Sprite.Index,
 
+    ranger_still: Animation.Index,
+    ranger_accel: Animation.Index,
+    ranger_radius: f32,
+
+    militia_still: Animation.Index,
+    militia_accel: Animation.Index,
+    militia_radius: f32,
+
     const shrapnel_sprite_names = [_][]const u8{
         "img/shrapnel/01.png",
         "img/shrapnel/02.png",
@@ -1032,6 +1018,80 @@ const Game = struct {
         "img/rock-b.png",
         "img/rock-c.png",
     };
+
+    fn createRanger(self: *const @This(), entities: *Entities, player_index: u2, pos: V, input: Input) EntityHandle {
+        return entities.create(.{
+            .ship = .{
+                .class = .ranger,
+                .still = self.ranger_still,
+                .accel = self.ranger_accel,
+                .turn_speed = math.pi * 1.1,
+                .thrust = 150,
+                .turret = .{
+                    .radius = self.ranger_radius,
+                    .angle = 0,
+                    .cooldown = 0,
+                    .cooldown_amount = 0.2,
+                    .projectile_speed = 500,
+                    .projectile_lifetime = 0.5,
+                    .projectile_damage = 10,
+                },
+                .hp = 80,
+                .max_hp = 80,
+                .player = player_index,
+            },
+            .rb = .{
+                .pos = pos,
+                .vel = .{ .x = 0, .y = 0 },
+                .angle = -math.pi / 2.0,
+                .radius = self.ranger_radius,
+                .rotation_vel = 0.0,
+                .density = 0.02,
+            },
+            .collider = .{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            .animation = .{
+                .index = self.ranger_still,
+                .time_passed = 0,
+            },
+            .input = input,
+        });
+    }
+
+    fn createMilitia(self: *const @This(), entities: *Entities, player_index: u2, pos: V, input: Input) EntityHandle {
+        return entities.create(.{
+            .ship = .{
+                .class = .militia,
+                .still = self.militia_still,
+                .accel = self.militia_accel,
+                .turn_speed = math.pi * 1.2,
+                .thrust = 300,
+                .turret = null,
+                .hp = 80,
+                .max_hp = 80,
+                .player = player_index,
+            },
+            .rb = .{
+                .pos = pos,
+                .vel = .{ .x = 0, .y = 0 },
+                .angle = -math.pi / 2.0,
+                .rotation_vel = 0.0,
+                .radius = self.militia_radius,
+                .density = 0.02,
+            },
+            .collider = .{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            .animation = .{
+                .index = self.militia_still,
+                .time_passed = 0,
+            },
+            .input = input,
+        });
+    }
 
     fn init(assets: *Assets) !Game {
         const ring_bg = try assets.loadSprite("img/ring.png");
@@ -1109,73 +1169,6 @@ const Game = struct {
 
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
-        const ranger_template: ShipPrefab = .{
-            .ship = .{
-                .class = .ranger,
-                .still = ranger_still,
-                .accel = ranger_accel,
-                .turn_speed = math.pi * 1.1,
-                .thrust = 150,
-                .turret = .{
-                    .radius = ranger_radius,
-                    .angle = 0,
-                    .cooldown = 0,
-                    .cooldown_amount = 0.2,
-                    .projectile_speed = 500,
-                    .projectile_lifetime = 0.5,
-                    .projectile_damage = 10,
-                },
-                .hp = 80,
-                .max_hp = 80,
-                .player = undefined,
-            },
-            .rb = .{
-                .pos = .{ .x = 0, .y = 0 },
-                .vel = .{ .x = 0, .y = 0 },
-                .angle = -math.pi / 2.0,
-                .radius = ranger_radius,
-                .rotation_vel = 0.0,
-                .density = 0.02,
-            },
-            .collider = .{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            .animation = .{
-                .index = ranger_still,
-                .time_passed = 0,
-            },
-        };
-
-        const militia_template: ShipPrefab = .{
-            .ship = .{
-                .class = .militia,
-                .still = militia_still,
-                .accel = militia_accel,
-                .turn_speed = math.pi * 1.2,
-                .thrust = 300,
-                .turret = null,
-                .hp = 80,
-                .max_hp = 80,
-                .player = undefined,
-            },
-            .rb = .{
-                .pos = .{ .x = 0, .y = 0 },
-                .vel = .{ .x = 0, .y = 0 },
-                .angle = -math.pi / 2.0,
-                .rotation_vel = 0.0,
-                .radius = militia_radius,
-                .density = 0.02,
-            },
-            .collider = .{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            .animation = .{
-                .index = militia_still,
-                .time_passed = 0,
-            },
-        };
 
         return .{
             .assets = assets,
@@ -1191,8 +1184,6 @@ const Game = struct {
             },
             .shrapnel_animations = shrapnel_animations,
             .explosion_animation = explosion_animation,
-            .ranger_template = ranger_template,
-            .militia_template = militia_template,
 
             .ring_bg = ring_bg,
             .star_small = star_small,
@@ -1200,21 +1191,23 @@ const Game = struct {
             .planet_red = planet_red,
             .bullet_small = bullet_small,
             .rock_sprite = rock_sprites[0],
+
+            .ranger_still = ranger_still,
+            .ranger_accel = ranger_accel,
+            .ranger_radius = ranger_radius,
+
+            .militia_still = militia_still,
+            .militia_accel = militia_accel,
+            .militia_radius = militia_radius,
         };
     }
 
-    // TODO(mason): instead of undefineds, make it an anonymous struct and leave off the values we
-    // don't want, and then have the prefab concat merge them in? being able to do that is a big
-    // advantage of doing the concat comptime
-    fn getShipPrefab(game: *Game, player_index: u2, pos: V) ShipPrefab {
+    fn createShip(game: *Game, entities: *Entities, player_index: u2, pos: V, input: Input) EntityHandle {
         const player = game.players[player_index];
-        var ship = switch (player.ship_progression[player.ship_progression_index]) {
-            .ranger => game.ranger_template,
-            .militia => game.militia_template,
+        return switch (player.ship_progression[player.ship_progression_index]) {
+            .ranger => game.createRanger(entities, player_index, pos, input),
+            .militia => game.createMilitia(entities, player_index, pos, input),
         };
-        ship.ship.player = player_index;
-        ship.rb.pos = pos;
-        return ship;
     }
 };
 
