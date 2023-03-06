@@ -16,13 +16,15 @@ const display_radius = display_height / 2.0;
 
 const ecs = @import("ecs.zig");
 // TODO(mason): some of these have shared behaviors we can factor out e.g. sprites, newtonian mechanics
+// TODO(mason): add debug text for frame rate, number of live entities, etc
 const Entities = ecs.Entities(.{
-    .projectile = Projectile,
+    .damage = Damage,
     .ship = Ship,
     .rb = RigidBody,
     .input = Input,
-    .particle = Particle,
+    .lifetime = Lifetime,
     .sprite = Sprite.Index,
+    .animation = Animation.Playback,
     .collider = Collider,
 });
 const EntityHandle = ecs.EntityHandle;
@@ -158,6 +160,7 @@ pub fn main() !void {
                 .rb = ship_template.rb,
                 .input = input,
                 .collider = ship_template.collider,
+                .animation = ship_template.animation,
             });
         }
     }
@@ -239,13 +242,22 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
     // Update ship animations
     {
-        var it = entities.iterator(.{.ship});
+        var it = entities.iterator(.{ .ship, .animation });
         while (it.next()) |entity| {
             const ship = entity.comps.ship;
+            const animation = entity.comps.animation;
             if (!ship.prev_input.forward and ship.input.forward) {
-                ship.setAnimation(ship.accel);
+                // TODO(mason): do initialziers that reference the thing they're being set on still
+                // need to be on separate lines? (this doesn't do that anymore either way)
+                animation.* = .{
+                    .index = ship.accel,
+                    .time_passed = 0,
+                };
             } else if (ship.prev_input.forward and !ship.input.forward) {
-                ship.setAnimation(ship.still);
+                animation.* = .{
+                    .index = ship.still,
+                    .time_passed = 0,
+                };
             }
             ship.prev_input = ship.input;
         }
@@ -325,9 +337,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
                     _ = entities.create(.{
-                        .particle = .{
-                            .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
-                            .duration = 2,
+                        .lifetime = .{
+                            .seconds = 2,
                         },
                         .rb = .{
                             .pos = shrapnel_center.plus(random_offset),
@@ -336,6 +347,11 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                             .radius = 32,
                             .density = 0.001,
+                        },
+                        .animation = .{
+                            .index = shrapnel_animation,
+                            .time_passed = 0,
+                            .destroys_entity = true,
                         },
                     });
                 }
@@ -368,19 +384,13 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
-    // Update projectiles
+    // Update entities that do damage
     {
-        // XXX: mason hard to keep the components straight, make shorter handles names and get rid of comps
-        var projectile_it = entities.iterator(.{ .projectile, .rb });
-        while (projectile_it.next()) |projectile_entity| {
-            const projectile = projectile_entity.comps.projectile;
-            const rb = projectile_entity.comps.rb;
-
-            projectile.duration -= delta_s;
-            if (projectile.duration <= 0) {
-                entities.remove(projectile_entity.handle);
-                continue;
-            }
+        // TODO(mason): hard to keep the components straight, make shorter handles names and get rid of comps
+        var damage_it = entities.iterator(.{ .damage, .rb });
+        while (damage_it.next()) |damage_entity| {
+            const damage = damage_entity.comps.damage;
+            const rb = damage_entity.comps.rb;
 
             {
                 var ship_it = entities.iterator(.{ .ship, .rb });
@@ -390,7 +400,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     if (ship_rb.pos.distanceSqrd(rb.pos) <
                         ship_rb.radius * ship_rb.radius + rb.radius * rb.radius)
                     {
-                        ship.hp -= projectile.damage;
+                        ship.hp -= damage.hp;
 
                         // spawn shrapnel here
                         const shrapnel_animation = game.shrapnel_animations[
@@ -399,9 +409,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                             .scaled(rb.vel.length() * 0.2);
                         _ = entities.create(.{
-                            .particle = .{
-                                .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
-                                .duration = 2,
+                            .lifetime = .{
+                                .seconds = 2,
                             },
                             .rb = .{
                                 .pos = ship_rb.pos,
@@ -411,9 +420,14 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                                 .radius = 32,
                                 .density = 0.001,
                             },
+                            .animation = .{
+                                .index = shrapnel_animation,
+                                .time_passed = 0,
+                                .destroys_entity = true,
+                            },
                         });
 
-                        entities.remove(projectile_entity.handle);
+                        entities.remove(damage_entity.handle);
                         continue;
                     }
                 }
@@ -434,9 +448,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             if (ship.hp <= 0) {
                 // spawn explosion here
                 _ = entities.create(.{
-                    .particle = .{
-                        .anim_playback = .{ .index = game.explosion_animation, .time_passed = 0 },
-                        .duration = 100,
+                    .lifetime = .{
+                        .seconds = 100,
                     },
                     .rb = .{
                         .pos = rb.pos,
@@ -445,6 +458,11 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         .rotation_vel = 0,
                         .radius = 32,
                         .density = 0.001,
+                    },
+                    .animation = .{
+                        .index = game.explosion_animation,
+                        .time_passed = 0,
+                        .destroys_entity = true,
                     },
                 });
                 // give player their next ship
@@ -461,6 +479,12 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 ship_template.rb.pos = new_pos;
                 ship.* = ship_template.ship;
                 rb.* = ship_template.rb;
+                // TODO(mason): now that i've separated stuff, it's easy to forget to replace one piece
+                // of the template. this caused a bug when i forgot to set animation. think about how
+                // to preven this in the future. also note that because of the lack of addComponent,
+                // I'm assuming these components already exist.
+                entities.getComponent(entity.handle, .collider).?.* = ship_template.collider;
+                entities.getComponent(entity.handle, .animation).?.* = ship_template.animation;
                 continue;
             }
 
@@ -483,9 +507,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 if (ship.input.fire and turret.cooldown <= 0) {
                     turret.cooldown = turret.cooldown_amount;
                     _ = entities.create(.{
-                        .projectile = .{
-                            .duration = turret.projectile_duration,
-                            .damage = turret.projectile_damage,
+                        .damage = .{
+                            .hp = turret.projectile_damage,
                         },
                         .rb = .{
                             .pos = rb.pos.plus(V.unit(rb.angle + turret.angle).scaled(turret.radius)),
@@ -502,19 +525,34 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .collision_damping = 1,
                             .layer = .projectile,
                         },
+                        .lifetime = .{
+                            .seconds = turret.projectile_lifetime,
+                        },
                     });
                 }
             }
         }
     }
 
-    // Update particles
+    // Update animations
     {
-        var it = entities.iterator(.{.particle});
+        var it = entities.iterator(.{.animation});
         while (it.next()) |entity| {
-            const particle = entity.comps.particle;
-            particle.duration -= delta_s;
-            if (particle.anim_playback.index == .none or particle.duration <= 0) {
+            const animation = entity.comps.animation;
+            if (animation.destroys_entity and entity.comps.animation.index == .none) {
+                entities.remove(entity.handle);
+                continue;
+            }
+        }
+    }
+
+    // Update lifetimes
+    {
+        var it = entities.iterator(.{.lifetime});
+        while (it.next()) |entity| {
+            const lifetime = entity.comps.lifetime;
+            lifetime.seconds -= delta_s;
+            if (lifetime.seconds <= 0) {
                 entities.remove(entity.handle);
                 continue;
             }
@@ -562,23 +600,34 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         ));
     }
 
-    // Draw ships
+    // Draw animations
     {
-        var it = entities.iterator(.{ .ship, .rb });
+        var it = entities.iterator(.{ .rb, .animation });
         while (it.next()) |entity| {
-            const ship = entity.comps.ship;
             const rb = entity.comps.rb;
-            const sprite = assets.animate(&ship.anim_playback, delta_s);
+            const animation = entity.comps.animation;
+            const frame = assets.animate(animation, delta_s);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
-                sprite.texture,
+                frame.sprite.texture,
                 null, // source rectangle
-                &sprite.toSdlRect(rb.pos),
-                // The ship asset images point up instead of to the right.
-                toDegrees(rb.angle + math.pi / 2.0),
+                &frame.sprite.toSdlRect(rb.pos),
+                toDegrees(rb.angle + frame.angle),
                 null, // center of angle
                 c.SDL_FLIP_NONE,
             ));
+        }
+    }
+
+    // Draw ship health bars
+    {
+        var it = entities.iterator(.{
+            .ship,
+            .rb,
+        });
+        while (it.next()) |entity| {
+            const ship = entity.comps.ship;
+            const rb = entity.comps.rb;
 
             // HP bar
             if (ship.hp < ship.max_hp) {
@@ -611,25 +660,6 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         while (it.next()) |entity| {
             const rb = entity.comps.rb;
             const sprite = assets.sprite(entity.comps.sprite.*);
-            sdlAssertZero(c.SDL_RenderCopyEx(
-                renderer,
-                sprite.texture,
-                null, // source rectangle
-                &sprite.toSdlRect(rb.pos),
-                toDegrees(rb.angle),
-                null, // center of rotation
-                c.SDL_FLIP_NONE,
-            ));
-        }
-    }
-
-    // Draw particles
-    {
-        var it = entities.iterator(.{ .particle, .rb });
-        while (it.next()) |entity| {
-            const particle = entity.comps.particle;
-            const rb = entity.comps.rb;
-            const sprite = assets.animate(&particle.anim_playback, delta_s);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
@@ -724,18 +754,12 @@ const Input = struct {
     }
 };
 
-const Projectile = struct {
-    /// seconds
-    duration: f32,
-    /// Amount of HP the projectile removes on hit.
-    damage: f32,
+const Damage = struct {
+    hp: f32,
 };
 
-// XXX: pull out playback too, make this something that's just duration or whatever
-const Particle = struct {
-    anim_playback: Animation.Playback,
-    /// seconds
-    duration: f32,
+const Lifetime = struct {
+    seconds: f32,
 };
 
 const Animation = struct {
@@ -748,6 +772,7 @@ const Animation = struct {
     next: Index,
     /// frames per second
     fps: f32,
+    angle: f32 = 0.0,
 
     /// Index into animations array.
     const Index = enum(u32) {
@@ -759,6 +784,7 @@ const Animation = struct {
         index: Index,
         /// number of seconds passed since Animation start.
         time_passed: f32,
+        destroys_entity: bool = false,
     };
 };
 
@@ -777,7 +803,7 @@ const Turret = struct {
     /// pixels per second
     projectile_speed: f32,
     /// seconds
-    projectile_duration: f32,
+    projectile_lifetime: f32,
     /// Amount of HP the projectile removes upon landing a hit.
     projectile_damage: f32,
 };
@@ -898,7 +924,6 @@ const Collider = struct {
 const Ship = struct {
     still: Animation.Index,
     accel: Animation.Index,
-    anim_playback: Animation.Playback,
 
     /// radians per second
     turn_speed: f32,
@@ -927,13 +952,6 @@ const Ship = struct {
         left: bool = false,
         right: bool = false,
     };
-
-    fn setAnimation(ship: *Ship, animation: Animation.Index) void {
-        ship.anim_playback = .{
-            .index = animation,
-            .time_passed = 0,
-        };
-    }
 };
 
 const Sprite = struct {
@@ -965,6 +983,7 @@ const ShipTemplate = struct {
     ship: Ship,
     rb: RigidBody,
     collider: Collider,
+    animation: Animation.Playback,
 };
 
 const Game = struct {
@@ -1016,9 +1035,9 @@ const Game = struct {
         }
 
         const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
-            try assets.addAnimation(&.{shrapnel_sprites[0]}, null, 30),
-            try assets.addAnimation(&.{shrapnel_sprites[1]}, null, 30),
-            try assets.addAnimation(&.{shrapnel_sprites[2]}, null, 30),
+            try assets.addAnimation(&.{shrapnel_sprites[0]}, null, 30, 0.0),
+            try assets.addAnimation(&.{shrapnel_sprites[1]}, null, 30, 0.0),
+            try assets.addAnimation(&.{shrapnel_sprites[2]}, null, 30, 0.0),
         };
 
         const ranger_sprites = [_]Sprite.Index{
@@ -1029,15 +1048,15 @@ const Game = struct {
         };
         const ranger_still = try assets.addAnimation(&.{
             ranger_sprites[0],
-        }, null, 30);
+        }, null, 30, math.pi / 2.0);
         const ranger_steady_thrust = try assets.addAnimation(&.{
             ranger_sprites[2],
             ranger_sprites[3],
-        }, null, 10);
+        }, null, 10, math.pi / 2.0);
         const ranger_accel = try assets.addAnimation(&.{
             ranger_sprites[0],
             ranger_sprites[1],
-        }, ranger_steady_thrust, 10);
+        }, ranger_steady_thrust, 10, math.pi / 2.0);
 
         const militia_sprites = [_]Sprite.Index{
             try assets.loadSprite("img/ship/militia0.png"),
@@ -1047,15 +1066,15 @@ const Game = struct {
         };
         const militia_still = try assets.addAnimation(&.{
             militia_sprites[0],
-        }, null, 30);
+        }, null, 30, math.pi / 2.0);
         const militia_steady_thrust = try assets.addAnimation(&.{
             militia_sprites[2],
             militia_sprites[3],
-        }, null, 10);
+        }, null, 10, math.pi / 2.0);
         const militia_accel = try assets.addAnimation(&.{
             militia_sprites[0],
             militia_sprites[1],
-        }, militia_steady_thrust, 10);
+        }, militia_steady_thrust, 10, math.pi / 2.0);
 
         const explosion_animation = try assets.addAnimation(&.{
             try assets.loadSprite("img/explosion/01.png"),
@@ -1070,7 +1089,7 @@ const Game = struct {
             try assets.loadSprite("img/explosion/10.png"),
             try assets.loadSprite("img/explosion/11.png"),
             try assets.loadSprite("img/explosion/12.png"),
-        }, .none, 30);
+        }, .none, 30, 0.0);
 
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
@@ -1081,7 +1100,6 @@ const Game = struct {
                 .prev_input = .{},
                 .still = ranger_still,
                 .accel = ranger_accel,
-                .anim_playback = .{ .index = ranger_still, .time_passed = 0 },
                 .turn_speed = math.pi * 1.1,
                 .thrust = 150,
                 .turret = .{
@@ -1090,7 +1108,7 @@ const Game = struct {
                     .cooldown = 0,
                     .cooldown_amount = 0.2,
                     .projectile_speed = 500,
-                    .projectile_duration = 0.5,
+                    .projectile_lifetime = 0.5,
                     .projectile_damage = 10,
                 },
                 .hp = 80,
@@ -1109,6 +1127,10 @@ const Game = struct {
                 .collision_damping = 0.4,
                 .layer = .vehicle,
             },
+            .animation = .{
+                .index = ranger_still,
+                .time_passed = 0,
+            },
         };
 
         const militia_template: ShipTemplate = .{
@@ -1118,7 +1140,6 @@ const Game = struct {
                 .prev_input = .{},
                 .still = militia_still,
                 .accel = militia_accel,
-                .anim_playback = .{ .index = militia_still, .time_passed = 0 },
                 .turn_speed = math.pi * 1.2,
                 .thrust = 300,
                 .turret = null,
@@ -1137,6 +1158,10 @@ const Game = struct {
             .collider = .{
                 .collision_damping = 0.4,
                 .layer = .vehicle,
+            },
+            .animation = .{
+                .index = militia_still,
+                .time_passed = 0,
             },
         };
 
@@ -1186,6 +1211,11 @@ const Assets = struct {
     frames: std.ArrayListUnmanaged(Sprite.Index),
     animations: std.ArrayListUnmanaged(Animation),
 
+    const Frame = struct {
+        sprite: Sprite,
+        angle: f32,
+    };
+
     fn init(gpa: Allocator, renderer: *c.SDL_Renderer) !Assets {
         const self_exe_dir_path = try std.fs.selfExeDirPathAlloc(gpa);
         defer gpa.free(self_exe_dir_path);
@@ -1215,7 +1245,7 @@ const Assets = struct {
         a.* = undefined;
     }
 
-    fn animate(a: Assets, anim: *Animation.Playback, delta_s: f32) Sprite {
+    fn animate(a: Assets, anim: *Animation.Playback, delta_s: f32) Frame {
         const animation = a.animations.items[@enumToInt(anim.index)];
         const frame_index = @floatToInt(u32, @floor(anim.time_passed * animation.fps));
         const frame = animation.start + frame_index;
@@ -1227,7 +1257,10 @@ const Assets = struct {
             anim.time_passed -= end_time;
             anim.index = animation.next;
         }
-        return frame_sprite;
+        return .{
+            .sprite = frame_sprite,
+            .angle = animation.angle,
+        };
     }
 
     /// null next_animation means to loop.
@@ -1236,6 +1269,7 @@ const Assets = struct {
         frames: []const Sprite.Index,
         next_animation: ?Animation.Index,
         fps: f32,
+        angle: f32,
     ) !Animation.Index {
         try a.frames.appendSlice(a.gpa, frames);
         const result = @intToEnum(Animation.Index, a.animations.items.len);
@@ -1244,6 +1278,7 @@ const Assets = struct {
             .len = @intCast(u32, frames.len),
             .next = next_animation orelse result,
             .fps = fps,
+            .angle = angle,
         });
         return result;
     }
