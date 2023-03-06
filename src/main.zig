@@ -27,6 +27,7 @@ const Entities = ecs.Entities(.{
     .sprite = Sprite.Index,
     .animation = Animation.Playback,
     .collider = Collider,
+    .turret = Turret,
 });
 const Prefab = Entities.Prefab;
 const EntityHandle = ecs.EntityHandle;
@@ -481,35 +482,42 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const thrust_input = @intToFloat(f32, @boolToInt(input.isAction(.forward, .positive, .active)));
             const thrust = V.unit(rb.angle);
             rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
+        }
+    }
 
-            if (ship.turret) |*turret| {
-                turret.cooldown -= delta_s;
-                if (input.isAction(.fire, .positive, .active) and turret.cooldown <= 0) {
-                    turret.cooldown = turret.cooldown_amount;
-                    _ = entities.create(.{
-                        .damage = .{
-                            .hp = turret.projectile_damage,
-                        },
-                        .rb = .{
-                            .pos = rb.pos.plus(V.unit(rb.angle + turret.angle).scaled(turret.radius)),
-                            .vel = V.unit(rb.angle).scaled(turret.projectile_speed).plus(rb.vel),
-                            .angle = 0,
-                            .rotation_vel = 0,
-                            .radius = 2,
-                            // TODO(mason): modify math to accept 0 and inf mass
-                            .density = 0.001,
-                        },
-                        .sprite = game.bullet_small,
-                        .collider = .{
-                            // Lasers gain energy when bouncing off of rocks
-                            .collision_damping = 1,
-                            .layer = .projectile,
-                        },
-                        .lifetime = .{
-                            .seconds = turret.projectile_lifetime,
-                        },
-                    });
-                }
+    // Update turrets
+    {
+        var it = entities.iterator(.{ .turret, .input, .rb });
+        while (it.next()) |entity| {
+            var turret = entity.comps.turret;
+            var input = entity.comps.input;
+            var rb = entity.comps.rb;
+            turret.cooldown -= delta_s;
+            if (input.isAction(.fire, .positive, .active) and turret.cooldown <= 0) {
+                turret.cooldown = turret.cooldown_amount;
+                _ = entities.create(.{
+                    .damage = .{
+                        .hp = turret.projectile_damage,
+                    },
+                    .rb = .{
+                        .pos = rb.pos.plus(V.unit(rb.angle + turret.angle).scaled(turret.radius)),
+                        .vel = V.unit(rb.angle).scaled(turret.projectile_speed).plus(rb.vel),
+                        .angle = 0,
+                        .rotation_vel = 0,
+                        .radius = 2,
+                        // TODO(mason): modify math to accept 0 and inf mass
+                        .density = 0.001,
+                    },
+                    .sprite = game.bullet_small,
+                    .collider = .{
+                        // Lasers gain energy when bouncing off of rocks
+                        .collision_damping = 1,
+                        .layer = .projectile,
+                    },
+                    .lifetime = .{
+                        .seconds = turret.projectile_lifetime,
+                    },
+                });
             }
         }
     }
@@ -949,8 +957,6 @@ const Ship = struct {
     /// pixels per second squared
     thrust: f32,
 
-    turret: ?Turret,
-
     hp: f32,
     max_hp: f32,
 
@@ -1027,15 +1033,6 @@ const Game = struct {
                 .accel = self.ranger_accel,
                 .turn_speed = math.pi * 1.1,
                 .thrust = 150,
-                .turret = .{
-                    .radius = self.ranger_radius,
-                    .angle = 0,
-                    .cooldown = 0,
-                    .cooldown_amount = 0.2,
-                    .projectile_speed = 500,
-                    .projectile_lifetime = 0.5,
-                    .projectile_damage = 10,
-                },
                 .hp = 80,
                 .max_hp = 80,
                 .player = player_index,
@@ -1056,6 +1053,15 @@ const Game = struct {
                 .index = self.ranger_still,
                 .time_passed = 0,
             },
+            .turret = .{
+                .radius = self.ranger_radius,
+                .angle = 0,
+                .cooldown = 0,
+                .cooldown_amount = 0.2,
+                .projectile_speed = 500,
+                .projectile_lifetime = 0.5,
+                .projectile_damage = 10,
+            },
             .input = input,
         });
     }
@@ -1068,7 +1074,6 @@ const Game = struct {
                 .accel = self.militia_accel,
                 .turn_speed = math.pi * 1.2,
                 .thrust = 300,
-                .turret = null,
                 .hp = 80,
                 .max_hp = 80,
                 .player = player_index,
