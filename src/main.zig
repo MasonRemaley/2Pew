@@ -16,7 +16,6 @@ const display_center: V = .{
 const display_radius = display_height / 2.0;
 
 const ecs = @import("ecs.zig");
-// TODO(mason): some of these have shared behaviors we can factor out e.g. sprites, newtonian mechanics
 // TODO(mason): add debug text for frame rate, number of live entities, etc
 const Entities = ecs.Entities(.{
     .damage = Damage,
@@ -28,8 +27,8 @@ const Entities = ecs.Entities(.{
     .animation = Animation.Playback,
     .collider = Collider,
     .turret = Turret,
+    .health = Health,
 });
-const Prefab = Entities.Prefab;
 const EntityHandle = ecs.EntityHandle;
 
 pub fn main() !void {
@@ -178,6 +177,10 @@ pub fn main() !void {
                 .collision_damping = 1,
                 .layer = .hazard,
             },
+            .health = .{
+                .hp = 160,
+                .max_hp = 160,
+            },
         });
     }
 
@@ -285,32 +288,32 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 const other_mass = other.rb.mass();
                 j /= 1.0 / my_mass + 1.0 / other_mass;
                 // apply impulse
-                const impulse = normal.scaled(j);
-                const ship_impulse = impulse.scaled(1 / my_mass);
-                const other_impulse = impulse.scaled(1 / other_mass);
-                rb.vel.sub(ship_impulse);
+                const impulse_mag = normal.scaled(j);
+                const impulse = impulse_mag.scaled(1 / my_mass);
+                const other_impulse = impulse_mag.scaled(1 / other_mass);
+                rb.vel.sub(impulse);
                 other.rb.vel.add(other_impulse);
 
                 // Deal HP damage relative to the change in velocity.
                 // A very gentle bonk is something like impulse 20, while a
                 // very hard bonk is around 300.
                 // The basic ranger ship has 80 HP.
-                var total_ship_damage: f32 = 0;
+                var total_damage: f32 = 0;
 
-                if (entities.getComponent(entity.handle, .ship)) |ship| {
-                    const ship_damage = remap(20, 300, 0, 80, ship_impulse.length());
-                    ship.hp -= ship_damage;
-                    total_ship_damage += ship_damage;
+                if (entities.getComponent(entity.handle, .health)) |health| {
+                    const damage = remap(20, 300, 0, 80, impulse.length());
+                    health.hp -= damage;
+                    total_damage += damage;
                 }
-                if (entities.getComponent(other_entity.handle, .ship)) |ship| {
-                    const other_damage = remap(20, 300, 0, 80, other_impulse.length());
-                    ship.hp -= other_damage;
-                    total_ship_damage += other_damage;
+                if (entities.getComponent(other_entity.handle, .health)) |health| {
+                    const damage = remap(20, 300, 0, 80, other_impulse.length());
+                    health.hp -= damage;
+                    total_damage += damage;
                 }
 
                 const shrapnel_amt = @floatToInt(
                     u32,
-                    @floor(remap_clamped(0, 100, 0, 30, total_ship_damage)),
+                    @floor(remap_clamped(0, 100, 0, 30, total_damage)),
                 );
                 const shrapnel_center = rb.pos.plus(other.rb.pos).scaled(0.5);
                 const avg_vel = rb.vel.plus(other.rb.vel).scaled(0.5);
@@ -360,9 +363,9 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 const gravity = 400;
                 const gravity_v = display_center.minus(rb.pos).normalized().scaled(gravity * delta_s);
                 rb.vel.add(gravity_v);
-                if (entities.getComponent(entity.handle, .ship)) |ship| {
+                if (entities.getComponent(entity.handle, .health)) |health| {
                     // punishment for leaving the circle
-                    ship.hp -= delta_s * 4;
+                    health.hp -= delta_s * 4;
                 }
             }
 
@@ -382,14 +385,14 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const rb = damage_entity.comps.rb;
 
             {
-                var ship_it = entities.iterator(.{ .ship, .rb });
-                while (ship_it.next()) |ship_entity| {
-                    const ship = ship_entity.comps.ship;
-                    const ship_rb = ship_entity.comps.rb;
+                var ship_it = entities.iterator(.{ .health, .rb });
+                while (ship_it.next()) |damageable_entity| {
+                    const health = damageable_entity.comps.health;
+                    const ship_rb = damageable_entity.comps.rb;
                     if (ship_rb.pos.distanceSqrd(rb.pos) <
                         ship_rb.radius * ship_rb.radius + rb.radius * rb.radius)
                     {
-                        ship.hp -= damage.hp;
+                        health.hp -= damage.hp;
 
                         // spawn shrapnel here
                         const shrapnel_animation = game.shrapnel_animations[
@@ -426,17 +429,14 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
-    // Update ships
+    // TODO(mason): take velocity from before impact? i may have messed that up somehow
+    // Explode things that reach 0 hp
     {
-        var it = entities.iterator(.{ .ship, .rb, .input });
+        var it = entities.iterator(.{ .health, .rb });
         while (it.next()) |entity| {
-            const ship = entity.comps.ship;
+            const health = entity.comps.health;
             const rb = entity.comps.rb;
-            const input = entity.comps.input;
-
-            // explode ships that reach 0 hp
-            if (ship.hp <= 0) {
-                // TODO: take velocity from before impact?
+            if (health.hp <= 0) {
                 // spawn explosion here
                 _ = entities.create(.{
                     .lifetime = .{
@@ -456,22 +456,41 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         .destroys_entity = true,
                     },
                 });
-                // give player their next ship
-                const player = &game.players[ship.player];
-                player.ship_progression_index += 1;
-                if (player.ship_progression_index >= player.ship_progression.len) {
-                    // this player would lose the game, but instead let's just
-                    // give them another ship
-                    player.ship_progression_index = 0;
-                }
-                const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
 
-                // Create a new ship from this ship's input, and then destroy it!
-                _ = game.createShip(entities, ship.player, new_pos, input.*);
+                // If this is a playe controlled ship, spawn a new ship for the player using this
+                // ship's input before we destroy it!
+                if (entities.getComponent(entity.handle, .ship)) |ship| {
+                    if (entities.getComponent(entity.handle, .input)) |input| {
+                        // give player their next ship
+                        const player = &game.players[ship.player];
+                        player.ship_progression_index += 1;
+                        if (player.ship_progression_index >= player.ship_progression.len) {
+                            // this player would lose the game, but instead let's just
+                            // give them another ship
+                            player.ship_progression_index = 0;
+                        }
+                        const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                        const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
+
+                        // Create a new ship from this ship's input, and then destroy it!
+                        _ = game.createShip(entities, ship.player, new_pos, input.*);
+                    }
+                }
+
+                // Destroy the entity
                 entities.remove(entity.handle);
                 continue;
             }
+        }
+    }
+
+    // Update ships
+    {
+        var it = entities.iterator(.{ .ship, .rb, .input });
+        while (it.next()) |entity| {
+            const ship = entity.comps.ship;
+            const rb = entity.comps.rb;
+            const input = entity.comps.input;
 
             rb.angle = @mod(
                 rb.angle + input.getAxis(.turn) * ship.turn_speed * delta_s,
@@ -607,18 +626,15 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         }
     }
 
-    // Draw ship health bars
+    // Draw health bars
     {
-        var it = entities.iterator(.{
-            .ship,
-            .rb,
-        });
+        var it = entities.iterator(.{ .health, .rb });
         while (it.next()) |entity| {
-            const ship = entity.comps.ship;
+            const health = entity.comps.health;
             const rb = entity.comps.rb;
 
             // HP bar
-            if (ship.hp < ship.max_hp) {
+            if (health.hp < health.max_hp) {
                 const health_bar_size: V = .{ .x = 32, .y = 4 };
                 var start = rb.pos.minus(health_bar_size.scaled(0.5)).floored();
                 start.y -= rb.radius + health_bar_size.y;
@@ -627,7 +643,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
                     start.minus(.{ .x = 1, .y = 1 }),
                     health_bar_size.plus(.{ .x = 2, .y = 2 }),
                 )));
-                const hp_percent = ship.hp / ship.max_hp;
+                const hp_percent = health.hp / health.max_hp;
                 if (hp_percent > 0.45) {
                     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
                 } else {
@@ -948,6 +964,11 @@ const Collider = struct {
     layer: Layer,
 };
 
+const Health = struct {
+    hp: f32,
+    max_hp: f32,
+};
+
 const Ship = struct {
     still: Animation.Index,
     accel: Animation.Index,
@@ -956,9 +977,6 @@ const Ship = struct {
     turn_speed: f32,
     /// pixels per second squared
     thrust: f32,
-
-    hp: f32,
-    max_hp: f32,
 
     class: Class,
     player: u2,
@@ -1033,9 +1051,11 @@ const Game = struct {
                 .accel = self.ranger_accel,
                 .turn_speed = math.pi * 1.1,
                 .thrust = 150,
+                .player = player_index,
+            },
+            .health = .{
                 .hp = 80,
                 .max_hp = 80,
-                .player = player_index,
             },
             .rb = .{
                 .pos = pos,
@@ -1074,9 +1094,11 @@ const Game = struct {
                 .accel = self.militia_accel,
                 .turn_speed = math.pi * 1.2,
                 .thrust = 300,
+                .player = player_index,
+            },
+            .health = .{
                 .hp = 80,
                 .max_hp = 80,
-                .player = player_index,
             },
             .rb = .{
                 .pos = pos,
