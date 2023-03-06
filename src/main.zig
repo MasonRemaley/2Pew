@@ -16,7 +16,6 @@ const display_center: V = .{
 const display_radius = display_height / 2.0;
 
 const ecs = @import("ecs.zig");
-// TODO(mason): add debug text for frame rate, number of live entities, etc
 const Entities = ecs.Entities(.{
     .damage = Damage,
     .ship = Ship,
@@ -30,6 +29,10 @@ const Entities = ecs.Entities(.{
     .health = Health,
 });
 const EntityHandle = ecs.EntityHandle;
+
+// This turns off vsync and logs the frame times to the console. Even better would be debug text on
+// screen including this, the number of live entities, etc.
+const profile = false;
 
 pub fn main() !void {
     const gpa = std.heap.c_allocator;
@@ -64,7 +67,7 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyWindow(screen);
 
-    const renderer_flags: u32 = c.SDL_RENDERER_PRESENTVSYNC;
+    const renderer_flags: u32 = if (profile) 0 else c.SDL_RENDERER_PRESENTVSYNC;
     const renderer: *c.SDL_Renderer = c.SDL_CreateRenderer(screen, -1, renderer_flags) orelse {
         panic("SDL_CreateRenderer failed: {s}\n", .{c.SDL_GetError()});
     };
@@ -205,6 +208,7 @@ pub fn main() !void {
         const max_frame_time = 1.0 / 30.0;
         var last_delta_s = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
         delta_s = lerp(delta_s, std.math.min(last_delta_s, max_frame_time), delta_rwa_bias);
+        if (profile) std.debug.print("{d}ms\n", .{last_delta_s * 1000.0});
     }
 }
 
