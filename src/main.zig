@@ -170,7 +170,7 @@ pub fn main() !void {
             .rb = .{
                 .pos = display_center.plus(.{ .x = 0, .y = 300 }),
                 .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                .rotation = 0,
+                .angle = 0,
                 .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
                 .density = 0.10,
                 .layer = .hazard,
@@ -250,14 +250,12 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
-    // Update rbs
+    // Update collisions
     {
-        // XXX: apply some of this even without a collider
         var it = entities.iterator(.{ .rb, .collider });
         while (it.next()) |entity| {
             const rb = entity.comps.rb;
             const collider = entity.comps.collider;
-            rb.pos.add(rb.vel.scaled(delta_s));
 
             // bonk
             var other_it = it;
@@ -281,8 +279,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 const e = @min(collider.collision_damping, other.collider.collision_damping);
                 // calculate impulse scalar
                 var j: f32 = -(1.0 + e) * vel_along_normal;
-                const my_mass = mass(rb.density, rb.radius);
-                const other_mass = mass(other.rb.density, other.rb.radius);
+                const my_mass = rb.mass();
+                const other_mass = rb.mass();
                 j /= 1.0 / my_mass + 1.0 / other_mass;
                 // apply impulse
                 const impulse = normal.scaled(j);
@@ -329,14 +327,23 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
                         .pos = shrapnel_center.plus(random_offset),
                         .vel = avg_vel.plus(random_vel),
-                        .rotation = 2 * math.pi * std.crypto.random.float(f32),
+                        .angle = 2 * math.pi * std.crypto.random.float(f32),
                         .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                         .duration = 2,
                     } });
                 }
             }
+        }
+    }
 
-            // gravity if the ship is outside the ring
+    // Update rbs
+    {
+        var it = entities.iterator(.{.rb});
+        while (it.next()) |entity| {
+            const rb = entity.comps.rb;
+            rb.pos.add(rb.vel.scaled(delta_s));
+
+            // gravity if the rb is outside the ring
             if (rb.pos.distanceSqrd(display_center) > display_radius * display_radius) {
                 const gravity = 400;
                 const gravity_v = display_center.minus(rb.pos).normalized().scaled(gravity * delta_s);
@@ -383,7 +390,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .anim_playback = .{ .index = shrapnel_animation, .time_passed = 0 },
                             .pos = ship_rb.pos,
                             .vel = ship_rb.vel.plus(rb.vel.scaled(0.2)).plus(random_vector),
-                            .rotation = 2 * math.pi * std.crypto.random.float(f32),
+                            .angle = 2 * math.pi * std.crypto.random.float(f32),
                             .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                             .duration = 2,
                         } });
@@ -394,7 +401,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 }
             }
 
-            rb.rotation = rb.vel.angle() + math.pi / 2.0;
+            rb.angle = rb.vel.angle() + math.pi / 2.0;
         }
     }
 
@@ -412,7 +419,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     .anim_playback = .{ .index = game.explosion_animation, .time_passed = 0 },
                     .pos = rb.pos,
                     .vel = rb.vel,
-                    .rotation = 0,
+                    .angle = 0,
                     .rotation_vel = 0,
                     .duration = 100,
                 } });
@@ -437,14 +444,14 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const turn_input = // convert to 1.0 or -1.0
                 @intToFloat(f32, @boolToInt(ship.input.right)) -
                 @intToFloat(f32, @boolToInt(ship.input.left));
-            rb.rotation = @mod(
-                rb.rotation + turn_input * ship.turn_speed * delta_s,
+            rb.angle = @mod(
+                rb.angle + turn_input * ship.turn_speed * delta_s,
                 2 * math.pi,
             );
 
             // convert to 1.0 or 0.0
             const thrust_input = @intToFloat(f32, @boolToInt(ship.input.forward));
-            const thrust = V.unit(rb.rotation);
+            const thrust = V.unit(rb.angle);
             rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
 
             if (ship.turret) |*turret| {
@@ -457,10 +464,9 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .damage = turret.projectile_damage,
                         },
                         .rb = .{
-                            .pos = rb.pos.plus(V.unit(rb.rotation + turret.angle).scaled(turret.radius)),
-                            .vel = V.unit(rb.rotation).scaled(turret.projectile_speed).plus(rb.vel),
-                            // XXX: rename to angle
-                            .rotation = 0,
+                            .pos = rb.pos.plus(V.unit(rb.angle + turret.angle).scaled(turret.radius)),
+                            .vel = V.unit(rb.angle).scaled(turret.projectile_speed).plus(rb.vel),
+                            .angle = 0,
                             .radius = 2,
                             // TODO(mason): modify math to accept 0 and inf mass
                             .density = 0.001,
@@ -487,8 +493,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 continue;
             }
             particle.pos.add(particle.vel.scaled(delta_s));
-            particle.rotation = @mod(
-                particle.rotation + particle.rotation_vel * delta_s,
+            particle.angle = @mod(
+                particle.angle + particle.rotation_vel * delta_s,
                 2 * math.pi,
             );
         }
@@ -548,8 +554,8 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
                 null, // source rectangle
                 &sprite.toSdlRect(rb.pos),
                 // The ship asset images point up instead of to the right.
-                toDegrees(rb.rotation + math.pi / 2.0),
-                null, // center of rotation
+                toDegrees(rb.angle + math.pi / 2.0),
+                null, // center of angle
                 c.SDL_FLIP_NONE,
             ));
 
@@ -589,7 +595,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
                 sprite.texture,
                 null, // source rectangle
                 &sprite.toSdlRect(rb.pos),
-                toDegrees(rb.rotation),
+                toDegrees(rb.angle),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -607,7 +613,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
                 sprite.texture,
                 null, // source rectangle
                 &sprite.toSdlRect(particle.pos),
-                toDegrees(particle.rotation),
+                toDegrees(particle.angle),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -712,7 +718,7 @@ const Particle = struct {
     /// pixels per second
     vel: V,
     /// radians
-    rotation: f32,
+    angle: f32,
     /// radians per second
     rotation_vel: f32,
     /// seconds
@@ -854,13 +860,19 @@ const RigidBody = struct {
         break :collides m;
     };
 
+    fn mass(self: RigidBody) f32 {
+        return self.density * math.pi * self.radius * self.radius;
+    }
+
     /// pixels
     pos: V,
     /// pixels per second
     vel: V,
     /// radians
-    rotation: f32,
+    angle: f32,
     radius: f32,
+    // TODO(mason): why density and not inverse mass? probably a good reason i just wanna understand
+    // gotta look at how it's used.
     density: f32,
     layer: Layer,
 };
@@ -1074,7 +1086,7 @@ const Game = struct {
             .rb = .{
                 .pos = .{ .x = 0, .y = 0 },
                 .vel = .{ .x = 0, .y = 0 },
-                .rotation = -math.pi / 2.0,
+                .angle = -math.pi / 2.0,
                 .radius = ranger_radius,
                 .density = 0.02,
                 .layer = .vehicle,
@@ -1102,7 +1114,7 @@ const Game = struct {
             .rb = .{
                 .pos = .{ .x = 0, .y = 0 },
                 .vel = .{ .x = 0, .y = 0 },
-                .rotation = -math.pi / 2.0,
+                .angle = -math.pi / 2.0,
                 .radius = militia_radius,
                 .density = 0.02,
                 .layer = .vehicle,
@@ -1339,12 +1351,6 @@ fn remap_clamped(
     value: f32,
 ) f32 {
     return lerp(start_out, end_out, ilerp_clamped(start_in, end_in, value));
-}
-
-// XXX: make method on rb? would need to move radius back there but that's fine. i want gravity to
-// be able to affect particles so wanna keep mass working without colliders!
-fn mass(density: f32, radius: f32) f32 {
-    return density * math.pi * radius * radius;
 }
 
 test {
