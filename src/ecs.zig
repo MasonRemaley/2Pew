@@ -1010,7 +1010,6 @@ test "minimal iter test" {
     }
 }
 
-// XXX: no longer need concat prefabs? still haven't solved undefined issue though
 test "prefabs" {
     var allocator = std.heap.page_allocator;
 

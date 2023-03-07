@@ -170,7 +170,7 @@ pub fn main() !void {
     {
         // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
         // process damage first or do it as part of collision detection!
-        // XXX: could always take prefabs and get better errors, if they get optimized out properly?
+        // maybe this is why health bars sometimes seem to not show up?
         const speed = 100 + std.crypto.random.float(f32) * 400;
         const start = entities.create(.{
             .sprite = game.rock_sprite,
@@ -183,9 +183,7 @@ pub fn main() !void {
                 .density = 0.10,
             },
             .collider = .{
-                // .collision_damping = 1,
-                // XXX: ...
-                .collision_damping = 0.1,
+                .collision_damping = 1,
                 .layer = .hazard,
             },
             // .health = .{
@@ -205,9 +203,7 @@ pub fn main() !void {
                 .density = 0.10,
             },
             .collider = .{
-                // .collision_damping = 1,
-                // XXX: ...
-                .collision_damping = 0.1,
+                .collision_damping = 1,
                 .layer = .hazard,
             },
             // .health = .{
@@ -437,20 +433,16 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 continue;
             };
 
-            // XXX: one of the ships doesn't have health now?? instead of dying health vanished..?
-            // XXX: nicer add/sub when using functions? don't want nesting or new vars all the time--
-            // having it always return gets us that
-            var delta = end.pos;
-            delta.sub(start.pos);
+            var delta = end.pos.minus(start.pos);
             const dir = delta.normalized();
 
             const x = delta.length() - spring.length;
             const spring_force = spring.k * x;
 
             const relative_vel = end.vel.dot(dir) - start.vel.dot(dir);
-            const start_b = spring.damping * @sqrt(4.0 * start.mass() * spring.k);
+            const start_b = @sqrt(spring.damping * 4.0 * start.mass() * spring.k);
             const start_damping_force = start_b * relative_vel;
-            const end_b = spring.damping * @sqrt(4.0 * end.mass() * spring.k);
+            const end_b = @sqrt(spring.damping * 4.0 * end.mass() * spring.k);
             const end_damping_force = end_b * relative_vel;
 
             const start_impulse = (start_damping_force + spring_force) * delta_s;
@@ -767,14 +759,13 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
             var spring = entity.comps.spring;
             var start = (entities.getComponent(spring.start, .rb) orelse continue).pos;
             var end = (entities.getComponent(spring.end, .rb) orelse continue).pos;
-            // XXX: rounding when positive/negative?
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,
-                @floatToInt(c_int, start.x),
-                @floatToInt(c_int, start.y),
-                @floatToInt(c_int, end.x),
-                @floatToInt(c_int, end.y),
+                @floatToInt(c_int, @floor(start.x)),
+                @floatToInt(c_int, @floor(start.y)),
+                @floatToInt(c_int, @floor(end.x)),
+                @floatToInt(c_int, @floor(end.y)),
             ));
         }
     }
@@ -905,12 +896,18 @@ const Damage = struct {
     hp: f32,
 };
 
+/// A spring connecting to entities.
+///
+/// You can simulate a rod by choosing a high spring constant and setting the damping factor to 1.0.
 const Spring = struct {
     start: EntityHandle,
     end: EntityHandle,
-    // 1.0 is critically damped
+
+    /// 0.0 is no damping, 1.0 is critical damping (no bouncing), greater than 1.0 is overdamped.
     damping: f32,
+    /// The spring constant. The higher it is, the stronger the spring.
     k: f32,
+    /// The length of the spring.
     length: f32,
 };
 
