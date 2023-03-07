@@ -26,8 +26,10 @@ const Entities = ecs.Entities(.{
     .animation = Animation.Playback,
     .collider = Collider,
     .turret = Turret,
+    .grapple_gun = GrappleGun,
     .health = Health,
     .spring = Spring,
+    .hook = Hook,
 });
 const EntityHandle = ecs.EntityHandle;
 
@@ -166,59 +168,60 @@ pub fn main() !void {
         }
     }
 
-    // Create rock
-    {
-        // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
-        // process damage first or do it as part of collision detection!
-        // maybe this is why health bars sometimes seem to not show up?
-        const speed = 100 + std.crypto.random.float(f32) * 400;
-        const start = entities.create(.{
-            .sprite = game.rock_sprite,
-            .rb = .{
-                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
-                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                .angle = 0,
-                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
-                .density = 0.10,
-            },
-            .collider = .{
-                .collision_damping = 1,
-                .layer = .hazard,
-            },
-            // .health = .{
-            //     .hp = 160,
-            //     .max_hp = 160,
-            // },
-        });
+    // XXX: turned off for now
+    // // Create rock
+    // {
+    //     // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
+    //     // process damage first or do it as part of collision detection!
+    //     // maybe this is why health bars sometimes seem to not show up?
+    //     const speed = 100 + std.crypto.random.float(f32) * 400;
+    //     const start = entities.create(.{
+    //         .sprite = game.rock_sprite,
+    //         .rb = .{
+    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+    //             .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+    //             .angle = 0,
+    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
+    //             .density = 0.10,
+    //         },
+    //         .collider = .{
+    //             .collision_damping = 1,
+    //             .layer = .hazard,
+    //         },
+    //         // .health = .{
+    //         //     .hp = 160,
+    //         //     .max_hp = 160,
+    //         // },
+    //     });
 
-        const end = entities.create(.{
-            .sprite = game.rock_sprite,
-            .rb = .{
-                .pos = display_center.plus(.{ .x = 0, .y = -300 }),
-                .vel = .{ .x = 0.0, .y = 0.0 },
-                .angle = 0,
-                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
-                .density = 0.10,
-            },
-            .collider = .{
-                .collision_damping = 1,
-                .layer = .hazard,
-            },
-            // .health = .{
-            //     .hp = 160,
-            //     .max_hp = 160,
-            // },
-        });
-        _ = entities.create(.{ .spring = .{
-            .start = start,
-            .end = end,
-            .k = 100000.0,
-            .length = 500.0,
-            .damping = 1.0,
-        } });
-    }
+    //     const end = entities.create(.{
+    //         .sprite = game.rock_sprite,
+    //         .rb = .{
+    //             .pos = display_center.plus(.{ .x = 0, .y = -300 }),
+    //             .vel = .{ .x = 0.0, .y = 0.0 },
+    //             .angle = 0,
+    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
+    //             .density = 0.10,
+    //         },
+    //         .collider = .{
+    //             .collision_damping = 1,
+    //             .layer = .hazard,
+    //         },
+    //         // .health = .{
+    //         //     .hp = 160,
+    //         //     .max_hp = 160,
+    //         // },
+    //     });
+    //     _ = entities.create(.{ .spring = .{
+    //         .start = start,
+    //         .end = end,
+    //         .k = 100000.0,
+    //         .length = 500.0,
+    //         .damping = 1.0,
+    //     } });
+    // }
 
     // Create stars
     var stars: [150]Star = undefined;
@@ -383,6 +386,37 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .destroys_entity = true,
                         },
                     });
+                }
+
+                // XXX: adding/removing components here reorders things and could cause this to be run again...
+                // could do before collision, just check hooks against rbs and start over every time or something
+                // XXX: why does it fly away when attached? well partly it's that i set the distance to 0 when
+                // the current distance is greater...fixing that
+                {
+                    var hooked = false;
+                    const hook_spring = Spring{
+                        .start = entity.handle,
+                        .end = other_entity.handle,
+                        .k = 10000,
+                        .length = rb.pos.distance(other.rb.pos),
+                        .damping = 1.0,
+                    };
+                    if (entities.getComponent(entity.handle, .hook) != null) {
+                        // XXX: make a public changeArchetype function so that we can do this in a single
+                        // move, could also be named removeComponentsAddComponents or such, probably
+                        // should work even if overlap?
+                        entities.removeComponents(entity.handle, .{.hook});
+                        entities.addComponents(entity.handle, .{ .spring = hook_spring });
+                        hooked = true;
+                    }
+                    if (entities.getComponent(other_entity.handle, .hook) != null) {
+                        entities.removeComponents(other_entity.handle, .{.hook});
+                        entities.addComponents(other_entity.handle, .{ .spring = hook_spring });
+                        hooked = true;
+                    }
+                    if (hooked) {
+                        continue;
+                    }
                 }
             }
         }
@@ -617,6 +651,78 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         }
     }
 
+    // XXX: break out cooldown logic or no?
+    // Update grapple guns
+    {
+        var it = entities.iterator(.{ .grapple_gun, .input, .rb });
+        while (it.next()) |entity| {
+            var gg = entity.comps.grapple_gun;
+            var input = entity.comps.input;
+            var rb = entity.comps.rb;
+            gg.cooldown -= delta_s;
+            if (input.isAction(.fire, .positive, .activated) and gg.cooldown <= 0) {
+                gg.cooldown = gg.cooldown_amount;
+
+                // XXX: increase cooldown?
+                if (gg.live) |live| {
+                    for (live) |piece| {
+                        entities.remove(piece);
+                    }
+                    gg.live = null;
+                } else {
+                    // XXX: behave sensibly if the ship that fired it dies...right now crashes cause
+                    // one side of the spring has a bad generation
+                    // XXX: change sprite!
+                    // XXX: make lower mass or something lol
+                    // XXX: how do i make it connect? we could replace the hook with the thing it's connected
+                    // to when it hits, but, then it'd always connect to the center. so really we wanna
+                    // create a new spring that's very strong between the hook and the thing it's connected to.
+                    // this means we need to either add a new spring later, or allow for disconnected springs.
+                    // if we had addcomponent we could have a hook that dynamically creates a spring on contact,
+                    // that's what we actually want!
+                    // for now though lets just make the spring ends optional and make a note that this is a good
+                    // place for addcomponent.
+                    // XXX: then again, addcomponent is easy to add. we just create a new entity move over the components
+                    // then delete the old one, and remap the handle.
+                    const hook = entities.create(.{
+                        // XXX:
+                        // .damage = .{
+                        //     .hp = gg.projectile_damage,
+                        // },
+                        .rb = .{
+                            .pos = rb.pos.plus(V.unit(rb.angle + gg.angle).scaled(gg.radius)),
+                            .vel = V.unit(rb.angle).scaled(gg.projectile_speed).plus(rb.vel),
+                            .angle = 0,
+                            .rotation_vel = 0,
+                            .radius = 2,
+                            .density = 0.001,
+                        },
+                        .sprite = game.bullet_small,
+                        .collider = .{
+                            // Lasers gain energy when bouncing off of rocks
+                            .collision_damping = 1,
+                            .layer = .hook,
+                        },
+                        // XXX: ...
+                        // .lifetime = .{
+                        //     .seconds = gg.projectile_lifetime,
+                        // },
+                        .hook = .{},
+                    });
+                    const rod = entities.create(.{ .spring = .{
+                        .start = entity.handle,
+                        .end = hook,
+                        .k = 1000.0,
+                        .length = gg.radius,
+                        .damping = 1.0,
+                    } });
+
+                    gg.live = [_]EntityHandle{ hook, rod };
+                }
+            }
+        }
+    }
+
     // Update animations
     {
         var it = entities.iterator(.{.animation});
@@ -752,6 +858,9 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         }
     }
 
+    // TODO(mason): don't draw springs, have a themed grapple effect that is its own components and
+    // gets drawn from spring start to end. we may have other uses for springs that may not look the
+    // same!
     // Draw springs
     {
         var it = entities.iterator(.{.spring});
@@ -905,11 +1014,15 @@ const Spring = struct {
 
     /// 0.0 is no damping, 1.0 is critical damping (no bouncing), greater than 1.0 is overdamped.
     damping: f32,
-    /// The spring constant. The higher it is, the stronger the spring.
+    /// The spring constant. The higher it is, the stronger the spring. Very high will make it
+    /// rod-like, but setting it too high can cause numerical instability, with the instability
+    /// getting worse the lower the framerate.
     k: f32,
     /// The length of the spring.
     length: f32,
 };
+
+const Hook = struct {};
 
 const Lifetime = struct {
     seconds: f32,
@@ -959,6 +1072,32 @@ const Turret = struct {
     projectile_lifetime: f32,
     /// Amount of HP the projectile removes upon landing a hit.
     projectile_damage: f32,
+};
+
+const GrappleGun = struct {
+    /// Together with angle, this is the location of the gun from the center
+    /// of the containing object. Pixels.
+    radius: f32,
+    /// Together with radius, this is the location of the gun from the
+    /// center of the containing object. Radians.
+    angle: f32,
+    /// Seconds until ready. Less than or equal to 0 means ready.
+    cooldown: f32,
+    /// Seconds until ready. Cooldown is set to this after firing.
+    cooldown_amount: f32,
+
+    /// pixels per second
+    projectile_speed: f32,
+    // XXX: ...
+    // /// seconds
+    // projectile_lifetime: f32,
+
+    // XXX: if we add this back, need to make it not destroy itself on damage
+    // /// Amount of HP the projectile removes upon landing a hit.
+    // projectile_damage: f32,
+
+    /// The live chain of projectiles.
+    live: ?[2]EntityHandle = null,
 };
 
 // See https://www.anthropicstudios.com/2020/03/30/symmetric-matrices/
@@ -1063,10 +1202,13 @@ const Collider = struct {
         vehicle,
         hazard,
         projectile,
+        hook,
     };
     const interacts: SymmetricMatrix(Layer, bool) = interacts: {
         var m = SymmetricMatrix(Layer, bool).init(true);
         m.set(.vehicle, .projectile, false);
+        // XXX: why doesn't this cause an issue if not set?
+        m.set(.projectile, .hook, false);
         break :interacts m;
     };
 
@@ -1226,6 +1368,15 @@ const Game = struct {
                 .index = self.militia_still,
                 .time_passed = 0,
             },
+            .grapple_gun = .{
+                .radius = self.ranger_radius * 10.0,
+                .angle = 0,
+                .cooldown = 0,
+                .cooldown_amount = 0.2,
+                // XXX: when nonzero, causes the ship to move. wouldn't happen if there was equal
+                // kickback!
+                .projectile_speed = 0,
+            },
             .input = input,
         });
     }
@@ -1312,11 +1463,13 @@ const Game = struct {
             .players = .{
                 .{
                     .ship_progression_index = 0,
-                    .ship_progression = &.{ .ranger, .militia },
+                    // XXX: change order back
+                    .ship_progression = &.{ .militia, .ranger },
                 },
                 .{
                     .ship_progression_index = 0,
-                    .ship_progression = &.{ .ranger, .militia },
+                    // XXX: change order back
+                    .ship_progression = &.{ .militia, .ranger },
                 },
             },
             .shrapnel_animations = shrapnel_animations,
