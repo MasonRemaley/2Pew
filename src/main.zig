@@ -437,9 +437,9 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 continue;
             };
 
-            // XXX: one of the ships doesn't have health now??
-            // XXX: add spring damping?
-            // XXX: nicer add/sub when using functions?
+            // XXX: one of the ships doesn't have health now?? instead of dying health vanished..?
+            // XXX: nicer add/sub when using functions? don't want nesting or new vars all the time--
+            // having it always return gets us that
             var delta = end.pos;
             delta.sub(start.pos);
             const dir = delta.normalized();
@@ -447,12 +447,11 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const x = delta.length() - spring.length;
             const spring_force = spring.k * x;
 
-            // XXX: only damp along direction of motion right?
-            // XXX: wait does the way i'm doing this damp ALL motion instead of just spring motion? is that right?
+            const relative_vel = end.vel.dot(dir) - start.vel.dot(dir);
             const start_b = spring.damping * @sqrt(4.0 * start.mass() * spring.k);
-            const start_damping_force = -start_b * start.vel.dot(dir);
+            const start_damping_force = start_b * relative_vel;
             const end_b = spring.damping * @sqrt(4.0 * end.mass() * spring.k);
-            const end_damping_force = end_b * end.vel.dot(dir);
+            const end_damping_force = end_b * relative_vel;
 
             const start_impulse = (start_damping_force + spring_force) * delta_s;
             const end_impulse = (end_damping_force + spring_force) * delta_s;
