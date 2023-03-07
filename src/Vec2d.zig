@@ -15,18 +15,14 @@ pub fn scaled(v: Vec2d, scalar: f32) Vec2d {
     };
 }
 
-pub fn add(v: Vec2d, other: Vec2d) Vec2d {
-    return .{
-        .x = v.x + other.x,
-        .y = v.y + other.y,
-    };
+pub fn add(v: *Vec2d, other: Vec2d) void {
+    v.x += other.x;
+    v.y += other.y;
 }
 
-pub fn sub(v: Vec2d, other: Vec2d) Vec2d {
-    return .{
-        .x = v.x - other.x,
-        .y = v.y - other.y,
-    };
+pub fn sub(v: *Vec2d, other: Vec2d) void {
+    v.x -= other.x;
+    v.y -= other.y;
 }
 
 pub fn plus(v: Vec2d, other: Vec2d) Vec2d {
