@@ -332,8 +332,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 const impulse_mag = normal.scaled(j);
                 const impulse = impulse_mag.scaled(1 / my_mass);
                 const other_impulse = impulse_mag.scaled(1 / other_mass);
-                rb.vel.sub(impulse);
-                other.rb.vel.add(other_impulse);
+                rb.vel = rb.vel.sub(impulse);
+                other.rb.vel = other.rb.vel.add(other_impulse);
 
                 // Deal HP damage relative to the change in velocity.
                 // A very gentle bonk is something like impulse 20, while a
@@ -397,13 +397,13 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         var it = entities.iterator(.{.rb});
         while (it.next()) |entity| {
             const rb = entity.comps.rb;
-            rb.pos.add(rb.vel.scaled(delta_s));
+            rb.pos = rb.pos.add(rb.vel.scaled(delta_s));
 
             // gravity if the rb is outside the ring
             if (rb.pos.distanceSqrd(display_center) > display_radius * display_radius) {
                 const gravity = 400;
                 const gravity_v = display_center.minus(rb.pos).normalized().scaled(gravity * delta_s);
-                rb.vel.add(gravity_v);
+                rb.vel = rb.vel.add(gravity_v);
                 if (entities.getComponent(entity.handle, .health)) |health| {
                     // punishment for leaving the circle
                     health.hp -= delta_s * 4;
@@ -440,8 +440,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             // XXX: one of the ships doesn't have health now?? instead of dying health vanished..?
             // XXX: nicer add/sub when using functions? don't want nesting or new vars all the time--
             // having it always return gets us that
-            var delta = end.pos;
-            delta.sub(start.pos);
+            const delta = end.pos.sub(start.pos);
             const dir = delta.normalized();
 
             const x = delta.length() - spring.length;
@@ -455,8 +454,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
             const start_impulse = (start_damping_force + spring_force) * delta_s;
             const end_impulse = (end_damping_force + spring_force) * delta_s;
-            start.vel.add(dir.scaled(start_impulse / start.mass()));
-            end.vel.add(dir.scaled(-end_impulse / start.mass()));
+            start.vel = start.vel.add(dir.scaled(start_impulse / start.mass()));
+            end.vel = end.vel.add(dir.scaled(-end_impulse / start.mass()));
         }
     }
 
@@ -584,7 +583,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             // convert to 1.0 or 0.0
             const thrust_input = @intToFloat(f32, @boolToInt(input.isAction(.forward, .positive, .active)));
             const thrust = V.unit(rb.angle);
-            rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
+            rb.vel = rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
         }
     }
 
