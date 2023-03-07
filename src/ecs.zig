@@ -31,7 +31,7 @@ pub const EntityHandle = struct {
     generation: EntityGeneration,
 };
 
-// XXX: really it should just be called components but then can't use that anywhere else...
+// TODO: really it should just be called components but then can't use that anywhere else...
 pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
         // `Archetype` is a bit set with a bit for each component type.
@@ -430,7 +430,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 std.debug.panic("failed to add components: {}", .{err});
         }
 
-        // XXX: test errors
+        // TODO: test errors
         fn addComponentsChecked(self: *@This(), entity: EntityHandle, components: anytype) !void {
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
@@ -444,12 +444,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
             _ = try self.setArchetype(entity, components, .{}, false);
         }
 
+        // TODO: return a bool indicating if it was present or no? also we could have a faster
+        // hasComponents check for when you don't need the actual data?
         pub fn removeComponents(self: *@This(), entity: EntityHandle, components: anytype) void {
             self.removeComponentsChecked(entity, components) catch |err|
                 std.debug.panic("failed to remove components: {}", .{err});
         }
 
-        // XXX: test errors
+        // TODO: test errors
         fn removeComponentsChecked(self: *@This(), entity: EntityHandle, components: anytype) !void {
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
@@ -464,23 +466,19 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         // TODO: test the failure conditions here?
-        // XXX: ah problem: i really need to be able to pass in the /archetype/ i wanna set as an
-        // arg so that this can do remove too right? or i could pass in a list of components to remove
-        // that might be fine? it would be a list to add and a list to remove?
-        // XXX: early out if no change?
-        // XXX: comptime error if not all components set internally due to logic bug?
+        // TODO: early out if no change?
+        // TODO: make remove_components comptime?
         fn setArchetype(
             self: *@This(),
             entity: EntityHandle,
             add_components: anytype,
-            // XXX: should remove_components be comptime? then do i still need inline on the for?
             remove_components: anytype,
-            // XXX: either create entity, OR remove components, or neither should be specified.
-            // also can't have remove and add ovelap or will get compiler error
-            // can we make this cleaner? we could pass in like ?old_archetype and new one, and any
-            // new components?
             comptime create_entity: bool,
         ) !EntityHandle {
+            if (create_entity and remove_components.len > 0) {
+                @compileError("cannot remove components if the entity does not yet exist");
+            }
+
             const previous_archetype = if (create_entity)
                 Archetype.initEmpty()
             else
@@ -516,7 +514,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const archetype = previous_archetype.unionWith(components_added)
                 .differenceWith(components_removed);
 
-            // TODO: don't ignore errors in this function, and remember to use errdefer where appropriate
             // Get the page list for this archetype
             const page_list: *PageList = page: {
                 comptime assert(max_archetypes > 0);
@@ -561,7 +558,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     }
                 }
 
-                // XXX: dup code from Entities(...){...}.remove(...)
+                // TODO: dup code from Entities(...){...}.remove(...)
                 // Delete the old entity
                 const was_full = page.len == page.capacity;
                 old_page.remove(old_index_in_page);
@@ -880,6 +877,7 @@ test "safety" {
     }));
 }
 
+// TODO: test 0 sized components? (used in game seemingly correctly!)
 test "random data" {
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
@@ -965,7 +963,6 @@ test "random data" {
                     }
                 }
             },
-            // XXX: profile add/remove too
             .add => {
                 if (truth.items.len > 0) {
                     for (0..rnd.random().uintLessThan(usize, 10)) |_| {
@@ -1230,8 +1227,6 @@ test "minimal iter test" {
     }
 }
 
-// XXX: test addComponent and removeComponent with prefabs? only really add makes sense I guess?
-// XXX: test 0 sized components? (used in game seemingly correctly!)
 test "prefabs" {
     var allocator = std.heap.page_allocator;
 
@@ -1242,6 +1237,11 @@ test "prefabs" {
     var instance = entities.create(prefab);
 
     try std.testing.expect(entities.getComponent(instance, .x) == null);
+    try std.testing.expect(entities.getComponent(instance, .y).?.* == 10);
+    try std.testing.expect(entities.getComponent(instance, .z).?.* == 20);
+
+    entities.addComponents(instance, @TypeOf(entities).Prefab{ .x = 30 });
+    try std.testing.expect(entities.getComponent(instance, .x).?.* == 30);
     try std.testing.expect(entities.getComponent(instance, .y).?.* == 10);
     try std.testing.expect(entities.getComponent(instance, .z).?.* == 20);
 }

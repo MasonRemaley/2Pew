@@ -78,6 +78,18 @@ fn benchEcs() !void {
     }
     std.debug.print("\tgetComponent(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
+    // Removing components
+    for (all.items) |entity| {
+        entities.removeComponents(entity, .{.x});
+    }
+    std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
+    // Adding components
+    for (all.items, 0..) |entity, i| {
+        entities.addComponents(entity, .{ .x = i });
+    }
+    std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+
     // Remove all entities
     for (all.items) |entity| {
         entities.remove(entity);
@@ -131,6 +143,23 @@ pub fn perfArrayList() !void {
         std.debug.print("\titer(1): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
     }
 
+    // Remove components
+    {
+        for (array.items) |*item| {
+            item.x = null;
+        }
+        std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    // Add components
+    {
+        for (array.items, 0..) |*item, i| {
+            item.x = i;
+        }
+        std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    // Remove all
     {
         while (array.items.len > 0)
             _ = array.swapRemove(0);
@@ -181,6 +210,23 @@ pub fn benchMultiArrayList() !void {
         std.debug.print("\titer(1): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
     }
 
+    // Remove components
+    {
+        for (array.items(.x)) |*x| {
+            x.* = null;
+        }
+        std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    // Add components
+    {
+        for (array.items(.x), 0..) |*x, i| {
+            x.* = i;
+        }
+        std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
+    }
+
+    // Remove all
     {
         while (array.len > 0)
             _ = array.swapRemove(0);
