@@ -68,6 +68,10 @@ pub fn distanceSqrd(v: Vec2d, other: Vec2d) f32 {
     return dx * dx + dy * dy;
 }
 
+pub fn distance(v: Vec2d, other: Vec2d) f32 {
+    return @sqrt(v.distanceSqrd(other));
+}
+
 pub fn normalized(v: Vec2d) Vec2d {
     const len = v.length();
     if (len == 0) {

@@ -27,11 +27,14 @@ const Entities = ecs.Entities(.{
     .collider = Collider,
     .turret = Turret,
     .health = Health,
+    .spring = Spring,
 });
 const EntityHandle = ecs.EntityHandle;
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
-// screen including this, the number of live entities, etc.
+// screen including this, the number of live entities, etc. We also want warnings/errors to show up
+// on screen so we see them immediately when they happen (as well as being logged to the console and
+// to a file.)
 const profile = false;
 
 pub fn main() !void {
@@ -165,11 +168,14 @@ pub fn main() !void {
 
     // Create rock
     {
+        // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
+        // process damage first or do it as part of collision detection!
+        // XXX: could always take prefabs and get better errors, if they get optimized out properly?
         const speed = 100 + std.crypto.random.float(f32) * 400;
-        _ = entities.create(.{
+        const start = entities.create(.{
             .sprite = game.rock_sprite,
             .rb = .{
-                .pos = display_center.plus(.{ .x = 0, .y = 300 }),
+                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
                 .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
                 .angle = 0,
                 .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
@@ -177,14 +183,45 @@ pub fn main() !void {
                 .density = 0.10,
             },
             .collider = .{
-                .collision_damping = 1,
+                // .collision_damping = 1,
+                // XXX: ...
+                .collision_damping = 0.1,
                 .layer = .hazard,
             },
-            .health = .{
-                .hp = 160,
-                .max_hp = 160,
-            },
+            // .health = .{
+            //     .hp = 160,
+            //     .max_hp = 160,
+            // },
         });
+
+        const end = entities.create(.{
+            .sprite = game.rock_sprite,
+            .rb = .{
+                .pos = display_center.plus(.{ .x = 0, .y = -300 }),
+                .vel = .{ .x = 0.0, .y = 0.0 },
+                .angle = 0,
+                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
+                .density = 0.10,
+            },
+            .collider = .{
+                // .collision_damping = 1,
+                // XXX: ...
+                .collision_damping = 0.1,
+                .layer = .hazard,
+            },
+            // .health = .{
+            //     .hp = 160,
+            //     .max_hp = 160,
+            // },
+        });
+        _ = entities.create(.{ .spring = .{
+            .start = start,
+            .end = end,
+            .k = 100000.0,
+            .length = 500.0,
+            .damping = 1.0,
+        } });
     }
 
     // Create stars
@@ -377,6 +414,50 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 rb.angle + rb.rotation_vel * delta_s,
                 2 * math.pi,
             );
+        }
+    }
+
+    // Update springs
+    {
+        var it = entities.iterator(.{.spring});
+        while (it.next()) |entity| {
+            const spring = entity.comps.spring;
+
+            // XXX: crashes if either end has been deleted right now. we may wanna actually make
+            // checking if an entity is valid or not a feature if there's not a bette way to handle this?
+            var start = entities.getComponent(spring.start, .rb) orelse {
+                std.log.err("spring connections require rb, destroying spring entity", .{});
+                entities.remove(entity.handle);
+                continue;
+            };
+
+            var end = entities.getComponent(spring.end, .rb) orelse {
+                std.log.err("spring connections require rb, destroying spring entity", .{});
+                entities.remove(entity.handle);
+                continue;
+            };
+
+            // XXX: one of the ships doesn't have health now??
+            // XXX: add spring damping?
+            // XXX: nicer add/sub when using functions?
+            var delta = end.pos;
+            delta.sub(start.pos);
+            const dir = delta.normalized();
+
+            const x = delta.length() - spring.length;
+            const spring_force = spring.k * x;
+
+            // XXX: only damp along direction of motion right?
+            // XXX: wait does the way i'm doing this damp ALL motion instead of just spring motion? is that right?
+            const start_b = spring.damping * @sqrt(4.0 * start.mass() * spring.k);
+            const start_damping_force = -start_b * start.vel.dot(dir);
+            const end_b = spring.damping * @sqrt(4.0 * end.mass() * spring.k);
+            const end_damping_force = end_b * end.vel.dot(dir);
+
+            const start_impulse = (start_damping_force + spring_force) * delta_s;
+            const end_impulse = (end_damping_force + spring_force) * delta_s;
+            start.vel.add(dir.scaled(start_impulse / start.mass()));
+            end.vel.add(dir.scaled(-end_impulse / start.mass()));
         }
     }
 
@@ -680,6 +761,25 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         }
     }
 
+    // Draw springs
+    {
+        var it = entities.iterator(.{.spring});
+        while (it.next()) |entity| {
+            var spring = entity.comps.spring;
+            var start = (entities.getComponent(spring.start, .rb) orelse continue).pos;
+            var end = (entities.getComponent(spring.end, .rb) orelse continue).pos;
+            // XXX: rounding when positive/negative?
+            sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
+            sdlAssertZero(c.SDL_RenderDrawLine(
+                renderer,
+                @floatToInt(c_int, start.x),
+                @floatToInt(c_int, start.y),
+                @floatToInt(c_int, end.x),
+                @floatToInt(c_int, end.y),
+            ));
+        }
+    }
+
     c.SDL_RenderPresent(renderer);
 }
 
@@ -688,6 +788,7 @@ const Player = struct {
     ship_progression: []const Ship.Class,
 };
 
+// TODO(mason): what types of errors are possible?
 pub fn sdlAssertZero(ret: c_int) void {
     if (ret == 0) return;
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
@@ -803,6 +904,15 @@ const Input = struct {
 
 const Damage = struct {
     hp: f32,
+};
+
+const Spring = struct {
+    start: EntityHandle,
+    end: EntityHandle,
+    // 1.0 is critically damped
+    damping: f32,
+    k: f32,
+    length: f32,
 };
 
 const Lifetime = struct {
@@ -1110,7 +1220,7 @@ const Game = struct {
                 .angle = -math.pi / 2.0,
                 .rotation_vel = 0.0,
                 .radius = self.militia_radius,
-                .density = 0.02,
+                .density = 0.04,
             },
             .collider = .{
                 .collision_damping = 0.4,
