@@ -679,7 +679,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 };
 
                 archetype: Archetype,
-                page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList).Iterator,
+                page_lists: *const AutoArrayHashMapUnmanaged(Archetype, PageList),
+                page_lists_i: usize,
                 page: ?*PageHeader,
                 index_in_page: u16,
                 component_arrays: ComponentArrays,
@@ -696,7 +697,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                             }
                             break :archetype archetype;
                         },
-                        .page_lists = entities.page_lists.iterator(),
+                        .page_lists = &entities.page_lists,
+                        .page_lists_i = 0,
                         .page = null,
                         .index_in_page = 0,
                         .component_arrays = undefined,
@@ -721,9 +723,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         // If we don't have a page list, find the next compatible archetype's page
                         // list
                         if (self.page == null) {
-                            const nextPageList = while (self.page_lists.next()) |page| {
-                                if (page.key_ptr.supersetOf(self.archetype)) {
-                                    break page.value_ptr.head;
+                            const nextPageList = while (self.page_lists_i < self.page_lists.count()) {
+                                const i = self.page_lists_i;
+                                self.page_lists_i += 1;
+                                if (self.page_lists.keys()[i].supersetOf(self.archetype)) {
+                                    break self.page_lists.values()[i].head;
                                 }
                             } else return null;
                             self.setPage(nextPageList);
