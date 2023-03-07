@@ -168,60 +168,32 @@ pub fn main() !void {
         }
     }
 
-    // XXX: turned off for now
-    // // Create rock
-    // {
-    //     // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
-    //     // process damage first or do it as part of collision detection!
-    //     // maybe this is why health bars sometimes seem to not show up?
-    //     const speed = 100 + std.crypto.random.float(f32) * 400;
-    //     const start = entities.create(.{
-    //         .sprite = game.rock_sprite,
-    //         .rb = .{
-    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
-    //             .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-    //             .angle = 0,
-    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
-    //             .density = 0.10,
-    //         },
-    //         .collider = .{
-    //             .collision_damping = 1,
-    //             .layer = .hazard,
-    //         },
-    //         // .health = .{
-    //         //     .hp = 160,
-    //         //     .max_hp = 160,
-    //         // },
-    //     });
-
-    //     const end = entities.create(.{
-    //         .sprite = game.rock_sprite,
-    //         .rb = .{
-    //             .pos = display_center.plus(.{ .x = 0, .y = -300 }),
-    //             .vel = .{ .x = 0.0, .y = 0.0 },
-    //             .angle = 0,
-    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
-    //             .density = 0.10,
-    //         },
-    //         .collider = .{
-    //             .collision_damping = 1,
-    //             .layer = .hazard,
-    //         },
-    //         // .health = .{
-    //         //     .hp = 160,
-    //         //     .max_hp = 160,
-    //         // },
-    //     });
-    //     _ = entities.create(.{ .spring = .{
-    //         .start = start,
-    //         .end = end,
-    //         .k = 100000.0,
-    //         .length = 500.0,
-    //         .damping = 1.0,
-    //     } });
-    // }
+    // Create rock
+    {
+        // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
+        // process damage first or do it as part of collision detection!
+        // maybe this is why health bars sometimes seem to not show up?
+        const speed = 100 + std.crypto.random.float(f32) * 400;
+        _ = entities.create(.{
+            .sprite = game.rock_sprite,
+            .rb = .{
+                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+                .angle = 0,
+                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
+                .density = 0.10,
+            },
+            .collider = .{
+                .collision_damping = 1,
+                .layer = .hazard,
+            },
+            .health = .{
+                .hp = 160,
+                .max_hp = 160,
+            },
+        });
+    }
 
     // Create stars
     var stars: [150]Star = undefined;
@@ -392,28 +364,37 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // could do before collision, just check hooks against rbs and start over every time or something
                 // XXX: why does it fly away when attached? well partly it's that i set the distance to 0 when
                 // the current distance is greater...fixing that
+                // XXX: don't always attach to the center? this is easy to do, but, it won't cause
+                // rotation the way you'd expect at the moment since the current physics system doesn't
+                // have opinions on rotation. We can add that though!
                 {
                     var hooked = false;
-                    const hook_spring = Spring{
-                        .start = entity.handle,
-                        .end = other_entity.handle,
-                        .k = 10000,
-                        .length = rb.pos.distance(other.rb.pos),
-                        .damping = 1.0,
-                    };
-                    if (entities.getComponent(entity.handle, .hook) != null) {
+                    if (entities.getComponent(entity.handle, .hook)) |hook| {
                         // XXX: make a public changeArchetype function so that we can do this in a single
                         // move, could also be named removeComponentsAddComponents or such, probably
                         // should work even if overlap?
                         entities.removeComponents(entity.handle, .{.hook});
-                        entities.addComponents(entity.handle, .{ .spring = hook_spring });
+                        entities.addComponents(entity.handle, .{ .spring = Spring{
+                            .start = entity.handle,
+                            .end = other_entity.handle,
+                            .k = hook.k,
+                            .length = rb.pos.distance(other.rb.pos),
+                            .damping = hook.damping,
+                        } });
                         hooked = true;
                     }
-                    if (entities.getComponent(other_entity.handle, .hook) != null) {
+                    if (entities.getComponent(other_entity.handle, .hook)) |hook| {
                         entities.removeComponents(other_entity.handle, .{.hook});
-                        entities.addComponents(other_entity.handle, .{ .spring = hook_spring });
+                        entities.addComponents(other_entity.handle, .{ .spring = Spring{
+                            .start = entity.handle,
+                            .end = other_entity.handle,
+                            .k = hook.k,
+                            .length = rb.pos.distance(other.rb.pos),
+                            .damping = hook.damping,
+                        } });
                         hooked = true;
                     }
+                    // XXX: continue afte first one..?
                     if (hooked) {
                         continue;
                     }
@@ -470,7 +451,9 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             var delta = end.pos.minus(start.pos);
             const dir = delta.normalized();
 
-            const x = delta.length() - spring.length;
+            // XXX: min length 0 right now, could make min and max (before force) settable though?
+            // const x = delta.length() - spring.length;
+            const x = std.math.max(delta.length() - spring.length, 0.0);
             const spring_force = spring.k * x;
 
             const relative_vel = end.vel.dot(dir) - start.vel.dot(dir);
@@ -665,9 +648,13 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
                 // XXX: increase cooldown?
                 if (gg.live) |live| {
-                    for (live) |piece| {
+                    for (live.joints) |piece| {
                         entities.remove(piece);
                     }
+                    for (live.springs) |piece| {
+                        entities.remove(piece);
+                    }
+                    entities.remove(live.hook);
                     gg.live = null;
                 } else {
                     // XXX: behave sensibly if the ship that fired it dies...right now crashes cause
@@ -684,40 +671,72 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     // place for addcomponent.
                     // XXX: then again, addcomponent is easy to add. we just create a new entity move over the components
                     // then delete the old one, and remap the handle.
-                    const hook = entities.create(.{
-                        // XXX:
-                        // .damage = .{
-                        //     .hp = gg.projectile_damage,
-                        // },
+                    gg.live = .{
+                        .joints = undefined,
+                        .springs = undefined,
+                        .hook = undefined,
+                    };
+
+                    // XXX: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
+                    var dir = V.unit(rb.angle + gg.angle);
+                    var vel = rb.vel;
+                    const segment_len = 50.0;
+                    var pos = rb.pos.plus(dir.scaled(segment_len));
+                    for (0..gg.live.?.joints.len) |i| {
+                        gg.live.?.joints[i] = entities.create(.{
+                            .rb = .{
+                                .pos = pos,
+                                .vel = vel,
+                                .radius = 2,
+                                .density = 0.001,
+                            },
+                            // XXX: ...
+                            // .sprite = game.bullet_small,
+                        });
+                        pos.add(dir.scaled(segment_len));
+                    }
+                    // XXX: i think the damping code is broken, if i set this to be critically damped
+                    // it explodes--even over damping shouldn't do that it should slow things down
+                    // extra!
+                    // XXX: ah yeah, damping prevents len from going to low for some reason??
+                    const hook = Hook{
+                        .damping = 0.0,
+                        .k = 100.0,
+                    };
+                    gg.live.?.hook = entities.create(.{
                         .rb = .{
-                            .pos = rb.pos.plus(V.unit(rb.angle + gg.angle).scaled(gg.radius)),
-                            .vel = V.unit(rb.angle).scaled(gg.projectile_speed).plus(rb.vel),
+                            .pos = pos,
+                            .vel = vel,
                             .angle = 0,
                             .rotation_vel = 0,
                             .radius = 2,
                             .density = 0.001,
                         },
-                        .sprite = game.bullet_small,
                         .collider = .{
-                            // Lasers gain energy when bouncing off of rocks
-                            .collision_damping = 1,
+                            .collision_damping = 0,
                             .layer = .hook,
                         },
+                        .hook = hook,
                         // XXX: ...
-                        // .lifetime = .{
-                        //     .seconds = gg.projectile_lifetime,
-                        // },
-                        .hook = .{},
+                        // .sprite = game.bullet_small,
                     });
-                    const rod = entities.create(.{ .spring = .{
-                        .start = entity.handle,
-                        .end = hook,
-                        .k = 1000.0,
-                        .length = gg.radius,
-                        .damping = 1.0,
-                    } });
-
-                    gg.live = [_]EntityHandle{ hook, rod };
+                    for (0..(gg.live.?.springs.len)) |i| {
+                        gg.live.?.springs[i] = entities.create(.{
+                            .spring = .{
+                                .start = if (i == 0)
+                                    entity.handle
+                                else
+                                    gg.live.?.joints[i - 1],
+                                .end = if (i < gg.live.?.joints.len)
+                                    gg.live.?.joints[i]
+                                else
+                                    gg.live.?.hook,
+                                .k = hook.k,
+                                .length = segment_len,
+                                .damping = hook.damping,
+                            },
+                        });
+                    }
                 }
             }
         }
@@ -1022,7 +1041,10 @@ const Spring = struct {
     length: f32,
 };
 
-const Hook = struct {};
+const Hook = struct {
+    damping: f32,
+    k: f32,
+};
 
 const Lifetime = struct {
     seconds: f32,
@@ -1075,6 +1097,8 @@ const Turret = struct {
 };
 
 const GrappleGun = struct {
+    const segments = 10;
+
     /// Together with angle, this is the location of the gun from the center
     /// of the containing object. Pixels.
     radius: f32,
@@ -1097,7 +1121,11 @@ const GrappleGun = struct {
     // projectile_damage: f32,
 
     /// The live chain of projectiles.
-    live: ?[2]EntityHandle = null,
+    live: ?struct {
+        springs: [segments]EntityHandle,
+        joints: [segments - 1]EntityHandle,
+        hook: EntityHandle,
+    } = null,
 };
 
 // See https://www.anthropicstudios.com/2020/03/30/symmetric-matrices/
@@ -1186,11 +1214,11 @@ const RigidBody = struct {
     /// pixels
     pos: V,
     /// pixels per second
-    vel: V,
+    vel: V = .{ .x = 0, .y = 0 },
     /// radians
-    angle: f32,
+    angle: f32 = 0.0,
     /// radians per second
-    rotation_vel: f32,
+    rotation_vel: f32 = 0.0,
     radius: f32,
     // TODO(mason): why density and not inverse mass? probably a good reason i just wanna understand
     // gotta look at how it's used.
@@ -1368,15 +1396,15 @@ const Game = struct {
                 .index = self.militia_still,
                 .time_passed = 0,
             },
-            .grapple_gun = .{
-                .radius = self.ranger_radius * 10.0,
-                .angle = 0,
-                .cooldown = 0,
-                .cooldown_amount = 0.2,
-                // XXX: when nonzero, causes the ship to move. wouldn't happen if there was equal
-                // kickback!
-                .projectile_speed = 0,
-            },
+            // .grapple_gun = .{
+            //     .radius = self.ranger_radius * 10.0,
+            //     .angle = 0,
+            //     .cooldown = 0,
+            //     .cooldown_amount = 0.2,
+            //     // XXX: when nonzero, causes the ship to move. wouldn't happen if there was equal
+            //     // kickback!
+            //     .projectile_speed = 0,
+            // },
             .input = input,
         });
     }
