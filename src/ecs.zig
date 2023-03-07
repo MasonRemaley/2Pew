@@ -376,7 +376,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 .generation = self.slots[index].generation,
             };
 
-            return try self.setArchetype(entity, components, true);
+            return try self.setArchetype(entity, components, .{}, true);
         }
 
         pub fn remove(self: *@This(), entity: EntityHandle) void {
@@ -425,12 +425,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
             self.free_slot_indices[top] = entity.index;
         }
 
-        fn addComponents(self: *@This(), entity: EntityHandle, components: anytype) void {
+        pub fn addComponents(self: *@This(), entity: EntityHandle, components: anytype) void {
             self.addComponentsChecked(entity, components) catch |err|
-                std.debug.panic("failed to create entity: {}", .{err});
+                std.debug.panic("failed to add components: {}", .{err});
         }
 
-        pub fn addComponentsChecked(self: *@This(), entity: EntityHandle, components: anytype) !void {
+        // XXX: test errors
+        fn addComponentsChecked(self: *@This(), entity: EntityHandle, components: anytype) !void {
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
             if (entity.index >= self.slots.len) {
@@ -440,8 +441,26 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return error.BadGeneration;
             }
 
-            _ = self.setArchetype(entity, components, false) catch |err|
-                std.debug.panic("failed to add components: {}", .{err});
+            _ = try self.setArchetype(entity, components, .{}, false);
+        }
+
+        pub fn removeComponents(self: *@This(), entity: EntityHandle, components: anytype) void {
+            self.removeComponentsChecked(entity, components) catch |err|
+                std.debug.panic("failed to remove components: {}", .{err});
+        }
+
+        // XXX: test errors
+        fn removeComponentsChecked(self: *@This(), entity: EntityHandle, components: anytype) !void {
+            // Check that the entity is valid. These should be assertions, but I've made them error
+            // codes for easier unit testing.
+            if (entity.index >= self.slots.len) {
+                return error.BadIndex;
+            }
+            if (self.slots[entity.index].generation != entity.generation) {
+                return error.BadGeneration;
+            }
+
+            _ = try self.setArchetype(entity, .{}, components, false);
         }
 
         // TODO: test the failure conditions here?
@@ -453,33 +472,49 @@ pub fn Entities(comptime componentTypes: anytype) type {
         fn setArchetype(
             self: *@This(),
             entity: EntityHandle,
-            components: anytype,
+            add_components: anytype,
+            // XXX: should remove_components be comptime? then do i still need inline on the for?
+            remove_components: anytype,
+            // XXX: either create entity, OR remove components, or neither should be specified.
+            // also can't have remove and add ovelap or will get compiler error
+            // can we make this cleaner? we could pass in like ?old_archetype and new one, and any
+            // new components?
             comptime create_entity: bool,
         ) !EntityHandle {
-            const old_components = if (create_entity)
+            const previous_archetype = if (create_entity)
                 Archetype.initEmpty()
             else
                 self.slots[entity.index].page.archetype;
 
-            const new_components = new_components: {
-                if (@TypeOf(components) == Prefab) {
-                    var new_components = Archetype.initEmpty();
-                    inline for (comptime std.meta.fieldNames(@TypeOf(components))) |fieldName| {
-                        if (@field(components, fieldName) != null) {
-                            new_components.set(std.meta.fieldIndex(Entity, fieldName).?);
+            const components_added = components_added: {
+                if (@TypeOf(add_components) == Prefab) {
+                    var components_added = Archetype.initEmpty();
+                    inline for (comptime std.meta.fieldNames(@TypeOf(add_components))) |fieldName| {
+                        if (@field(add_components, fieldName) != null) {
+                            components_added.set(std.meta.fieldIndex(Entity, fieldName).?);
                         }
                     }
-                    break :new_components new_components;
+                    break :components_added components_added;
                 } else comptime {
-                    var new_components = Archetype.initEmpty();
-                    for (std.meta.fieldNames(@TypeOf(components))) |fieldName| {
-                        new_components.set(std.meta.fieldIndex(Entity, fieldName).?);
+                    var components_added = Archetype.initEmpty();
+                    for (std.meta.fieldNames(@TypeOf(add_components))) |fieldName| {
+                        components_added.set(std.meta.fieldIndex(Entity, fieldName).?);
                     }
-                    break :new_components new_components;
+                    break :components_added components_added;
                 }
             };
 
-            const archetype = old_components.unionWith(new_components);
+            const components_removed = components_removed: {
+                var components_removed = Archetype.initEmpty();
+                inline for (remove_components) |removed| {
+                    const fieldEnum: FieldEnum(Entity) = removed;
+                    components_removed.set(@enumToInt(fieldEnum));
+                }
+                break :components_removed components_removed;
+            };
+
+            const archetype = previous_archetype.unionWith(components_added)
+                .differenceWith(components_removed);
 
             // TODO: don't ignore errors in this function, and remember to use errdefer where appropriate
             // Get the page list for this archetype
@@ -517,8 +552,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // If this entity data is replacing an existing one, copy the original components over
             if (!create_entity) {
                 // Copy the old components
-                const copy = old_components.intersectWith(archetype)
-                    .differenceWith(new_components);
+                const copy = previous_archetype.intersectWith(archetype)
+                    .differenceWith(components_added);
                 inline for (0..std.meta.fields(Entity).len) |i| {
                     if (copy.isSet(i)) {
                         const field = @intToEnum(FieldEnum(Entity), i);
@@ -545,14 +580,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             // Initialize the new entity
-            inline for (std.meta.fields(@TypeOf(components))) |f| {
+            inline for (std.meta.fields(@TypeOf(add_components))) |f| {
                 const field = @intToEnum(FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?);
-                if (@TypeOf(components) == Prefab) {
-                    if (@field(components, f.name)) |component| {
+                if (@TypeOf(add_components) == Prefab) {
+                    if (@field(add_components, f.name)) |component| {
                         page.componentArray(field)[slot.index_in_page] = component;
                     }
                 } else {
-                    page.componentArray(field)[slot.index_in_page] = @field(components, f.name);
+                    page.componentArray(field)[slot.index_in_page] = @field(add_components, f.name);
                 }
             }
 
@@ -865,7 +900,7 @@ test "random data" {
     defer truth.deinit();
 
     for (0..2000) |_| {
-        switch (rnd.random().enumValue(enum { create, modify, add, destroy })) {
+        switch (rnd.random().enumValue(enum { create, modify, add, remove, destroy })) {
             .create => {
                 for (0..rnd.random().uintLessThan(usize, 10)) |_| {
                     const data = Data{
@@ -991,6 +1026,52 @@ test "random data" {
                                     .y = entity.data.y.?,
                                     .z = entity.data.z.?,
                                 });
+                            },
+                        }
+                    }
+                }
+            },
+            .remove => {
+                if (truth.items.len > 0) {
+                    for (0..rnd.random().uintLessThan(usize, 10)) |_| {
+                        const index = rnd.random().uintLessThan(usize, truth.items.len);
+                        var entity: *Created = &truth.items[index];
+                        switch (rnd.random().enumValue(enum { none, x, y, z, xy, xz, yz, xyz })) {
+                            .none => {
+                                entities.removeComponents(entity.handle, .{});
+                            },
+                            .x => {
+                                entity.data.x = null;
+                                entities.removeComponents(entity.handle, .{.x});
+                            },
+                            .y => {
+                                entity.data.y = null;
+                                entities.removeComponents(entity.handle, .{.y});
+                            },
+                            .z => {
+                                entity.data.z = null;
+                                entities.removeComponents(entity.handle, .{.z});
+                            },
+                            .xy => {
+                                entity.data.x = null;
+                                entity.data.y = null;
+                                entities.removeComponents(entity.handle, .{ .x, .y });
+                            },
+                            .xz => {
+                                entity.data.x = null;
+                                entity.data.z = null;
+                                entities.removeComponents(entity.handle, .{ .x, .z });
+                            },
+                            .yz => {
+                                entity.data.y = null;
+                                entity.data.z = null;
+                                entities.removeComponents(entity.handle, .{ .y, .z });
+                            },
+                            .xyz => {
+                                entity.data.x = null;
+                                entity.data.y = null;
+                                entity.data.z = null;
+                                entities.removeComponents(entity.handle, .{ .x, .y, .z });
                             },
                         }
                     }
@@ -1150,6 +1231,7 @@ test "minimal iter test" {
 }
 
 // XXX: test addComponent and removeComponent with prefabs? only really add makes sense I guess?
+// XXX: test 0 sized components? (used in game seemingly correctly!)
 test "prefabs" {
     var allocator = std.heap.page_allocator;
 
