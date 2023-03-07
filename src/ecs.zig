@@ -31,6 +31,7 @@ pub const EntityHandle = struct {
     generation: EntityGeneration,
 };
 
+// XXX: really it should just be called components but then can't use that anywhere else...
 pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
         // `Archetype` is a bit set with a bit for each component type.
@@ -338,26 +339,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
             self.page_pool.deinit(allocator);
         }
 
-        // TODO: test the failure conditions here?
-        pub fn createChecked(self: *@This(), entity: anytype) !EntityHandle {
-            const archetype = archetype: {
-                if (@TypeOf(entity) == Prefab) {
-                    var archetype = Archetype.initEmpty();
-                    inline for (comptime std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
-                        if (@field(entity, fieldName) != null) {
-                            archetype.set(std.meta.fieldIndex(Entity, fieldName).?);
-                        }
-                    }
-                    break :archetype archetype;
-                } else comptime {
-                    var archetype = Archetype.initEmpty();
-                    for (std.meta.fieldNames(@TypeOf(entity))) |fieldName| {
-                        archetype.set(std.meta.fieldIndex(Entity, fieldName).?);
-                    }
-                    break :archetype archetype;
-                }
-            };
+        pub fn create(self: *@This(), entity: anytype) EntityHandle {
+            return self.createChecked(entity) catch |err|
+                std.debug.panic("failed to create entity: {}", .{err});
+        }
 
+        pub fn createChecked(self: *@This(), components: anytype) !EntityHandle {
             // Find a free index for the entity
             const index = index: {
                 if (self.free_slot_indices.len > 0) {
@@ -384,65 +371,17 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
             };
 
-            // TODO: don't ignore errors in this function, and remember to use errdefer where appropriate
-            // Get the page list for this archetype
-            const page_list: *PageList = page: {
-                comptime assert(max_archetypes > 0);
-                const entry = self.page_lists.getOrPutAssumeCapacity(archetype);
-                if (!entry.found_existing) {
-                    if (self.page_lists.count() >= max_archetypes) {
-                        return error.OutOfArchetypes;
-                    } else if (self.page_lists.count() == max_archetypes / 2) {
-                        std.log.warn("archetype map halfway depleted", .{});
-                    }
-                    const newPage = try PageHeader.init(&self.page_pool, archetype);
-                    entry.value_ptr.* = PageList{};
-                    entry.value_ptr.*.prepend(newPage);
-                }
-                break :page entry.value_ptr;
-            };
-
-            // TODO: only possiblly necessary if didn't juts create one
-            // If the head does not have space, create a new head that has space
-            if (page_list.head.?.len == page_list.head.?.capacity) {
-                const newPage = try PageHeader.init(&self.page_pool, archetype);
-                page_list.prepend(newPage);
-            }
-            const page = page_list.head.?;
-
-            // Create a new entity
-            const handle = EntityHandle{
+            const entity = EntityHandle{
                 .index = index,
                 .generation = self.slots[index].generation,
             };
-            const slot = &self.slots[index];
-            slot.page = page;
-            slot.index_in_page = page.createEntity(handle);
 
-            // If the page is now full, move it to the end of the page list
-            if (page.len == page.capacity) {
-                page_list.moveToTail(page);
-            }
-
-            // Initialize the new entity
-            inline for (std.meta.fields(@TypeOf(entity))) |f| {
-                const field = @intToEnum(FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?);
-                if (@TypeOf(entity) == Prefab) {
-                    if (@field(entity, f.name)) |component| {
-                        page.componentArray(field)[slot.index_in_page] = component;
-                    }
-                } else {
-                    page.componentArray(field)[slot.index_in_page] = @field(entity, f.name);
-                }
-            }
-
-            // Return the handle to the entity
-            return handle;
+            return try self.setArchetype(entity, components, true);
         }
 
-        pub fn create(self: *@This(), entity: anytype) EntityHandle {
-            return self.createChecked(entity) catch |err|
-                std.debug.panic("failed to create entity: {}", .{err});
+        pub fn remove(self: *@This(), entity: EntityHandle) void {
+            return self.removeChecked(entity) catch |err|
+                std.debug.panic("failed to remove entity {}: {}", .{ entity, err });
         }
 
         fn removeChecked(self: *@This(), entity: EntityHandle) !void {
@@ -454,6 +393,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
             if (self.slots[entity.index].generation != entity.generation) {
                 return error.BadGeneration;
             }
+
+            // Make sure our free list is not empty, this is only reachable with generation safety
+            // turned off (or if a counter wraps and our currently implementation doesn't check for
+            // that.)
             if (self.free_slot_indices.len == max_entities) {
                 return error.DoubleFree;
             }
@@ -482,9 +425,139 @@ pub fn Entities(comptime componentTypes: anytype) type {
             self.free_slot_indices[top] = entity.index;
         }
 
-        pub fn remove(self: *@This(), entity: EntityHandle) void {
-            return self.removeChecked(entity) catch |err|
-                std.debug.panic("failed to remove entity {}: {}", .{ entity, err });
+        fn addComponents(self: *@This(), entity: EntityHandle, components: anytype) void {
+            self.addComponentsChecked(entity, components) catch |err|
+                std.debug.panic("failed to create entity: {}", .{err});
+        }
+
+        pub fn addComponentsChecked(self: *@This(), entity: EntityHandle, components: anytype) !void {
+            // Check that the entity is valid. These should be assertions, but I've made them error
+            // codes for easier unit testing.
+            if (entity.index >= self.slots.len) {
+                return error.BadIndex;
+            }
+            if (self.slots[entity.index].generation != entity.generation) {
+                return error.BadGeneration;
+            }
+
+            _ = self.setArchetype(entity, components, false) catch |err|
+                std.debug.panic("failed to add components: {}", .{err});
+        }
+
+        // TODO: test the failure conditions here?
+        // XXX: ah problem: i really need to be able to pass in the /archetype/ i wanna set as an
+        // arg so that this can do remove too right? or i could pass in a list of components to remove
+        // that might be fine? it would be a list to add and a list to remove?
+        // XXX: early out if no change?
+        // XXX: comptime error if not all components set internally due to logic bug?
+        fn setArchetype(
+            self: *@This(),
+            entity: EntityHandle,
+            components: anytype,
+            comptime create_entity: bool,
+        ) !EntityHandle {
+            const old_components = if (create_entity)
+                Archetype.initEmpty()
+            else
+                self.slots[entity.index].page.archetype;
+
+            const new_components = new_components: {
+                if (@TypeOf(components) == Prefab) {
+                    var new_components = Archetype.initEmpty();
+                    inline for (comptime std.meta.fieldNames(@TypeOf(components))) |fieldName| {
+                        if (@field(components, fieldName) != null) {
+                            new_components.set(std.meta.fieldIndex(Entity, fieldName).?);
+                        }
+                    }
+                    break :new_components new_components;
+                } else comptime {
+                    var new_components = Archetype.initEmpty();
+                    for (std.meta.fieldNames(@TypeOf(components))) |fieldName| {
+                        new_components.set(std.meta.fieldIndex(Entity, fieldName).?);
+                    }
+                    break :new_components new_components;
+                }
+            };
+
+            const archetype = old_components.unionWith(new_components);
+
+            // TODO: don't ignore errors in this function, and remember to use errdefer where appropriate
+            // Get the page list for this archetype
+            const page_list: *PageList = page: {
+                comptime assert(max_archetypes > 0);
+                const entry = self.page_lists.getOrPutAssumeCapacity(archetype);
+                if (!entry.found_existing) {
+                    if (self.page_lists.count() >= max_archetypes) {
+                        return error.OutOfArchetypes;
+                    } else if (self.page_lists.count() == max_archetypes / 2) {
+                        std.log.warn("archetype map halfway depleted", .{});
+                    }
+                    const newPage = try PageHeader.init(&self.page_pool, archetype);
+                    entry.value_ptr.* = PageList{};
+                    entry.value_ptr.*.prepend(newPage);
+                }
+                break :page entry.value_ptr;
+            };
+
+            // TODO: only possiblly necessary if didn't juts create one
+            // If the head does not have space, create a new head that has space
+            if (page_list.head.?.len == page_list.head.?.capacity) {
+                const newPage = try PageHeader.init(&self.page_pool, archetype);
+                page_list.prepend(newPage);
+            }
+            const page = page_list.head.?;
+
+            // Create the new entity
+            const slot = &self.slots[entity.index];
+            const old_page = slot.page;
+            const old_index_in_page = slot.index_in_page;
+            slot.page = page;
+            slot.index_in_page = page.createEntity(entity);
+
+            // If this entity data is replacing an existing one, copy the original components over
+            if (!create_entity) {
+                // Copy the old components
+                const copy = old_components.intersectWith(archetype)
+                    .differenceWith(new_components);
+                inline for (0..std.meta.fields(Entity).len) |i| {
+                    if (copy.isSet(i)) {
+                        const field = @intToEnum(FieldEnum(Entity), i);
+                        page.componentArray(field)[slot.index_in_page] = old_page.componentArray(field)[old_index_in_page];
+                    }
+                }
+
+                // XXX: dup code from Entities(...){...}.remove(...)
+                // Delete the old entity
+                const was_full = page.len == page.capacity;
+                old_page.remove(old_index_in_page);
+
+                // If the old page didn't have space before but does now, move it to the front of
+                // the page list
+                if (was_full) {
+                    const old_page_list: *PageList = self.page_lists.getPtr(slot.page.archetype).?;
+                    old_page_list.moveToHead(page);
+                }
+            }
+
+            // If the new page is now full, move it to the end of the page list
+            if (page.len == page.capacity) {
+                page_list.moveToTail(page);
+            }
+
+            // Initialize the new entity
+            inline for (std.meta.fields(@TypeOf(components))) |f| {
+                const field = @intToEnum(FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?);
+                if (@TypeOf(components) == Prefab) {
+                    if (@field(components, f.name)) |component| {
+                        page.componentArray(field)[slot.index_in_page] = component;
+                    }
+                } else {
+                    page.componentArray(field)[slot.index_in_page] = @field(components, f.name);
+                }
+            }
+
+            // Return the handle to the entity
+            return entity;
         }
 
         // TODO: check assertions
@@ -791,8 +864,8 @@ test "random data" {
     var truth = std.ArrayList(Created).init(std.testing.allocator);
     defer truth.deinit();
 
-    for (0..1000) |_| {
-        switch (rnd.random().enumValue(enum { create, modify, destroy })) {
+    for (0..2000) |_| {
+        switch (rnd.random().enumValue(enum { create, modify, add, destroy })) {
             .create => {
                 for (0..rnd.random().uintLessThan(usize, 10)) |_| {
                     const data = Data{
@@ -854,6 +927,72 @@ test "random data" {
                     if (entity.data.z) |_| {
                         entity.data.z = rnd.random().int(u16);
                         entities.getComponent(entity.handle, .z).?.* = entity.data.z.?;
+                    }
+                }
+            },
+            // XXX: profile add/remove too
+            .add => {
+                if (truth.items.len > 0) {
+                    for (0..rnd.random().uintLessThan(usize, 10)) |_| {
+                        const index = rnd.random().uintLessThan(usize, truth.items.len);
+                        var entity: *Created = &truth.items[index];
+                        switch (rnd.random().enumValue(enum { none, x, y, z, xy, xz, yz, xyz })) {
+                            .none => {
+                                entities.addComponents(entity.handle, .{});
+                            },
+                            .x => {
+                                entity.data.x = rnd.random().int(u32);
+                                entities.addComponents(entity.handle, .{
+                                    .x = entity.data.x.?,
+                                });
+                            },
+                            .y => {
+                                entity.data.y = rnd.random().int(u8);
+                                entities.addComponents(entity.handle, .{
+                                    .y = entity.data.y.?,
+                                });
+                            },
+                            .z => {
+                                entity.data.z = rnd.random().int(u16);
+                                entities.addComponents(entity.handle, .{
+                                    .z = entity.data.z.?,
+                                });
+                            },
+                            .xy => {
+                                entity.data.x = rnd.random().int(u32);
+                                entity.data.y = rnd.random().int(u8);
+                                entities.addComponents(entity.handle, .{
+                                    .x = entity.data.x.?,
+                                    .y = entity.data.y.?,
+                                });
+                            },
+                            .xz => {
+                                entity.data.x = rnd.random().int(u32);
+                                entity.data.z = rnd.random().int(u16);
+                                entities.addComponents(entity.handle, .{
+                                    .x = entity.data.x.?,
+                                    .z = entity.data.z.?,
+                                });
+                            },
+                            .yz => {
+                                entity.data.y = rnd.random().int(u8);
+                                entity.data.z = rnd.random().int(u16);
+                                entities.addComponents(entity.handle, .{
+                                    .y = entity.data.y.?,
+                                    .z = entity.data.z.?,
+                                });
+                            },
+                            .xyz => {
+                                entity.data.x = rnd.random().int(u32);
+                                entity.data.y = rnd.random().int(u8);
+                                entity.data.z = rnd.random().int(u16);
+                                entities.addComponents(entity.handle, .{
+                                    .x = entity.data.x.?,
+                                    .y = entity.data.y.?,
+                                    .z = entity.data.z.?,
+                                });
+                            },
+                        }
                     }
                 }
             },
@@ -1010,6 +1149,7 @@ test "minimal iter test" {
     }
 }
 
+// XXX: test addComponent and removeComponent with prefabs? only really add makes sense I guess?
 test "prefabs" {
     var allocator = std.heap.page_allocator;
 
