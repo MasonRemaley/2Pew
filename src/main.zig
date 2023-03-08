@@ -169,31 +169,62 @@ pub fn main() !void {
     }
 
     // Create rock
-    {
-        // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
-        // process damage first or do it as part of collision detection!
-        // maybe this is why health bars sometimes seem to not show up?
-        const speed = 100 + std.crypto.random.float(f32) * 400;
-        _ = entities.create(.{
-            .sprite = game.rock_sprite,
-            .rb = .{
-                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
-                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                .angle = 0,
-                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
-                .density = 0.10,
-            },
-            .collider = .{
-                .collision_damping = 1,
-                .layer = .hazard,
-            },
-            .health = .{
-                .hp = 160,
-                .max_hp = 160,
-            },
-        });
-    }
+    // {
+    //     // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
+    //     // process damage first or do it as part of collision detection!
+    //     // maybe this is why health bars sometimes seem to not show up?
+    //     const speed = 100 + std.crypto.random.float(f32) * 400;
+    //     const rock_1 = entities.create(.{
+    //         .sprite = game.rock_sprite,
+    //         .rb = .{
+    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+    //             .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+    //             .angle = 0,
+    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
+    //             .density = 0.10,
+    //         },
+    //         .collider = .{
+    //             .collision_damping = 1,
+    //             .layer = .hazard,
+    //         },
+    //         // .health = .{
+    //         //     .hp = 160,
+    //         //     .max_hp = 160,
+    //         // },
+    //     });
+
+    //     const rock_2 = entities.create(.{
+    //         .sprite = game.rock_sprite,
+    //         .rb = .{
+    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+    //             .vel = .{ .x = 0.0, .y = 0.0 },
+    //             .angle = 0,
+    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
+    //             .density = 0.10,
+    //         },
+    //         .collider = .{
+    //             .collision_damping = 1,
+    //             .layer = .hazard,
+    //         },
+    //         // .health = .{
+    //         //     .hp = 160,
+    //         //     .max_hp = 160,
+    //         // },
+    //     });
+    //     _ = entities.create(.{
+    //         .spring = .{
+    //             .start = rock_1,
+    //             .end = rock_2,
+    //             // XXX: still not clear if over-damping works...
+    //             .damping = 0.001,
+    //             .k = 100000.0,
+    //             .min_len = 500.0,
+    //             .max_len = 1000.0,
+    //         },
+    //     });
+    // }
 
     // Create stars
     var stars: [150]Star = undefined;
@@ -378,7 +409,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .start = entity.handle,
                             .end = other_entity.handle,
                             .k = hook.k,
-                            .length = rb.pos.distance(other.rb.pos),
+                            .max_len = rb.pos.distance(other.rb.pos),
+                            .min_len = 0.0,
                             .damping = hook.damping,
                         } });
                         hooked = true;
@@ -389,7 +421,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .start = entity.handle,
                             .end = other_entity.handle,
                             .k = hook.k,
-                            .length = rb.pos.distance(other.rb.pos),
+                            .max_len = rb.pos.distance(other.rb.pos),
+                            .min_len = 0.0,
                             .damping = hook.damping,
                         } });
                         hooked = true;
@@ -448,19 +481,38 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 continue;
             };
 
-            var delta = end.pos.minus(start.pos);
-            const dir = delta.normalized();
+            const delta = end.pos.minus(start.pos);
+            const delta_len = delta.length();
+            const dir = delta.scaled(1.0 / delta_len);
 
-            // XXX: min length 0 right now, could make min and max (before force) settable though?
-            // const x = delta.length() - spring.length;
-            const x = std.math.max(delta.length() - spring.length, 0.0);
+            // XXX: why don't the middle joints ever get spread out? that seems like a bug!
+            NOW: if this was workign right i think all the joints would always be basically evenly
+            spread out when under tension, so something is wrong! commit what we have, and then
+            set all the masses to the same thing and figure out what's up!
+            oh you know what, i think it's that we need to accumulate impulses and apply them after
+            accumulation? wish i had that physics book--ordering it again
+            reference the book!
+            // XXX: simplify this...?
+            const x = if (delta_len > spring.max_len)
+                delta_len - spring.max_len
+            else if (delta_len < spring.min_len)
+                delta_len - spring.min_len
+            else
+                0;
+            // const x = delta_len - spring.max_len;
             const spring_force = spring.k * x;
 
-            const relative_vel = end.vel.dot(dir) - start.vel.dot(dir);
-            const start_b = @sqrt(spring.damping * 4.0 * start.mass() * spring.k);
-            const start_damping_force = start_b * relative_vel;
-            const end_b = @sqrt(spring.damping * 4.0 * end.mass() * spring.k);
-            const end_damping_force = end_b * relative_vel;
+            // XXX: shouldn't the affect of the damping force be proportional to mass or does that
+            // just work out since they're connected?
+            // XXX: make sure this all works at various framerates including high ones (or set a max!)
+            const closing_vel = end.vel.minus(start.vel).dot(dir);
+            // XXX: that isn't equiavlent to this??
+            // end.vel.dot(dir) - start.vel.dot(dir);
+
+            const b = @sqrt(spring.damping * 4.0 * (start.mass() + end.mass()) * spring.k);
+            const damping_force = b * closing_vel;
+            const start_damping_force = damping_force * end.mass() / (start.mass() + end.mass());
+            const end_damping_force = damping_force * start.mass() / (start.mass() + end.mass());
 
             const start_impulse = (start_damping_force + spring_force) * delta_s;
             const end_impulse = (end_damping_force + spring_force) * delta_s;
@@ -680,7 +732,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     // XXX: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
                     var dir = V.unit(rb.angle + gg.angle);
                     var vel = rb.vel;
-                    const segment_len = 50.0;
+                    const segment_len = GrappleGun.total_length / @intToFloat(f32, GrappleGun.segments);
                     var pos = rb.pos.plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
                         gg.live.?.joints[i] = entities.create(.{
@@ -691,7 +743,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                                 .density = 0.001,
                             },
                             // XXX: ...
-                            // .sprite = game.bullet_small,
+                            .sprite = game.bullet_small,
                         });
                         pos.add(dir.scaled(segment_len));
                     }
@@ -700,7 +752,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     // extra!
                     // XXX: ah yeah, damping prevents len from going to low for some reason??
                     const hook = Hook{
-                        .damping = 0.0,
+                        .damping = 1.0,
                         .k = 100.0,
                     };
                     gg.live.?.hook = entities.create(.{
@@ -718,7 +770,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         },
                         .hook = hook,
                         // XXX: ...
-                        // .sprite = game.bullet_small,
+                        .sprite = game.bullet_small,
                     });
                     for (0..(gg.live.?.springs.len)) |i| {
                         gg.live.?.springs[i] = entities.create(.{
@@ -732,7 +784,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                                 else
                                     gg.live.?.hook,
                                 .k = hook.k,
-                                .length = segment_len,
+                                .max_len = segment_len,
+                                .min_len = 0.0,
                                 .damping = hook.damping,
                             },
                         });
@@ -1037,8 +1090,10 @@ const Spring = struct {
     /// rod-like, but setting it too high can cause numerical instability, with the instability
     /// getting worse the lower the framerate.
     k: f32,
-    /// The length of the spring.
-    length: f32,
+    /// The min length before the spring force takes effect.
+    min_len: f32,
+    /// The max length before the spring force takes effect.
+    max_len: f32,
 };
 
 const Hook = struct {
@@ -1097,7 +1152,8 @@ const Turret = struct {
 };
 
 const GrappleGun = struct {
-    const segments = 10;
+    const segments = 3;
+    const total_length = 100.0;
 
     /// Together with angle, this is the location of the gun from the center
     /// of the containing object. Pixels.
@@ -1396,15 +1452,15 @@ const Game = struct {
                 .index = self.militia_still,
                 .time_passed = 0,
             },
-            // .grapple_gun = .{
-            //     .radius = self.ranger_radius * 10.0,
-            //     .angle = 0,
-            //     .cooldown = 0,
-            //     .cooldown_amount = 0.2,
-            //     // XXX: when nonzero, causes the ship to move. wouldn't happen if there was equal
-            //     // kickback!
-            //     .projectile_speed = 0,
-            // },
+            .grapple_gun = .{
+                .radius = self.ranger_radius * 10.0,
+                .angle = 0,
+                .cooldown = 0,
+                .cooldown_amount = 0.2,
+                // XXX: when nonzero, causes the ship to move. wouldn't happen if there was equal
+                // kickback!
+                .projectile_speed = 0,
+            },
             .input = input,
         });
     }
