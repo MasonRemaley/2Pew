@@ -486,12 +486,15 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const dir = delta.scaled(1.0 / delta_len);
 
             // XXX: why don't the middle joints ever get spread out? that seems like a bug!
-            NOW: if this was workign right i think all the joints would always be basically evenly
-            spread out when under tension, so something is wrong! commit what we have, and then
-            set all the masses to the same thing and figure out what's up!
-            oh you know what, i think it's that we need to accumulate impulses and apply them after
-            accumulation? wish i had that physics book--ordering it again
-            reference the book!
+            // NOW: if this was workign right i think all the joints would always be basically evenly
+            // spread out when under tension, so something is wrong! commit what we have, and then
+            // set all the masses to the same thing and figure out what's up!
+            // oh you know what, i think it's that we need to accumulate impulses and apply them after
+            // accumulation? wish i had that physics book--ordering it again
+            // reference the book!
+            // XXX: was another math error, now i'm trying to see if there's a bug in the min length
+            // code since the first joint seems to want to stay long?
+            // XXX: current issue is if i attach two ships together they gain energy eventually
             // XXX: simplify this...?
             const x = if (delta_len > spring.max_len)
                 delta_len - spring.max_len
@@ -514,10 +517,22 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const start_damping_force = damping_force * end.mass() / (start.mass() + end.mass());
             const end_damping_force = damping_force * start.mass() / (start.mass() + end.mass());
 
-            const start_impulse = (start_damping_force + spring_force) * delta_s;
-            const end_impulse = (end_damping_force + spring_force) * delta_s;
-            start.vel.add(dir.scaled(start_impulse / start.mass()));
-            end.vel.add(dir.scaled(-end_impulse / start.mass()));
+            const start_force = start_damping_force + spring_force;
+            const end_force = end_damping_force + spring_force;
+
+            start.impulse.add(dir.scaled(start_force * delta_s));
+            end.impulse.add(dir.scaled(-end_force * delta_s));
+        }
+    }
+
+    // XXX: accumulate impulses elsewhere to, and then apply after all physics calculations are done
+    // Apply impulses
+    {
+        var it = entities.iterator(.{.rb});
+        while (it.next()) |entity| {
+            var rb = entity.comps.rb;
+            rb.vel.add(rb.impulse);
+            rb.impulse = .{ .x = 0.0, .y = 0.0 };
         }
     }
 
@@ -1152,8 +1167,8 @@ const Turret = struct {
 };
 
 const GrappleGun = struct {
-    const segments = 3;
-    const total_length = 100.0;
+    const segments = 5;
+    const total_length = 200.0;
 
     /// Together with angle, this is the location of the gun from the center
     /// of the containing object. Pixels.
@@ -1271,6 +1286,7 @@ const RigidBody = struct {
     pos: V,
     /// pixels per second
     vel: V = .{ .x = 0, .y = 0 },
+    impulse: V = .{ .x = 0, .y = 0 },
     /// radians
     angle: f32 = 0.0,
     /// radians per second
