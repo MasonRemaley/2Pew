@@ -404,7 +404,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         // XXX: make a public changeArchetype function so that we can do this in a single
                         // move, could also be named removeComponentsAddComponents or such, probably
                         // should work even if overlap?
-                        entities.removeComponents(entity.handle, .{.hook});
+                        entities.removeComponents(entity.handle, .{ .hook, .collider });
                         entities.addComponents(entity.handle, .{ .spring = Spring{
                             .start = entity.handle,
                             .end = other_entity.handle,
@@ -1576,7 +1576,7 @@ const Game = struct {
                 .{
                     .ship_progression_index = 0,
                     // XXX: change order back
-                    .ship_progression = &.{ .militia, .ranger },
+                    .ship_progression = &.{ .ranger, .militia },
                 },
                 .{
                     .ship_progression_index = 0,
