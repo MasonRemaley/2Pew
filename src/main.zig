@@ -441,6 +441,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         var it = entities.iterator(.{.rb});
         while (it.next()) |entity| {
             const rb = entity.comps.rb;
+
+            rb.vel.scale(std.math.pow(f32, rb.damping, delta_s));
             rb.pos.add(rb.vel.scaled(delta_s));
 
             // gravity if the rb is outside the ring
@@ -497,35 +499,33 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             // XXX: current issue is if i attach two ships together they gain energy eventually
             // XXX: simplify this...?
             const x = if (delta_len > spring.max_len)
-                delta_len - spring.max_len
+                spring.max_len - delta_len
             else if (delta_len < spring.min_len)
-                delta_len - spring.min_len
+                spring.min_len - delta_len
             else
                 0;
-            // const x = delta_len - spring.max_len;
-            const spring_force = spring.k * x;
+            const spring_force = -spring.k * x;
 
             // XXX: shouldn't the affect of the damping force be proportional to mass or does that
             // just work out since they're connected?
             // XXX: make sure this all works at various framerates including high ones (or set a max!)
-            const closing_vel = end.vel.minus(start.vel).dot(dir);
+            // const closing_vel = end.vel.minus(start.vel).dot(dir);
             // XXX: that isn't equiavlent to this??
             // end.vel.dot(dir) - start.vel.dot(dir);
+            // XXX: get rid of spring damping or no?
 
             const b = @sqrt(spring.damping * 4.0 * (start.mass() + end.mass()) * spring.k);
-            const damping_force = b * closing_vel;
-            const start_damping_force = damping_force * end.mass() / (start.mass() + end.mass());
-            const end_damping_force = damping_force * start.mass() / (start.mass() + end.mass());
-
-            const start_force = start_damping_force + spring_force;
-            const end_force = end_damping_force + spring_force;
+            // const damping_force = b * closing_vel;
+            const damping_force = b * spring_force * delta_s;
+            const start_force = (spring_force + damping_force) * end.mass() / (start.mass() + end.mass());
+            const end_force = (spring_force + damping_force) * start.mass() / (start.mass() + end.mass());
 
             start.impulse.add(dir.scaled(start_force * delta_s));
             end.impulse.add(dir.scaled(-end_force * delta_s));
         }
     }
 
-    // XXX: accumulate impulses elsewhere to, and then apply after all physics calculations are done
+    // XXX: accumulate impulses elsewhere too, and then apply after all physics calculations are done
     // Apply impulses
     {
         var it = entities.iterator(.{.rb});
@@ -727,7 +727,6 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     // XXX: behave sensibly if the ship that fired it dies...right now crashes cause
                     // one side of the spring has a bad generation
                     // XXX: change sprite!
-                    // XXX: make lower mass or something lol
                     // XXX: how do i make it connect? we could replace the hook with the thing it's connected
                     // to when it hits, but, then it'd always connect to the center. so really we wanna
                     // create a new spring that's very strong between the hook and the thing it's connected to.
@@ -749,26 +748,28 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     var vel = rb.vel;
                     const segment_len = GrappleGun.total_length / @intToFloat(f32, GrappleGun.segments);
                     var pos = rb.pos.plus(dir.scaled(segment_len));
+                    // XXX: measure in mass instead since it dosn't have a size
+                    const density = GrappleGun.rope_density / @intToFloat(f32, GrappleGun.segments);
                     for (0..gg.live.?.joints.len) |i| {
                         gg.live.?.joints[i] = entities.create(.{
                             .rb = .{
                                 .pos = pos,
                                 .vel = vel,
-                                .radius = 2,
-                                .density = 0.001,
+                                .radius = 1,
+                                .density = density,
+                                .damping = GrappleGun.damping,
                             },
                             // XXX: ...
-                            .sprite = game.bullet_small,
+                            // .sprite = game.bullet_small,
                         });
                         pos.add(dir.scaled(segment_len));
                     }
                     // XXX: i think the damping code is broken, if i set this to be critically damped
                     // it explodes--even over damping shouldn't do that it should slow things down
                     // extra!
-                    // XXX: ah yeah, damping prevents len from going to low for some reason??
                     const hook = Hook{
-                        .damping = 1.0,
-                        .k = 100.0,
+                        .damping = 0.0,
+                        .k = 10000.0,
                     };
                     gg.live.?.hook = entities.create(.{
                         .rb = .{
@@ -777,7 +778,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .angle = 0,
                             .rotation_vel = 0,
                             .radius = 2,
-                            .density = 0.001,
+                            .density = density,
+                            .damping = GrappleGun.damping,
                         },
                         .collider = .{
                             .collision_damping = 0,
@@ -785,7 +787,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         },
                         .hook = hook,
                         // XXX: ...
-                        .sprite = game.bullet_small,
+                        // .sprite = game.bullet_small,
                     });
                     for (0..(gg.live.?.springs.len)) |i| {
                         gg.live.?.springs[i] = entities.create(.{
@@ -1167,8 +1169,13 @@ const Turret = struct {
 };
 
 const GrappleGun = struct {
-    const segments = 5;
-    const total_length = 200.0;
+    // XXX: put constants in one place...
+    // XXX: segmetns does change max length cause of give or something? affect spring constant?
+    const segments = 10;
+    const total_length = 100.0;
+    // XXX: measure in mass instead since it dosn't have a size
+    const rope_density = 10.0;
+    const damping = 0.8;
 
     /// Together with angle, this is the location of the gun from the center
     /// of the containing object. Pixels.
@@ -1295,6 +1302,11 @@ const RigidBody = struct {
     // TODO(mason): why density and not inverse mass? probably a good reason i just wanna understand
     // gotta look at how it's used.
     density: f32,
+
+    // A value of 0 prevents motion, a value of 1 applies no damping. When no damping is desired, it
+    // is better to use a value of slightly less than one to remove any energy gained from numerical
+    // instability.
+    damping: f32 = 0.999,
 };
 
 const Collider = struct {

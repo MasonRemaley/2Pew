@@ -8,6 +8,11 @@ pub fn unit(angle_in_radians: f32) Vec2d {
     };
 }
 
+pub fn scale(v: *Vec2d, scalar: f32) void {
+    v.x *= scalar;
+    v.y *= scalar;
+}
+
 pub fn scaled(v: Vec2d, scalar: f32) Vec2d {
     return .{
         .x = v.x * scalar,
