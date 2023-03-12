@@ -1059,7 +1059,7 @@ const Input = struct {
             positive: ?c.SDL_GameControllerButton = null,
             negative: ?c.SDL_GameControllerButton = null,
         } = .{},
-        dead_zone: u15 = 10000,
+        dead_zone: i16 = 10000,
     });
 
     pub const Direction = enum { positive, negative };
@@ -1077,26 +1077,30 @@ const Input = struct {
 
     pub fn update(self: *@This()) void {
         inline for (@typeInfo(@TypeOf(self.state)).Struct.fields) |field| {
-            inline for (.{ "positive", "negative" }) |direction| {
+            inline for (.{ Direction.positive, Direction.negative }) |direction| {
                 // Check if the keyboard or controller control is activated
                 const keyboard_action = @field(self.keyboard_map, field.name);
-                const key = if (@field(keyboard_action, direction)) |key|
+                const key = if (@field(keyboard_action, @tagName(direction))) |key|
                     c.SDL_GetKeyboardState(null)[key] == 1
                 else
                     false;
 
                 const controller_action = @field(self.controller_map, field.name);
-                const button = if (@field(controller_action.buttons, direction)) |button|
+                const button = if (@field(controller_action.buttons, @tagName(direction))) |button|
                     c.SDL_GameControllerGetButton(self.controller, button) != 0
                 else
                     false;
-                const axis = if (controller_action.axis) |axis|
-                    c.SDL_GameControllerGetAxis(self.controller, axis) > controller_action.dead_zone
-                else
-                    false;
+
+                const axis = if (controller_action.axis) |axis| a: {
+                    const v = c.SDL_GameControllerGetAxis(self.controller, axis);
+                    switch (direction) {
+                        .positive => break :a v > controller_action.dead_zone,
+                        .negative => break :a v < -controller_action.dead_zone,
+                    }
+                } else false;
 
                 // Update the current state
-                var current_state = &@field(@field(self.state, field.name), direction);
+                const current_state = &@field(@field(self.state, field.name), @tagName(direction));
 
                 if (key or button or axis) {
                     switch (current_state.*) {
