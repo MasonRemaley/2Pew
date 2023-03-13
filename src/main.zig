@@ -169,62 +169,85 @@ pub fn main() !void {
     }
 
     // Create rock
-    // {
-    //     // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
-    //     // process damage first or do it as part of collision detection!
-    //     // maybe this is why health bars sometimes seem to not show up?
-    //     const speed = 100 + std.crypto.random.float(f32) * 400;
-    //     const rock_1 = entities.create(.{
-    //         .sprite = game.rock_sprite,
-    //         .rb = .{
-    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
-    //             .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-    //             .angle = 0,
-    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
-    //             .density = 0.10,
-    //         },
-    //         .collider = .{
-    //             .collision_damping = 1,
-    //             .layer = .hazard,
-    //         },
-    //         // .health = .{
-    //         //     .hp = 160,
-    //         //     .max_hp = 160,
-    //         // },
-    //     });
+    {
+        // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
+        // process damage first or do it as part of collision detection!
+        // maybe this is why health bars sometimes seem to not show up?
+        const speed = 100 + std.crypto.random.float(f32) * 400;
+        const rock_1 = entities.create(.{
+            .sprite = game.rock_sprite,
+            .rb = .{
+                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+                .angle = 0,
+                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
+                .density = 0.10,
+            },
+            .collider = .{
+                .collision_damping = 1,
+                .layer = .hazard,
+            },
+            // .health = .{
+            //     .hp = 160,
+            //     .max_hp = 160,
+            // },
+        });
 
-    //     const rock_2 = entities.create(.{
-    //         .sprite = game.rock_sprite,
-    //         .rb = .{
-    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
-    //             .vel = .{ .x = 0.0, .y = 0.0 },
-    //             .angle = 0,
-    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
-    //             .density = 0.10,
-    //         },
-    //         .collider = .{
-    //             .collision_damping = 1,
-    //             .layer = .hazard,
-    //         },
-    //         // .health = .{
-    //         //     .hp = 160,
-    //         //     .max_hp = 160,
-    //         // },
-    //     });
-    //     _ = entities.create(.{
-    //         .spring = .{
-    //             .start = rock_1,
-    //             .end = rock_2,
-    //             // XXX: still not clear if over-damping works...
-    //             .damping = 0.001,
-    //             .k = 100000.0,
-    //             .min_len = 500.0,
-    //             .max_len = 1000.0,
-    //         },
-    //     });
-    // }
+        const rock_2 = entities.create(.{
+            .sprite = game.rock_sprite,
+            .rb = .{
+                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+                .angle = 0,
+                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
+                .density = 0.10,
+            },
+            .collider = .{
+                .collision_damping = 1,
+                .layer = .hazard,
+            },
+            // .health = .{
+            //     .hp = 160,
+            //     .max_hp = 160,
+            // },
+        });
+
+        const rock_3 = entities.create(.{
+            .sprite = game.rock_sprite,
+            .rb = .{
+                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+                .angle = 0,
+                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
+                .density = 0.10,
+            },
+            .collider = .{
+                .collision_damping = 1,
+                .layer = .hazard,
+            },
+            // .health = .{
+            //     .hp = 160,
+            //     .max_hp = 160,
+            // },
+        });
+        _ = rock_1;
+        _ = rock_2;
+        _ = rock_3;
+        // _ = entities.create(.{
+        //     .spring = .{
+        //         .start = rock_1,
+        //         .end = rock_2,
+        //         // XXX: still not clear if over-damping works...
+        //         .damping = 0.001,
+        //         .k = 100000.0,
+        //         .min_len = 500.0,
+        //         .max_len = 1000.0,
+        //     },
+        // });
+    }
 
     // Create stars
     var stars: [150]Star = undefined;
