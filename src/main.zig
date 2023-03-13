@@ -169,28 +169,26 @@ pub fn main() !void {
     }
 
     // Create rock
-    {
+    for (0..4) |_| {
         // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
         // process damage first or do it as part of collision detection!
         // maybe this is why health bars sometimes seem to not show up?
-        const speed = 100 + std.crypto.random.float(f32) * 400;
+        const speed = std.crypto.random.float(f32) * 300;
+        const radius = 10 + std.crypto.random.float(f32) * 110;
+        const sprite = game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, game.rock_sprites.len)];
         _ = entities.create(.{
-            .sprite = game.rock_sprite,
+            .sprite = sprite,
             .rb = .{
                 .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
                 .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
                 .angle = 0,
                 .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 2.0,
+                .radius = radius,
                 .density = 0.10,
             },
             .collider = .{
                 .collision_damping = 1,
                 .layer = .hazard,
-            },
-            .health = .{
-                .hp = 160,
-                .max_hp = 160,
             },
         });
     }
@@ -349,7 +347,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .vel = avg_vel.plus(random_vel),
                             .angle = 2 * math.pi * std.crypto.random.float(f32),
                             .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                            .radius = 32,
+                            .radius = game.animationRadius(shrapnel_animation),
                             .density = 0.001,
                         },
                         .animation = .{
@@ -502,7 +500,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                                 .vel = ship_rb.vel.plus(rb.vel.scaled(0.2)).plus(random_vector),
                                 .angle = 2 * math.pi * std.crypto.random.float(f32),
                                 .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                                .radius = 32,
+                                .radius = game.animationRadius(shrapnel_animation),
                                 .density = 0.001,
                             },
                             .animation = .{
@@ -616,7 +614,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         .vel = V.unit(rb.angle).scaled(turret.projectile_speed).plus(rb.vel),
                         .angle = 0,
                         .rotation_vel = 0,
-                        .radius = 2,
+                        .radius = 12,
                         // TODO(mason): modify math to accept 0 and inf mass
                         .density = 0.001,
                     },
@@ -815,11 +813,17 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
             const rb = entity.comps.rb;
             const animation = entity.comps.animation;
             const frame = assets.animate(animation, delta_s);
+            const unscaled_sprite_size = frame.sprite.size();
+            const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
+            const size_coefficient = rb.radius / sprite_radius;
+            const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
+            const dest_rect = sdlRect(rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
+
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 frame.sprite.texture,
                 null, // source rectangle
-                &frame.sprite.toSdlRect(rb.pos),
+                &dest_rect,
                 toDegrees(rb.angle + frame.angle),
                 null, // center of angle
                 c.SDL_FLIP_NONE,
@@ -865,11 +869,16 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         while (it.next()) |entity| {
             const rb = entity.comps.rb;
             const sprite = assets.sprite(entity.comps.sprite.*);
+            const unscaled_sprite_size = sprite.size();
+            const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
+            const size_coefficient = rb.radius / sprite_radius;
+            const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
+            const dest_rect = sdlRect(rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
                 null, // source rectangle
-                &sprite.toSdlRect(rb.pos),
+                &dest_rect,
                 toDegrees(rb.angle),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
@@ -1289,6 +1298,11 @@ const Sprite = struct {
             .y = @intToFloat(f32, sprite.rect.h),
         };
     }
+
+    fn radius(sprite: Sprite) f32 {
+        const s = sprite.size();
+        return (s.x + s.y) / 4.0;
+    }
 };
 
 const Game = struct {
@@ -1305,15 +1319,20 @@ const Game = struct {
     planet_red: Sprite.Index,
     bullet_small: Sprite.Index,
 
-    rock_sprite: Sprite.Index,
+    rock_sprites: [rock_sprite_names.len]Sprite.Index,
 
-    ranger_still: Animation.Index,
-    ranger_accel: Animation.Index,
+    ranger_animations: ShipAnimations,
     ranger_radius: f32,
 
-    militia_still: Animation.Index,
-    militia_accel: Animation.Index,
+    militia_animations: ShipAnimations,
     militia_radius: f32,
+
+    test_animations: [4]ShipAnimations,
+
+    const ShipAnimations = struct {
+        still: Animation.Index,
+        accel: Animation.Index,
+    };
 
     const shrapnel_sprite_names = [_][]const u8{
         "img/shrapnel/01.png",
@@ -1331,8 +1350,8 @@ const Game = struct {
         return entities.create(.{
             .ship = .{
                 .class = .ranger,
-                .still = self.ranger_still,
-                .accel = self.ranger_accel,
+                .still = self.ranger_animations.still,
+                .accel = self.ranger_animations.accel,
                 .turn_speed = math.pi * 1.1,
                 .thrust = 150,
                 .player = player_index,
@@ -1354,7 +1373,7 @@ const Game = struct {
                 .layer = .vehicle,
             },
             .animation = .{
-                .index = self.ranger_still,
+                .index = self.ranger_animations.still,
                 .time_passed = 0,
             },
             .turret = .{
@@ -1374,8 +1393,8 @@ const Game = struct {
         return entities.create(.{
             .ship = .{
                 .class = .militia,
-                .still = self.militia_still,
-                .accel = self.militia_accel,
+                .still = self.militia_animations.still,
+                .accel = self.militia_animations.accel,
                 .turn_speed = math.pi * 1.2,
                 .thrust = 300,
                 .player = player_index,
@@ -1397,7 +1416,7 @@ const Game = struct {
                 .layer = .vehicle,
             },
             .animation = .{
-                .index = self.militia_still,
+                .index = self.militia_animations.still,
                 .time_passed = 0,
             },
             // .grapple_gun = .{
@@ -1490,6 +1509,25 @@ const Game = struct {
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
 
+        var test_animations: [4]ShipAnimations = undefined;
+        for (&test_animations, 1..) |*ani, i| {
+            const name = try std.fmt.allocPrint(assets.gpa, "img/ship/test{d}.png", .{i});
+            const test_sprite = try assets.loadSprite(name);
+            const test_still = try assets.addAnimation(&.{
+                test_sprite,
+            }, null, 30, math.pi / 2.0);
+            const test_steady_thrust = try assets.addAnimation(&.{
+                test_sprite,
+            }, null, 10, math.pi / 2.0);
+            const test_accel = try assets.addAnimation(&.{
+                test_sprite,
+            }, test_steady_thrust, 10, math.pi / 2.0);
+            ani.* = .{
+                .still = test_still,
+                .accel = test_accel,
+            };
+        }
+
         return .{
             .assets = assets,
             .players = .{
@@ -1512,15 +1550,21 @@ const Game = struct {
             .star_large = star_large,
             .planet_red = planet_red,
             .bullet_small = bullet_small,
-            .rock_sprite = rock_sprites[0],
+            .rock_sprites = rock_sprites,
 
-            .ranger_still = ranger_still,
-            .ranger_accel = ranger_accel,
+            .ranger_animations = .{
+                .still = ranger_still,
+                .accel = ranger_accel,
+            },
             .ranger_radius = ranger_radius,
 
-            .militia_still = militia_still,
-            .militia_accel = militia_accel,
+            .militia_animations = .{
+                .still = militia_still,
+                .accel = militia_accel,
+            },
             .militia_radius = militia_radius,
+
+            .test_animations = test_animations,
         };
     }
 
@@ -1530,6 +1574,14 @@ const Game = struct {
             .ranger => game.createRanger(entities, player_index, pos, input),
             .militia => game.createMilitia(entities, player_index, pos, input),
         };
+    }
+
+    fn animationRadius(game: Game, animation_index: Animation.Index) f32 {
+        const assets = game.assets;
+        const animation = assets.animations.items[@enumToInt(animation_index)];
+        const sprite_index = assets.frames.items[animation.start];
+        const sprite = assets.sprites.items[@enumToInt(sprite_index)];
+        return sprite.radius();
     }
 };
 
