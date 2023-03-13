@@ -1404,14 +1404,14 @@ const Game = struct {
             .sketch4 => 3,
             else => unreachable,
         };
-        const radius = 32;
+        const radius = 24;
         return entities.create(.{
             .ship = .{
                 .class = class,
                 .still = self.sketch_animations[index].still,
                 .accel = self.sketch_animations[index].accel,
-                .turn_speed = math.pi * 1.1,
-                .thrust = 150,
+                .turn_speed = math.pi * 0.9,
+                .thrust = 300,
                 .player = player_index,
             },
             .health = .{
@@ -1439,7 +1439,7 @@ const Game = struct {
                 .angle = 0,
                 .cooldown = 0,
                 .cooldown_amount = 0.2,
-                .projectile_speed = 500,
+                .projectile_speed = 700,
                 .projectile_lifetime = 1.0,
                 .projectile_damage = 10,
             },
