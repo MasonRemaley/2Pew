@@ -1274,7 +1274,7 @@ const Ship = struct {
     class: Class,
     player: u2,
 
-    const Class = enum { ranger, militia };
+    const Class = enum { ranger, militia, sketch1, sketch2, sketch3, sketch4 };
 };
 
 const Sprite = struct {
@@ -1327,7 +1327,7 @@ const Game = struct {
     militia_animations: ShipAnimations,
     militia_radius: f32,
 
-    test_animations: [4]ShipAnimations,
+    sketch_animations: [4]ShipAnimations,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -1382,7 +1382,65 @@ const Game = struct {
                 .cooldown = 0,
                 .cooldown_amount = 0.2,
                 .projectile_speed = 500,
-                .projectile_lifetime = 0.5,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 10,
+            },
+            .input = input,
+        });
+    }
+
+    fn createSketch(
+        self: *const @This(),
+        entities: *Entities,
+        player_index: u2,
+        pos: V,
+        input: Input,
+        class: Ship.Class,
+    ) EntityHandle {
+        const index: u8 = switch (class) {
+            .sketch1 => 0,
+            .sketch2 => 1,
+            .sketch3 => 2,
+            .sketch4 => 3,
+            else => unreachable,
+        };
+        const radius = 32;
+        return entities.create(.{
+            .ship = .{
+                .class = class,
+                .still = self.sketch_animations[index].still,
+                .accel = self.sketch_animations[index].accel,
+                .turn_speed = math.pi * 1.1,
+                .thrust = 150,
+                .player = player_index,
+            },
+            .health = .{
+                .hp = 80,
+                .max_hp = 80,
+            },
+            .rb = .{
+                .pos = pos,
+                .vel = .{ .x = 0, .y = 0 },
+                .angle = -math.pi / 2.0,
+                .radius = radius,
+                .rotation_vel = 0.0,
+                .density = 0.02,
+            },
+            .collider = .{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            .animation = .{
+                .index = self.sketch_animations[index].still,
+                .time_passed = 0,
+            },
+            .turret = .{
+                .radius = radius,
+                .angle = 0,
+                .cooldown = 0,
+                .cooldown_amount = 0.2,
+                .projectile_speed = 500,
+                .projectile_lifetime = 1.0,
                 .projectile_damage = 10,
             },
             .input = input,
@@ -1509,8 +1567,8 @@ const Game = struct {
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
 
-        var test_animations: [4]ShipAnimations = undefined;
-        for (&test_animations, 1..) |*ani, i| {
+        var sketch_animations: [4]ShipAnimations = undefined;
+        for (&sketch_animations, 1..) |*ani, i| {
             const name = try std.fmt.allocPrint(assets.gpa, "img/ship/test{d}.png", .{i});
             const test_sprite = try assets.loadSprite(name);
             const test_still = try assets.addAnimation(&.{
@@ -1528,18 +1586,18 @@ const Game = struct {
             };
         }
 
+        const progression = &.{ .ranger, .militia, .sketch1, .sketch2, .sketch3, .sketch4 };
+
         return .{
             .assets = assets,
             .players = .{
                 .{
                     .ship_progression_index = 0,
-                    // XXX: change order back
-                    .ship_progression = &.{ .militia, .ranger },
+                    .ship_progression = progression,
                 },
                 .{
                     .ship_progression_index = 0,
-                    // XXX: change order back
-                    .ship_progression = &.{ .militia, .ranger },
+                    .ship_progression = progression,
                 },
             },
             .shrapnel_animations = shrapnel_animations,
@@ -1564,7 +1622,7 @@ const Game = struct {
             },
             .militia_radius = militia_radius,
 
-            .test_animations = test_animations,
+            .sketch_animations = sketch_animations,
         };
     }
 
@@ -1573,6 +1631,12 @@ const Game = struct {
         return switch (player.ship_progression[player.ship_progression_index]) {
             .ranger => game.createRanger(entities, player_index, pos, input),
             .militia => game.createMilitia(entities, player_index, pos, input),
+
+            .sketch1,
+            .sketch2,
+            .sketch3,
+            .sketch4,
+            => |class| game.createSketch(entities, player_index, pos, input, class),
         };
     }
 
