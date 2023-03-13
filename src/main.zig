@@ -469,6 +469,12 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         while (it.next()) |entity| {
             const spring = entity.comps.spring;
 
+            // XXX: hack for playtest
+            if (!entities.exists(spring.start) or !entities.exists(spring.end)) {
+                entities.remove(entity.handle);
+                continue;
+            }
+
             // XXX: crashes if either end has been deleted right now. we may wanna actually make
             // checking if an entity is valid or not a feature if there's not a bette way to handle this?
             var start = entities.getComponent(spring.start, .rb) orelse {
@@ -617,7 +623,27 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     },
                 });
 
-                // If this is a playe controlled ship, spawn a new ship for the player using this
+                // XXX: this is a hack for playtest session
+                // If has a grapple hook, delete it first
+                if (entities.getComponent(entity.handle, .grapple_gun)) |grapple_gun| {
+                    if (grapple_gun.live) |live| {
+                        for (live.springs) |spring| {
+                            if (entities.exists(spring)) {
+                                entities.remove(spring);
+                            }
+                        }
+                        for (live.joints) |joint| {
+                            if (entities.exists(joint)) {
+                                entities.remove(joint);
+                            }
+                        }
+                        if (entities.exists(live.hook)) {
+                            entities.remove(live.hook);
+                        }
+                    }
+                }
+
+                // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
                 if (entities.getComponent(entity.handle, .ship)) |ship| {
                     if (entities.getComponent(entity.handle, .input)) |input| {

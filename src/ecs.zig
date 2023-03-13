@@ -592,6 +592,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return entity;
         }
 
+        // XXX: hack for playtest
+        pub fn exists(self: *@This(), entity: EntityHandle) bool {
+            return self.slots[entity.index].generation == entity.generation;
+        }
+
         // TODO: check assertions
         fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: FieldEnum(Entity)) !?*std.meta.fieldInfo(Entity, component).type {
             // TODO: dup code
