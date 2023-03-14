@@ -90,7 +90,7 @@ pub fn main() !void {
 
     // Set up players
     {
-        var controllers = [2]?*c.SDL_GameController{ null, null };
+        var controllers = [4]?*c.SDL_GameController{ null, null, null, null };
         {
             var player_index: u32 = 0;
             for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
@@ -145,6 +145,11 @@ pub fn main() !void {
                 .positive = c.SDL_SCANCODE_DOWN,
             },
         };
+        const keyboard_none: Input.KeyboardMap = .{
+            .turn = .{},
+            .forward = .{},
+            .fire = .{},
+        };
 
         var input_devices = [_]Input{
             .{
@@ -157,14 +162,22 @@ pub fn main() !void {
                 .controller_map = controller_default,
                 .keyboard_map = keyboard_arrows,
             },
+            .{
+                .controller = controllers[2],
+                .controller_map = controller_default,
+                .keyboard_map = keyboard_none,
+            },
+            .{
+                .controller = controllers[3],
+                .controller_map = controller_default,
+                .keyboard_map = keyboard_none,
+            },
         };
 
         for (input_devices, 0..) |input, i| {
-            const pos = .{
-                .x = 500 + 500 * @intToFloat(f32, i),
-                .y = 500,
-            };
-            _ = game.createShip(&entities, @intCast(u2, i), pos, input);
+            const angle = math.pi / 2.0 * @intToFloat(f32, i);
+            const pos = display_center.plus(V.unit(angle).scaled(50));
+            _ = game.createShip(&entities, @intCast(u2, i), pos, angle, input);
         }
     }
 
@@ -562,9 +575,10 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         }
                         const new_angle = math.pi * 2 * std.crypto.random.float(f32);
                         const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
+                        const facing_angle = new_angle + math.pi;
 
                         // Create a new ship from this ship's input, and then destroy it!
-                        _ = game.createShip(entities, ship.player, new_pos, input.*);
+                        _ = game.createShip(entities, ship.player, new_pos, facing_angle, input.*);
                     }
                 }
 
@@ -1308,7 +1322,7 @@ const Sprite = struct {
 const Game = struct {
     assets: *Assets,
 
-    players: [2]Player,
+    players: [4]Player,
 
     shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
     explosion_animation: Animation.Index,
@@ -1346,7 +1360,14 @@ const Game = struct {
         "img/rock-c.png",
     };
 
-    fn createRanger(self: *const @This(), entities: *Entities, player_index: u2, pos: V, input: Input) EntityHandle {
+    fn createRanger(
+        self: *const @This(),
+        entities: *Entities,
+        player_index: u2,
+        pos: V,
+        angle: f32,
+        input: Input,
+    ) EntityHandle {
         return entities.create(.{
             .ship = .{
                 .class = .ranger,
@@ -1363,7 +1384,7 @@ const Game = struct {
             .rb = .{
                 .pos = pos,
                 .vel = .{ .x = 0, .y = 0 },
-                .angle = -math.pi / 2.0,
+                .angle = angle,
                 .radius = self.ranger_radius,
                 .rotation_vel = 0.0,
                 .density = 0.02,
@@ -1394,6 +1415,7 @@ const Game = struct {
         entities: *Entities,
         player_index: u2,
         pos: V,
+        angle: f32,
         input: Input,
         class: Ship.Class,
     ) EntityHandle {
@@ -1421,7 +1443,7 @@ const Game = struct {
             .rb = .{
                 .pos = pos,
                 .vel = .{ .x = 0, .y = 0 },
-                .angle = -math.pi / 2.0,
+                .angle = angle,
                 .radius = radius,
                 .rotation_vel = 0.0,
                 .density = 0.02,
@@ -1447,7 +1469,14 @@ const Game = struct {
         });
     }
 
-    fn createMilitia(self: *const @This(), entities: *Entities, player_index: u2, pos: V, input: Input) EntityHandle {
+    fn createMilitia(
+        self: *const @This(),
+        entities: *Entities,
+        player_index: u2,
+        pos: V,
+        angle: f32,
+        input: Input,
+    ) EntityHandle {
         return entities.create(.{
             .ship = .{
                 .class = .militia,
@@ -1464,7 +1493,7 @@ const Game = struct {
             .rb = .{
                 .pos = pos,
                 .vel = .{ .x = 0, .y = 0 },
-                .angle = -math.pi / 2.0,
+                .angle = angle,
                 .rotation_vel = 0.0,
                 .radius = self.militia_radius,
                 .density = 0.04,
@@ -1587,19 +1616,14 @@ const Game = struct {
         }
 
         const progression = &.{ .ranger, .militia, .sketch1, .sketch2, .sketch3, .sketch4 };
+        const player_init: Player = .{
+            .ship_progression_index = 0,
+            .ship_progression = progression,
+        };
 
         return .{
             .assets = assets,
-            .players = .{
-                .{
-                    .ship_progression_index = 0,
-                    .ship_progression = progression,
-                },
-                .{
-                    .ship_progression_index = 0,
-                    .ship_progression = progression,
-                },
-            },
+            .players = .{ player_init, player_init, player_init, player_init },
             .shrapnel_animations = shrapnel_animations,
             .explosion_animation = explosion_animation,
 
@@ -1626,17 +1650,24 @@ const Game = struct {
         };
     }
 
-    fn createShip(game: *Game, entities: *Entities, player_index: u2, pos: V, input: Input) EntityHandle {
+    fn createShip(
+        game: *Game,
+        entities: *Entities,
+        player_index: u2,
+        pos: V,
+        angle: f32,
+        input: Input,
+    ) EntityHandle {
         const player = game.players[player_index];
         return switch (player.ship_progression[player.ship_progression_index]) {
-            .ranger => game.createRanger(entities, player_index, pos, input),
-            .militia => game.createMilitia(entities, player_index, pos, input),
+            .ranger => game.createRanger(entities, player_index, pos, angle, input),
+            .militia => game.createMilitia(entities, player_index, pos, angle, input),
 
             .sketch1,
             .sketch2,
             .sketch3,
             .sketch4,
-            => |class| game.createSketch(entities, player_index, pos, input, class),
+            => |class| game.createSketch(entities, player_index, pos, angle, input, class),
         };
     }
 
