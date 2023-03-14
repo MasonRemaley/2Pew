@@ -168,86 +168,86 @@ pub fn main() !void {
         }
     }
 
-    // Create rock
-    {
-        // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
-        // process damage first or do it as part of collision detection!
-        // maybe this is why health bars sometimes seem to not show up?
-        const speed = 30 + std.crypto.random.float(f32) * 400;
-        const rock_1 = entities.create(.{
-            .sprite = game.rock_sprite,
-            .rb = .{
-                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
-                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                .angle = 0,
-                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
-                .density = 0.10,
-            },
-            .collider = .{
-                .collision_damping = 1,
-                .layer = .hazard,
-            },
-            // .health = .{
-            //     .hp = 160,
-            //     .max_hp = 160,
-            // },
-        });
+    // // Create rock
+    // {
+    //     // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
+    //     // process damage first or do it as part of collision detection!
+    //     // maybe this is why health bars sometimes seem to not show up?
+    //     const speed = 30 + std.crypto.random.float(f32) * 400;
+    //     const rock_1 = entities.create(.{
+    //         .sprite = game.rock_sprite,
+    //         .rb = .{
+    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+    //             .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+    //             .angle = 0,
+    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
+    //             .density = 0.10,
+    //         },
+    //         .collider = .{
+    //             .collision_damping = 1,
+    //             .layer = .hazard,
+    //         },
+    //         // .health = .{
+    //         //     .hp = 160,
+    //         //     .max_hp = 160,
+    //         // },
+    //     });
 
-        const rock_2 = entities.create(.{
-            .sprite = game.rock_sprite,
-            .rb = .{
-                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
-                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                .angle = 0,
-                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
-                .density = 0.10,
-            },
-            .collider = .{
-                .collision_damping = 1,
-                .layer = .hazard,
-            },
-            // .health = .{
-            //     .hp = 160,
-            //     .max_hp = 160,
-            // },
-        });
+    //     const rock_2 = entities.create(.{
+    //         .sprite = game.rock_sprite,
+    //         .rb = .{
+    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+    //             .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+    //             .angle = 0,
+    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
+    //             .density = 0.10,
+    //         },
+    //         .collider = .{
+    //             .collision_damping = 1,
+    //             .layer = .hazard,
+    //         },
+    //         // .health = .{
+    //         //     .hp = 160,
+    //         //     .max_hp = 160,
+    //         // },
+    //     });
 
-        const rock_3 = entities.create(.{
-            .sprite = game.rock_sprite,
-            .rb = .{
-                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
-                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                .angle = 0,
-                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
-                .density = 0.10,
-            },
-            .collider = .{
-                .collision_damping = 1,
-                .layer = .hazard,
-            },
-            // .health = .{
-            //     .hp = 160,
-            //     .max_hp = 160,
-            // },
-        });
-        _ = rock_1;
-        _ = rock_2;
-        _ = rock_3;
-        // _ = entities.create(.{
-        //     .spring = .{
-        //         .start = rock_1,
-        //         .end = rock_2,
-        //         // XXX: still not clear if over-damping works...
-        //         .damping = 0.001,
-        //         .k = 100000.0,
-        //         .min_len = 500.0,
-        //         .max_len = 1000.0,
-        //     },
-        // });
-    }
+    //     const rock_3 = entities.create(.{
+    //         .sprite = game.rock_sprite,
+    //         .rb = .{
+    //             .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+    //             .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+    //             .angle = 0,
+    //             .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+    //             .radius = @intToFloat(f32, assets.sprite(game.rock_sprite).rect.w) / 4.0,
+    //             .density = 0.10,
+    //         },
+    //         .collider = .{
+    //             .collision_damping = 1,
+    //             .layer = .hazard,
+    //         },
+    //         // .health = .{
+    //         //     .hp = 160,
+    //         //     .max_hp = 160,
+    //         // },
+    //     });
+    //     _ = rock_1;
+    //     _ = rock_2;
+    //     _ = rock_3;
+    //     // _ = entities.create(.{
+    //     //     .spring = .{
+    //     //         .start = rock_1,
+    //     //         .end = rock_2,
+    //     //         // XXX: still not clear if over-damping works...
+    //     //         .damping = 0.001,
+    //     //         .k = 100000.0,
+    //     //         .min_len = 500.0,
+    //     //         .max_len = 1000.0,
+    //     //     },
+    //     // });
+    // }
     //XXX: look at gamepad fix
     // Create stars
     var stars: [150]Star = undefined;
@@ -424,31 +424,35 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 {
                     var hooked = false;
                     if (entities.getComponent(entity.handle, .hook)) |hook| {
-                        // XXX: make a public changeArchetype function so that we can do this in a single
-                        // move, could also be named removeComponentsAddComponents or such, probably
-                        // should work even if overlap?
-                        entities.removeComponents(entity.handle, .{ .hook, .collider });
-                        entities.addComponents(entity.handle, .{ .spring = Spring{
-                            .start = entity.handle,
-                            .end = other_entity.handle,
-                            .k = hook.k,
-                            .max_len = rb.pos.distance(other.rb.pos),
-                            .min_len = 0.0,
-                            .damping = hook.damping,
-                        } });
-                        hooked = true;
+                        if (!other_entity.handle.eql(hook.origin)) {
+                            // XXX: make a public changeArchetype function so that we can do this in a single
+                            // move, could also be named removeComponentsAddComponents or such, probably
+                            // should work even if overlap?
+                            entities.removeComponents(entity.handle, .{ .hook, .collider });
+                            entities.addComponents(entity.handle, .{ .spring = Spring{
+                                .start = entity.handle,
+                                .end = other_entity.handle,
+                                .k = hook.k,
+                                .max_len = rb.pos.distance(other.rb.pos),
+                                .min_len = 0.0,
+                                .damping = hook.damping,
+                            } });
+                            hooked = true;
+                        }
                     }
                     if (entities.getComponent(other_entity.handle, .hook)) |hook| {
-                        entities.removeComponents(other_entity.handle, .{.hook});
-                        entities.addComponents(other_entity.handle, .{ .spring = Spring{
-                            .start = entity.handle,
-                            .end = other_entity.handle,
-                            .k = hook.k,
-                            .max_len = rb.pos.distance(other.rb.pos),
-                            .min_len = 0.0,
-                            .damping = hook.damping,
-                        } });
-                        hooked = true;
+                        if (!entity.handle.eql(hook.origin)) {
+                            entities.removeComponents(other_entity.handle, .{.hook});
+                            entities.addComponents(other_entity.handle, .{ .spring = Spring{
+                                .start = entity.handle,
+                                .end = other_entity.handle,
+                                .k = hook.k,
+                                .max_len = rb.pos.distance(other.rb.pos),
+                                .min_len = 0.0,
+                                .damping = hook.damping,
+                            } });
+                            hooked = true;
+                        }
                     }
                     // XXX: continue afte first one..?
                     if (hooked) {
@@ -764,13 +768,20 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
                 // XXX: increase cooldown?
                 if (gg.live) |live| {
+                    // XXX: hacky tests for now...
                     for (live.joints) |piece| {
-                        entities.remove(piece);
+                        if (entities.exists(piece)) {
+                            entities.remove(piece);
+                        }
                     }
                     for (live.springs) |piece| {
-                        entities.remove(piece);
+                        if (entities.exists(piece)) {
+                            entities.remove(piece);
+                        }
                     }
-                    entities.remove(live.hook);
+                    if (entities.exists(live.hook)) {
+                        entities.remove(live.hook);
+                    }
                     gg.live = null;
                 } else {
                     // XXX: behave sensibly if the ship that fired it dies...right now crashes cause
@@ -811,23 +822,29 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             // XXX: ...
                             // .sprite = game.bullet_small,
                         });
-                        pos.add(dir.scaled(segment_len));
+                        // XXX: why can't set to same?
+                        pos.add(dir.scaled(segment_len / 10.0));
                     }
                     // XXX: i think the damping code is broken, if i set this to be critically damped
                     // it explodes--even over damping shouldn't do that it should slow things down
                     // extra!
+                    // XXX: instead of doing damage to own ship, destroy or just ignore if touches own ship?
                     const hook = Hook{
                         .damping = 0.0,
                         .k = 10000.0,
+                        .origin = entity.handle,
                     };
+                    const hook_speed = 2000.0;
+                    const hook_density = density;
+                    const hook_radius = 2;
                     gg.live.?.hook = entities.create(.{
                         .rb = .{
                             .pos = pos,
-                            .vel = vel,
+                            .vel = vel.plus(dir.scaled(hook_speed)),
                             .angle = 0,
                             .rotation_vel = 0,
-                            .radius = 2,
-                            .density = density,
+                            .radius = hook_radius,
+                            .density = hook_density,
                             .damping = GrappleGun.damping,
                         },
                         .collider = .{
@@ -838,6 +855,10 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         // XXX: ...
                         // .sprite = game.bullet_small,
                     });
+                    // XXX: maybe to avoid this changing out velocity too much we actually do roll it
+                    // back up instead of deleting when done?
+                    const hook_mass = hook_density * math.pi * hook_radius * hook_radius;
+                    rb.impulse.add(dir.scaled(-hook_speed * hook_mass / rb.mass()));
                     for (0..(gg.live.?.springs.len)) |i| {
                         gg.live.?.springs[i] = entities.create(.{
                             .spring = .{
@@ -1004,6 +1025,10 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
         var it = entities.iterator(.{.spring});
         while (it.next()) |entity| {
             var spring = entity.comps.spring;
+            // XXX: hack for deleting stuff...
+            if (!entities.exists(spring.start) or !entities.exists(spring.end)) {
+                continue;
+            }
             var start = (entities.getComponent(spring.start, .rb) orelse continue).pos;
             var end = (entities.getComponent(spring.end, .rb) orelse continue).pos;
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
@@ -1167,6 +1192,7 @@ const Spring = struct {
 };
 
 const Hook = struct {
+    origin: EntityHandle,
     damping: f32,
     k: f32,
 };
@@ -1224,10 +1250,10 @@ const Turret = struct {
 const GrappleGun = struct {
     // XXX: put constants in one place...
     // XXX: segmetns does change max length cause of give or something? affect spring constant?
-    const segments = 10;
-    const total_length = 250.0;
+    const segments = 5;
+    const total_length = 400.0;
     // XXX: measure in mass instead since it dosn't have a size
-    const rope_density = 10.0;
+    const rope_density = 1.0;
     const damping = 0.8;
 
     /// Together with angle, this is the location of the gun from the center

@@ -29,6 +29,12 @@ const max_archetypes = 40000;
 pub const EntityHandle = struct {
     index: SlotIndex,
     generation: EntityGeneration,
+
+    // XXX: either make generation matching part of the public api even in release mode, or assert
+    // that the generation matches here
+    pub fn eql(self: *const EntityHandle, other: EntityHandle) bool {
+        return self.index == other.index and self.generation == other.generation;
+    }
 };
 
 // TODO: really it should just be called components but then can't use that anywhere else...
