@@ -524,7 +524,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         });
 
                         entities.remove(damage_entity.handle);
-                        continue;
+                        break;
                     }
                 }
             }
