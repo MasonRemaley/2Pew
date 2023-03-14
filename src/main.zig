@@ -173,7 +173,7 @@ pub fn main() !void {
         // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
         // process damage first or do it as part of collision detection!
         // maybe this is why health bars sometimes seem to not show up?
-        const speed = 100 + std.crypto.random.float(f32) * 400;
+        const speed = 30 + std.crypto.random.float(f32) * 400;
         const rock_1 = entities.create(.{
             .sprite = game.rock_sprite,
             .rb = .{
@@ -248,7 +248,7 @@ pub fn main() !void {
         //     },
         // });
     }
-
+    //XXX: look at gamepad fix
     // Create stars
     var stars: [150]Star = undefined;
     generateStars(&stars);
@@ -1225,7 +1225,7 @@ const GrappleGun = struct {
     // XXX: put constants in one place...
     // XXX: segmetns does change max length cause of give or something? affect spring constant?
     const segments = 10;
-    const total_length = 100.0;
+    const total_length = 250.0;
     // XXX: measure in mass instead since it dosn't have a size
     const rope_density = 10.0;
     const damping = 0.8;
