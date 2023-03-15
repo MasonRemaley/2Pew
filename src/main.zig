@@ -1288,7 +1288,7 @@ const Ship = struct {
     class: Class,
     player: u2,
 
-    const Class = enum { ranger, militia, sketch1, sketch2, sketch3, sketch4 };
+    const Class = enum { ranger, militia, triangle };
 };
 
 const Sprite = struct {
@@ -1341,7 +1341,8 @@ const Game = struct {
     militia_animations: ShipAnimations,
     militia_radius: f32,
 
-    sketch_animations: [4]ShipAnimations,
+    triangle_animations: ShipAnimations,
+    triangle_radius: f32,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -1373,8 +1374,8 @@ const Game = struct {
                 .class = .ranger,
                 .still = self.ranger_animations.still,
                 .accel = self.ranger_animations.accel,
-                .turn_speed = math.pi * 1.1,
-                .thrust = 150,
+                .turn_speed = math.pi * 1.0,
+                .thrust = 160,
                 .player = player_index,
             },
             .health = .{
@@ -1401,37 +1402,29 @@ const Game = struct {
                 .radius = self.ranger_radius,
                 .angle = 0,
                 .cooldown = 0,
-                .cooldown_amount = 0.2,
-                .projectile_speed = 500,
+                .cooldown_amount = 0.10,
+                .projectile_speed = 550,
                 .projectile_lifetime = 1.0,
-                .projectile_damage = 10,
+                .projectile_damage = 6,
             },
             .input = input,
         });
     }
 
-    fn createSketch(
+    fn createTriangle(
         self: *const @This(),
         entities: *Entities,
         player_index: u2,
         pos: V,
         angle: f32,
         input: Input,
-        class: Ship.Class,
     ) EntityHandle {
-        const index: u8 = switch (class) {
-            .sketch1 => 0,
-            .sketch2 => 1,
-            .sketch3 => 2,
-            .sketch4 => 3,
-            else => unreachable,
-        };
         const radius = 24;
         return entities.create(.{
             .ship = .{
-                .class = class,
-                .still = self.sketch_animations[index].still,
-                .accel = self.sketch_animations[index].accel,
+                .class = .triangle,
+                .still = self.triangle_animations.still,
+                .accel = self.triangle_animations.accel,
                 .turn_speed = math.pi * 0.9,
                 .thrust = 300,
                 .player = player_index,
@@ -1444,7 +1437,7 @@ const Game = struct {
                 .pos = pos,
                 .vel = .{ .x = 0, .y = 0 },
                 .angle = angle,
-                .radius = radius,
+                .radius = 26,
                 .rotation_vel = 0.0,
                 .density = 0.02,
             },
@@ -1453,7 +1446,7 @@ const Game = struct {
                 .layer = .vehicle,
             },
             .animation = .{
-                .index = self.sketch_animations[index].still,
+                .index = self.triangle_animations.still,
                 .time_passed = 0,
             },
             .turret = .{
@@ -1593,29 +1586,29 @@ const Game = struct {
             try assets.loadSprite("img/explosion/12.png"),
         }, .none, 30, 0.0);
 
+        const triangle_sprites = [_]Sprite.Index{
+            try assets.loadSprite("img/ship/triangle0.png"),
+            try assets.loadSprite("img/ship/triangle1.png"),
+            try assets.loadSprite("img/ship/triangle2.png"),
+            try assets.loadSprite("img/ship/triangle3.png"),
+        };
+        const triangle_still = try assets.addAnimation(&.{
+            triangle_sprites[0],
+        }, null, 30, math.pi / 2.0);
+        const triangle_steady_thrust = try assets.addAnimation(&.{
+            triangle_sprites[2],
+            triangle_sprites[3],
+        }, null, 10, math.pi / 2.0);
+        const triangle_accel = try assets.addAnimation(&.{
+            triangle_sprites[0],
+            triangle_sprites[1],
+        }, triangle_steady_thrust, 10, math.pi / 2.0);
+
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
+        const triangle_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
 
-        var sketch_animations: [4]ShipAnimations = undefined;
-        for (&sketch_animations, 1..) |*ani, i| {
-            const name = try std.fmt.allocPrint(assets.gpa, "img/ship/test{d}.png", .{i});
-            const test_sprite = try assets.loadSprite(name);
-            const test_still = try assets.addAnimation(&.{
-                test_sprite,
-            }, null, 30, math.pi / 2.0);
-            const test_steady_thrust = try assets.addAnimation(&.{
-                test_sprite,
-            }, null, 10, math.pi / 2.0);
-            const test_accel = try assets.addAnimation(&.{
-                test_sprite,
-            }, test_steady_thrust, 10, math.pi / 2.0);
-            ani.* = .{
-                .still = test_still,
-                .accel = test_accel,
-            };
-        }
-
-        const progression = &.{ .ranger, .militia, .sketch1, .sketch2, .sketch3, .sketch4 };
+        const progression = &.{ .ranger, .militia, .triangle };
         const player_init: Player = .{
             .ship_progression_index = 0,
             .ship_progression = progression,
@@ -1646,7 +1639,11 @@ const Game = struct {
             },
             .militia_radius = militia_radius,
 
-            .sketch_animations = sketch_animations,
+            .triangle_animations = .{
+                .still = triangle_still,
+                .accel = triangle_accel,
+            },
+            .triangle_radius = triangle_radius,
         };
     }
 
@@ -1662,12 +1659,7 @@ const Game = struct {
         return switch (player.ship_progression[player.ship_progression_index]) {
             .ranger => game.createRanger(entities, player_index, pos, angle, input),
             .militia => game.createMilitia(entities, player_index, pos, angle, input),
-
-            .sketch1,
-            .sketch2,
-            .sketch3,
-            .sketch4,
-            => |class| game.createSketch(entities, player_index, pos, angle, input, class),
+            .triangle => game.createTriangle(entities, player_index, pos, angle, input),
         };
     }
 
