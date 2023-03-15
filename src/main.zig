@@ -243,7 +243,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
                     _ = entities.create(.{
                         .lifetime = .{
-                            .seconds = 2,
+                            .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
                         },
                         .rb = .{
                             .pos = shrapnel_center.plus(random_offset),
@@ -396,7 +396,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             .scaled(rb.vel.length() * 0.2);
                         _ = entities.create(.{
                             .lifetime = .{
-                                .seconds = 2,
+                                .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
                             },
                             .rb = .{
                                 .pos = ship_rb.pos,
@@ -1681,13 +1681,13 @@ const Game = struct {
             }
         }
 
-        // Create rock
+        // Create rocks
         for (0..3) |_| {
             const speed = 20 + std.crypto.random.float(f32) * 300;
             const radius = 25 + std.crypto.random.float(f32) * 110;
             const sprite = game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, game.rock_sprites.len)];
             const pos = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                .scaled(lerp(display_radius, display_radius * 1.2, std.crypto.random.float(f32)))
+                .scaled(lerp(display_radius, display_radius * 1.1, std.crypto.random.float(f32)))
                 .plus(display_center);
 
             _ = entities.create(.{
