@@ -464,7 +464,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             player.ship_progression_index = 0;
                         }
                         const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                        const new_pos = display_center.plus(V.unit(new_angle).scaled(500));
+                        const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
                         const facing_angle = new_angle + math.pi;
 
                         // Create a new ship from this ship's input, and then destroy it!
