@@ -211,13 +211,17 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
                 if (entities.getComponent(entity.handle, .health)) |health| {
                     const damage = remap(20, 300, 0, 80, impulse.length());
-                    health.hp -= damage;
-                    total_damage += damage;
+                    if (damage >= 2) {
+                        health.hp -= damage;
+                        total_damage += damage;
+                    }
                 }
                 if (entities.getComponent(other_entity.handle, .health)) |health| {
                     const damage = remap(20, 300, 0, 80, other_impulse.length());
-                    health.hp -= damage;
-                    total_damage += damage;
+                    if (damage >= 2) {
+                        health.hp -= damage;
+                        total_damage += damage;
+                    }
                 }
 
                 const shrapnel_amt = @floatToInt(
@@ -309,7 +313,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
             // gravity if the rb is outside the ring
             if (rb.pos.distanceSqrd(display_center) > display_radius * display_radius) {
-                const gravity = 400;
+                const gravity = 500;
                 const gravity_v = display_center.minus(rb.pos).normalized().scaled(gravity * delta_s);
                 rb.vel.add(gravity_v);
                 if (entities.getComponent(entity.handle, .health)) |health| {
@@ -1317,7 +1321,7 @@ const Game = struct {
                 .still = self.triangle_animations.still,
                 .accel = self.triangle_animations.accel,
                 .turn_speed = math.pi * 0.9,
-                .thrust = 300,
+                .thrust = 250,
                 .player = player_index,
             },
             .health = .{
@@ -1368,7 +1372,7 @@ const Game = struct {
                 .still = self.militia_animations.still,
                 .accel = self.militia_animations.accel,
                 .turn_speed = math.pi * 1.4,
-                .thrust = 300,
+                .thrust = 360,
                 .player = player_index,
             },
             .health = .{
