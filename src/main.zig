@@ -88,137 +88,16 @@ pub fn main() !void {
     var entities = try Entities.init(gpa);
     defer entities.deinit(gpa);
 
-    // Set up players
-    {
-        var controllers = [4]?*c.SDL_GameController{ null, null, null, null };
-        {
-            var player_index: u32 = 0;
-            for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
-                const i = @intCast(u31, i_usize);
-                if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
-                    const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
-                        panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
-                    };
-                    if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
-                        controllers[i] = sdl_controller;
-                        player_index += 1;
-                        if (player_index >= controllers.len) break;
-                    } else {
-                        c.SDL_GameControllerClose(sdl_controller);
-                    }
-                }
-            }
-        }
-
-        const controller_default = Input.ControllerMap{
-            .turn = .{
-                .axis = c.SDL_CONTROLLER_AXIS_LEFTX,
-            },
-            .forward = .{
-                .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_B },
-            },
-            .fire = .{
-                .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_A },
-            },
-        };
-        const keyboard_wasd = Input.KeyboardMap{
-            .turn = .{
-                .positive = c.SDL_SCANCODE_D,
-                .negative = c.SDL_SCANCODE_A,
-            },
-            .forward = .{
-                .positive = c.SDL_SCANCODE_W,
-            },
-            .fire = .{
-                .positive = c.SDL_SCANCODE_S,
-            },
-        };
-        const keyboard_arrows = Input.KeyboardMap{
-            .turn = .{
-                .positive = c.SDL_SCANCODE_RIGHT,
-                .negative = c.SDL_SCANCODE_LEFT,
-            },
-            .forward = .{
-                .positive = c.SDL_SCANCODE_UP,
-            },
-            .fire = .{
-                .positive = c.SDL_SCANCODE_DOWN,
-            },
-        };
-        const keyboard_none: Input.KeyboardMap = .{
-            .turn = .{},
-            .forward = .{},
-            .fire = .{},
-        };
-
-        var input_devices = [_]Input{
-            .{
-                .controller = controllers[0],
-                .controller_map = controller_default,
-                .keyboard_map = keyboard_wasd,
-            },
-            .{
-                .controller = controllers[1],
-                .controller_map = controller_default,
-                .keyboard_map = keyboard_arrows,
-            },
-            .{
-                .controller = controllers[2],
-                .controller_map = controller_default,
-                .keyboard_map = keyboard_none,
-            },
-            .{
-                .controller = controllers[3],
-                .controller_map = controller_default,
-                .keyboard_map = keyboard_none,
-            },
-        };
-
-        for (input_devices, 0..) |input, i| {
-            const angle = math.pi / 2.0 * @intToFloat(f32, i);
-            const pos = display_center.plus(V.unit(angle).scaled(50));
-            _ = game.createShip(&entities, @intCast(u2, i), pos, angle, input);
-        }
-    }
-
-    // Create rock
-    for (0..3) |_| {
-        const speed = 20 + std.crypto.random.float(f32) * 300;
-        const radius = 25 + std.crypto.random.float(f32) * 110;
-        const sprite = game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, game.rock_sprites.len)];
-        const pos = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-            .scaled(lerp(display_radius, display_radius * 1.2, std.crypto.random.float(f32)))
-            .plus(display_center);
-
-        _ = entities.create(.{
-            .sprite = sprite,
-            .rb = .{
-                .pos = pos,
-                .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                .angle = 0,
-                .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                .radius = radius,
-                .density = 0.10,
-            },
-            .collider = .{
-                .collision_damping = 1,
-                .layer = .hazard,
-            },
-        });
-    }
-
-    // Create stars
-    var stars: [150]Star = undefined;
-    generateStars(&stars);
+    game.setupScenario(&entities, .deathmatch_2v2);
 
     // Run sim
     var delta_s: f32 = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
     while (true) {
-        if (poll()) return;
+        if (poll(&entities, &game)) return;
         update(&entities, &game, delta_s);
-        render(assets, &entities, stars, game, delta_s);
+        render(assets, &entities, game, delta_s);
 
         // TODO(mason): we also want a min frame time so we don't get supririsng floating point
         // results if it's too close to zero!
@@ -232,13 +111,19 @@ pub fn main() !void {
     }
 }
 
-fn poll() bool {
+fn poll(entities: *Entities, game: *Game) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) != 0) {
         switch (event.type) {
             c.SDL_QUIT => return true,
             c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
                 c.SDL_SCANCODE_ESCAPE => return true,
+                c.SDL_SCANCODE_1 => {
+                    game.setupScenario(entities, .deathmatch_2v2);
+                },
+                c.SDL_SCANCODE_2 => {
+                    game.setupScenario(entities, .asteroids);
+                },
                 else => {},
             },
             else => {},
@@ -782,7 +667,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta_s: f32) void {
+fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
     const renderer = assets.renderer;
 
     // Clear screen
@@ -790,7 +675,7 @@ fn render(assets: Assets, entities: *Entities, stars: anytype, game: Game, delta
     sdlAssertZero(c.SDL_RenderClear(renderer));
 
     // Draw stars
-    for (stars) |star| {
+    for (game.stars) |star| {
         const sprite = assets.sprite(switch (star.kind) {
             .small => game.star_small,
             .large => game.star_large,
@@ -1345,6 +1230,8 @@ const Game = struct {
     triangle_animations: ShipAnimations,
     triangle_radius: f32,
 
+    stars: [150]Star,
+
     const ShipAnimations = struct {
         still: Animation.Index,
         accel: Animation.Index,
@@ -1645,6 +1532,8 @@ const Game = struct {
                 .accel = triangle_accel,
             },
             .triangle_radius = triangle_radius,
+
+            .stars = undefined,
         };
     }
 
@@ -1670,6 +1559,148 @@ const Game = struct {
         const sprite_index = assets.frames.items[animation.start];
         const sprite = assets.sprites.items[@enumToInt(sprite_index)];
         return sprite.radius();
+    }
+
+    const Scenario = enum { deathmatch_2v2, asteroids };
+
+    fn setupScenario(game: *Game, entities: *Entities, scenario: Scenario) void {
+        entities.deleteAll(.ship);
+        entities.deleteAll(.rb);
+        entities.deleteAll(.damage);
+        entities.deleteAll(.input);
+        entities.deleteAll(.lifetime);
+        entities.deleteAll(.sprite);
+        entities.deleteAll(.animation);
+        entities.deleteAll(.collider);
+        entities.deleteAll(.turret);
+        entities.deleteAll(.grapple_gun);
+        entities.deleteAll(.health);
+        entities.deleteAll(.spring);
+        entities.deleteAll(.hook);
+
+        _ = scenario; // TODO
+
+        // Set up players
+        {
+            var controllers = [4]?*c.SDL_GameController{ null, null, null, null };
+            {
+                var player_index: u32 = 0;
+                for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
+                    const i = @intCast(u31, i_usize);
+                    if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
+                        const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
+                            panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
+                        };
+                        if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
+                            controllers[i] = sdl_controller;
+                            player_index += 1;
+                            if (player_index >= controllers.len) break;
+                        } else {
+                            c.SDL_GameControllerClose(sdl_controller);
+                        }
+                    }
+                }
+            }
+
+            const controller_default = Input.ControllerMap{
+                .turn = .{
+                    .axis = c.SDL_CONTROLLER_AXIS_LEFTX,
+                },
+                .forward = .{
+                    .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_B },
+                },
+                .fire = .{
+                    .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_A },
+                },
+            };
+            const keyboard_wasd = Input.KeyboardMap{
+                .turn = .{
+                    .positive = c.SDL_SCANCODE_D,
+                    .negative = c.SDL_SCANCODE_A,
+                },
+                .forward = .{
+                    .positive = c.SDL_SCANCODE_W,
+                },
+                .fire = .{
+                    .positive = c.SDL_SCANCODE_S,
+                },
+            };
+            const keyboard_arrows = Input.KeyboardMap{
+                .turn = .{
+                    .positive = c.SDL_SCANCODE_RIGHT,
+                    .negative = c.SDL_SCANCODE_LEFT,
+                },
+                .forward = .{
+                    .positive = c.SDL_SCANCODE_UP,
+                },
+                .fire = .{
+                    .positive = c.SDL_SCANCODE_DOWN,
+                },
+            };
+            const keyboard_none: Input.KeyboardMap = .{
+                .turn = .{},
+                .forward = .{},
+                .fire = .{},
+            };
+
+            var input_devices = [_]Input{
+                .{
+                    .controller = controllers[0],
+                    .controller_map = controller_default,
+                    .keyboard_map = keyboard_wasd,
+                },
+                .{
+                    .controller = controllers[1],
+                    .controller_map = controller_default,
+                    .keyboard_map = keyboard_arrows,
+                },
+                .{
+                    .controller = controllers[2],
+                    .controller_map = controller_default,
+                    .keyboard_map = keyboard_none,
+                },
+                .{
+                    .controller = controllers[3],
+                    .controller_map = controller_default,
+                    .keyboard_map = keyboard_none,
+                },
+            };
+
+            for (input_devices, 0..) |input, i| {
+                const angle = math.pi / 2.0 * @intToFloat(f32, i);
+                const pos = display_center.plus(V.unit(angle).scaled(50));
+                _ = game.createShip(entities, @intCast(u2, i), pos, angle, input);
+            }
+        }
+
+        // Create rock
+        for (0..3) |_| {
+            const speed = 20 + std.crypto.random.float(f32) * 300;
+            const radius = 25 + std.crypto.random.float(f32) * 110;
+            const sprite = game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, game.rock_sprites.len)];
+            const pos = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                .scaled(lerp(display_radius, display_radius * 1.2, std.crypto.random.float(f32)))
+                .plus(display_center);
+
+            _ = entities.create(.{
+                .sprite = sprite,
+                .rb = .{
+                    .pos = pos,
+                    .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+                    .angle = 0,
+                    .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+                    .radius = radius,
+                    .density = 0.10,
+                },
+                .collider = .{
+                    .collision_damping = 1,
+                    .layer = .hazard,
+                },
+            });
+        }
+
+        // Create stars
+        generateStars(&game.stars);
     }
 };
 
