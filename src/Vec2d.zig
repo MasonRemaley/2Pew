@@ -1,6 +1,8 @@
 x: f32,
 y: f32,
 
+pub const zero: Vec2d = .{ .x = 0, .y = 0 };
+
 pub fn unit(angle_in_radians: f32) Vec2d {
     return .{
         .x = @cos(angle_in_radians),

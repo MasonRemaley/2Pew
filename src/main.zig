@@ -182,17 +182,18 @@ pub fn main() !void {
     }
 
     // Create rock
-    for (0..4) |_| {
-        // XXX: because of how damage interacts with rbs, sometimes rocks don't get damaged when being shot, we should
-        // process damage first or do it as part of collision detection!
-        // maybe this is why health bars sometimes seem to not show up?
-        const speed = std.crypto.random.float(f32) * 300;
-        const radius = 10 + std.crypto.random.float(f32) * 110;
+    for (0..3) |_| {
+        const speed = 20 + std.crypto.random.float(f32) * 300;
+        const radius = 25 + std.crypto.random.float(f32) * 110;
         const sprite = game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, game.rock_sprites.len)];
+        const pos = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+            .scaled(lerp(display_radius, display_radius * 1.2, std.crypto.random.float(f32)))
+            .plus(display_center);
+
         _ = entities.create(.{
             .sprite = sprite,
             .rb = .{
-                .pos = display_center.plus(.{ .x = 0.0, .y = 300.0 }),
+                .pos = pos,
                 .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
                 .angle = 0,
                 .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
