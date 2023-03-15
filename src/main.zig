@@ -514,7 +514,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         .vel = V.unit(rb.angle).scaled(turret.projectile_speed).plus(rb.vel),
                         .angle = 0,
                         .rotation_vel = 0,
-                        .radius = 12,
+                        .radius = turret.projectile_radius,
                         // TODO(mason): modify math to accept 0 and inf mass
                         .density = 0.001,
                     },
@@ -1007,6 +1007,8 @@ const Turret = struct {
     projectile_lifetime: f32,
     /// Amount of HP the projectile removes upon landing a hit.
     projectile_damage: f32,
+    /// Radius of spawned projectiles.
+    projectile_radius: f32,
 };
 
 const GrappleGun = struct {
@@ -1294,6 +1296,7 @@ const Game = struct {
                 .projectile_speed = 550,
                 .projectile_lifetime = 1.0,
                 .projectile_damage = 6,
+                .projectile_radius = 8,
             },
             .input = input,
         });
@@ -1344,7 +1347,8 @@ const Game = struct {
                 .cooldown_amount = 0.2,
                 .projectile_speed = 700,
                 .projectile_lifetime = 1.0,
-                .projectile_damage = 10,
+                .projectile_damage = 12,
+                .projectile_radius = 12,
             },
             .input = input,
         });
@@ -1363,7 +1367,7 @@ const Game = struct {
                 .class = .militia,
                 .still = self.militia_animations.still,
                 .accel = self.militia_animations.accel,
-                .turn_speed = math.pi * 1.2,
+                .turn_speed = math.pi * 1.4,
                 .thrust = 300,
                 .player = player_index,
             },
@@ -1377,7 +1381,7 @@ const Game = struct {
                 .angle = angle,
                 .rotation_vel = 0.0,
                 .radius = self.militia_radius,
-                .density = 0.04,
+                .density = 0.06,
             },
             .collider = .{
                 .collision_damping = 0.4,
