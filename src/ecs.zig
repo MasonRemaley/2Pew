@@ -34,6 +34,8 @@ pub const EntityHandle = struct {
 // TODO: really it should just be called components but then can't use that anywhere else...
 pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
+        pub const Component = FieldEnum(Entity);
+
         // `Archetype` is a bit set with a bit for each component type.
         const Archetype: type = std.bit_set.IntegerBitSet(std.meta.fields(Entity).len);
 
@@ -200,11 +202,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return @intToPtr([*]EntityHandle, @ptrToInt(self) + self.handle_array);
             }
 
-            fn componentArray(self: *PageHeader, comptime componentField: FieldEnum(Entity)) [*]std.meta.fieldInfo(Entity, componentField).type {
+            fn componentArray(self: *PageHeader, comptime componentField: Component) [*]std.meta.fieldInfo(Entity, componentField).type {
                 var ptr: usize = self.component_arrays;
                 inline for (std.meta.fields(Entity), 0..) |component, i| {
                     if (self.archetype.isSet(i)) {
-                        if (@intToEnum(FieldEnum(Entity), i) == componentField) {
+                        if (@intToEnum(Component, i) == componentField) {
                             return @intToPtr([*]std.meta.fieldInfo(Entity, componentField).type, @ptrToInt(self) + ptr);
                         }
 
@@ -505,7 +507,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const components_removed = components_removed: {
                 var components_removed = Archetype.initEmpty();
                 inline for (remove_components) |removed| {
-                    const fieldEnum: FieldEnum(Entity) = removed;
+                    const fieldEnum: Component = removed;
                     components_removed.set(@enumToInt(fieldEnum));
                 }
                 break :components_removed components_removed;
@@ -553,7 +555,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     .differenceWith(components_added);
                 inline for (0..std.meta.fields(Entity).len) |i| {
                     if (copy.isSet(i)) {
-                        const field = @intToEnum(FieldEnum(Entity), i);
+                        const field = @intToEnum(Component, i);
                         page.componentArray(field)[slot.index_in_page] = old_page.componentArray(field)[old_index_in_page];
                     }
                 }
@@ -578,7 +580,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // Initialize the new entity
             inline for (std.meta.fields(@TypeOf(add_components))) |f| {
-                const field = @intToEnum(FieldEnum(Entity), std.meta.fieldIndex(Entity, f.name).?);
+                const field = @intToEnum(Component, std.meta.fieldIndex(Entity, f.name).?);
                 if (@TypeOf(add_components) == Prefab) {
                     if (@field(add_components, f.name)) |component| {
                         page.componentArray(field)[slot.index_in_page] = component;
@@ -593,7 +595,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         // TODO: check assertions
-        fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: FieldEnum(Entity)) !?*std.meta.fieldInfo(Entity, component).type {
+        fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: Component) !?*std.meta.fieldInfo(Entity, component).type {
             // TODO: dup code
             // Check that the entity is valid. These should be assertions, but I've made them error
             // codes for easier unit testing.
@@ -611,7 +613,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return &slot.page.componentArray(component)[slot.index_in_page];
         }
 
-        pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: FieldEnum(Entity)) ?*std.meta.fieldInfo(Entity, component).type {
+        pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: Component) ?*std.meta.fieldInfo(Entity, component).type {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
@@ -621,7 +623,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     var fields: [std.meta.fields(@TypeOf(components)).len]Type.StructField = undefined;
                     var i = 0;
                     for (components) |component| {
-                        const entityFieldEnum: FieldEnum(Entity) = component;
+                        const entityFieldEnum: Component = component;
                         const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
                         const FieldType = *entityField.type;
                         fields[i] = Type.StructField{
@@ -649,7 +651,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     var fields: [std.meta.fields(@TypeOf(components)).len]Type.StructField = undefined;
                     var i = 0;
                     for (components) |component| {
-                        const entityFieldEnum: FieldEnum(Entity) = component;
+                        const entityFieldEnum: Component = component;
                         const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
                         const FieldType = [*]entityField.type;
                         fields[i] = Type.StructField{
@@ -691,7 +693,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         .archetype = comptime archetype: {
                             var archetype = Archetype.initEmpty();
                             for (components) |field| {
-                                const entityField: FieldEnum(Entity) = field;
+                                const entityField: Component = field;
                                 archetype.set(@enumToInt(entityField));
                             }
                             break :archetype archetype;
@@ -710,7 +712,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     if (page) |pl| {
                         self.handle_array = pl.handleArray();
                         inline for (std.meta.fields(ComponentArrays)) |field| {
-                            const entity_field = @intToEnum(FieldEnum(Entity), std.meta.fieldIndex(Entity, field.name).?);
+                            const entity_field = @intToEnum(Component, std.meta.fieldIndex(Entity, field.name).?);
                             @field(self.component_arrays, field.name) = pl.componentArray(entity_field);
                         }
                     }
@@ -756,6 +758,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         pub fn iterator(self: *@This(), components: anytype) Iterator(components) {
             return Iterator(components).init(self);
+        }
+
+        pub fn deleteAll(self: *@This(), comptime component: Component) void {
+            var it = self.iterator(.{component});
+            while (it.next()) |entity| {
+                self.remove(entity.handle);
+            }
         }
     };
 }
