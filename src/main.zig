@@ -832,6 +832,47 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
         }
     }
 
+    // Draw the ships in the bank.
+    {
+        const row_height = 64;
+        const col_width = 64;
+        const top_left: V = .{ .x = 20, .y = 20 };
+
+        for (game.teams, 0..) |team, team_index| {
+            {
+                const sprite = assets.sprite(game.team_sprites[team_index]);
+                const pos = top_left.plus(.{
+                    .x = col_width * @intToFloat(f32, team_index),
+                    .y = 0,
+                });
+                sdlAssertZero(c.SDL_RenderCopy(
+                    renderer,
+                    sprite.texture,
+                    null,
+                    &sprite.toSdlRect(pos),
+                ));
+            }
+            for (team.ship_progression, 0..) |class, display_prog_index| {
+                const dead = team.ship_progression_index > display_prog_index;
+                if (dead) continue;
+
+                const sprite = assets.sprite(game.shipLifeSprite(class));
+                const pos = top_left.plus(.{
+                    .x = col_width * @intToFloat(f32, team_index),
+                    .y = row_height * @intToFloat(f32, display_prog_index),
+                });
+                const sprite_size = sprite.size().scaled(0.5);
+                const dest_rect = sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
+                sdlAssertZero(c.SDL_RenderCopy(
+                    renderer,
+                    sprite.texture,
+                    null,
+                    &dest_rect,
+                ));
+            }
+        }
+    }
+
     c.SDL_RenderPresent(renderer);
 }
 
@@ -1593,6 +1634,17 @@ const Game = struct {
             .militia => game.createMilitia(entities, player_index, pos, angle, input),
             .triangle => game.createTriangle(entities, player_index, pos, angle, input),
         };
+    }
+
+    fn shipLifeSprite(game: Game, class: Ship.Class) Sprite.Index {
+        const animation_index = switch (class) {
+            .ranger => game.ranger_animations.still,
+            .militia => game.militia_animations.still,
+            .triangle => game.triangle_animations.still,
+        };
+        const animation = game.assets.animations.items[@enumToInt(animation_index)];
+        const sprite_index = game.assets.frames.items[animation.start];
+        return sprite_index;
     }
 
     fn animationRadius(game: Game, animation_index: Animation.Index) f32 {
