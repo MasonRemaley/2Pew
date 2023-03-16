@@ -1220,6 +1220,7 @@ const Collider = struct {
     };
     const interacts: SymmetricMatrix(Layer, bool) = interacts: {
         var m = SymmetricMatrix(Layer, bool).init(true);
+        m.set(.projectile, .projectile, false);
         m.set(.vehicle, .projectile, false);
         // XXX: why doesn't this cause an issue if not set?
         m.set(.projectile, .hook, false);
