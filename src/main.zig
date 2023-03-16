@@ -230,7 +230,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
                     if (damage >= 2) {
-                        health.hp -= damage;
+                        health.damage(damage);
                         total_damage += damage;
                     }
                 }
@@ -242,7 +242,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
                     if (damage >= 2) {
-                        health.hp -= damage;
+                        health.damage(damage);
                         total_damage += damage;
                     }
                 }
@@ -341,7 +341,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 rb.vel.add(gravity_v);
                 if (entities.getComponent(entity.handle, .health)) |health| {
                     // punishment for leaving the circle
-                    health.hp -= delta_s * 4;
+                    health.damage(delta_s * 4);
                 }
             }
 
@@ -409,7 +409,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     if (ship_rb.pos.distanceSqrd(rb.pos) <
                         ship_rb.radius * ship_rb.radius + rb.radius * rb.radius)
                     {
-                        health.hp -= damage.hp;
+                        health.damage(damage.hp);
 
                         // spawn shrapnel here
                         const shrapnel_animation = game.shrapnel_animations[
@@ -504,12 +504,13 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 continue;
             }
 
-            // Regen health. Should probably have a delay first...
-            const regen_cap = health.regen_ratio * health.max_hp;
-            const regen_speed = health.regen_ratio_speed * health.max_hp;
-            if (health.hp < regen_cap) {
-                health.hp = std.math.min(health.hp + regen_speed * delta_s, regen_cap);
+            // Regen health
+            const max_regen = health.regen_ratio * health.max_hp;
+            const regen_speed = max_regen / health.regen_s;
+            if (health.regen_cooldown_s <= 0.0 and health.hp < max_regen) {
+                health.hp = std.math.min(health.hp + regen_speed * delta_s, max_regen);
             }
+            health.regen_cooldown_s = std.math.max(health.regen_cooldown_s - delta_s, 0.0);
         }
     }
 
@@ -804,8 +805,10 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
                 const hp_percent = health.hp / health.max_hp;
                 if (hp_percent >= health.regen_ratio) {
                     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
-                } else {
+                } else if (health.regen_cooldown_s > 0.0) {
                     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
+                } else {
+                    sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0x7d, 0x03, 0xff));
                 }
                 sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
                     start,
@@ -1276,8 +1279,15 @@ const Collider = struct {
 const Health = struct {
     hp: f32,
     max_hp: f32,
+    max_regen_cooldown_s: f32 = 1.0,
+    regen_cooldown_s: f32 = 0.0,
     regen_ratio: f32 = 1.0 / 3.0,
-    regen_ratio_speed: f32 = 0.1,
+    regen_s: f32 = 1.0,
+
+    fn damage(self: *@This(), amount: f32) void {
+        self.hp -= amount;
+        self.regen_cooldown_s = self.max_regen_cooldown_s;
+    }
 };
 
 const Ship = struct {
