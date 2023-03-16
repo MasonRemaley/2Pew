@@ -131,6 +131,12 @@ fn poll(entities: *Entities, game: *Game) bool {
                 c.SDL_SCANCODE_4 => {
                     game.setupScenario(entities, .deathmatch_1v1);
                 },
+                c.SDL_SCANCODE_5 => {
+                    game.setupScenario(entities, .deathmatch_1v1_one_rock);
+                },
+                c.SDL_SCANCODE_6 => {
+                    game.setupScenario(entities, .royale_4p);
+                },
                 else => {},
             },
             else => {},
@@ -478,8 +484,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         if (team.ship_progression_index >= team.ship_progression.len) {
                             const already_over = game.over();
                             team.players_alive -= 1;
-                            if (team.players_alive == 0 and !already_over) {
-                                const happy_team = Game.otherTeam(player.team);
+                            if (game.over() and !already_over) {
+                                const happy_team = game.aliveTeam();
                                 game.spawnTeamVictory(entities, display_center, happy_team);
                             }
                         } else {
@@ -891,7 +897,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
 }
 
 const Player = struct {
-    team: u1,
+    team: u2,
 };
 
 const Team = struct {
@@ -1298,7 +1304,7 @@ const Game = struct {
 
     players_buffer: [4]Player,
     players: []Player,
-    teams_buffer: [2]Team,
+    teams_buffer: [4]Team,
     teams: []Team,
 
     shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
@@ -1323,7 +1329,7 @@ const Game = struct {
 
     stars: [150]Star,
 
-    team_sprites: [2]Sprite.Index,
+    team_sprites: [4]Sprite.Index,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -1459,7 +1465,7 @@ const Game = struct {
                 .still = self.militia_animations.still,
                 .accel = self.militia_animations.accel,
                 .turn_speed = math.pi * 1.4,
-                .thrust = 360,
+                .thrust = 400,
                 .player = player_index,
             },
             .health = .{
@@ -1592,9 +1598,11 @@ const Game = struct {
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
         const triangle_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
 
-        const team_sprites: [2]Sprite.Index = .{
+        const team_sprites: [4]Sprite.Index = .{
             try assets.loadSprite("img/team0.png"),
             try assets.loadSprite("img/team1.png"),
+            try assets.loadSprite("img/team2.png"),
+            try assets.loadSprite("img/team3.png"),
         };
 
         return .{
@@ -1680,6 +1688,8 @@ const Game = struct {
         deathmatch_2v2_no_rocks,
         deathmatch_2v2_one_rock,
         deathmatch_1v1,
+        deathmatch_1v1_one_rock,
+        royale_4p,
     };
 
     fn setupScenario(game: *Game, entities: *Entities, scenario: Scenario) void {
@@ -1722,7 +1732,7 @@ const Game = struct {
                 game.players = players;
             },
 
-            .deathmatch_1v1 => {
+            .deathmatch_1v1, .deathmatch_1v1_one_rock => {
                 const progression = &.{ .ranger, .militia, .triangle };
                 const team_init: Team = .{
                     .ship_progression_index = 0,
@@ -1737,6 +1747,27 @@ const Game = struct {
                 players.* = .{
                     .{ .team = 0 },
                     .{ .team = 1 },
+                };
+                game.players = players;
+            },
+
+            .royale_4p => {
+                const progression = &.{ .ranger, .militia, .triangle };
+                const team_init: Team = .{
+                    .ship_progression_index = 0,
+                    .ship_progression = progression,
+                    .players_alive = 1,
+                };
+                const teams = game.teams_buffer[0..4];
+                teams.* = .{ team_init, team_init, team_init, team_init };
+                game.teams = teams;
+
+                const players = game.players_buffer[0..4];
+                players.* = .{
+                    .{ .team = 0 },
+                    .{ .team = 1 },
+                    .{ .team = 2 },
+                    .{ .team = 3 },
                 };
                 game.players = players;
             },
@@ -1842,6 +1873,8 @@ const Game = struct {
             .deathmatch_2v2_one_rock => 1,
             .deathmatch_2v2 => 3,
             .deathmatch_1v1 => 3,
+            .deathmatch_1v1_one_rock => 1,
+            .royale_4p => 1,
         };
         for (0..rock_amt) |_| {
             const speed = 20 + std.crypto.random.float(f32) * 300;
@@ -1872,7 +1905,7 @@ const Game = struct {
         generateStars(&game.stars);
     }
 
-    fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team: u1) void {
+    fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team: u2) void {
         for (0..500) |_| {
             const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(300);
             _ = entities.create(.{
@@ -1892,15 +1925,22 @@ const Game = struct {
         }
     }
 
-    fn otherTeam(team: u1) u1 {
-        return 1 - team;
+    fn aliveTeam(game: Game) u2 {
+        for (game.teams, 0..) |team, i| {
+            if (team.players_alive > 0) return @intCast(u2, i);
+        } else unreachable;
+    }
+
+    fn aliveTeamCount(game: Game) u32 {
+        var count: u32 = 0;
+        for (game.teams) |team| {
+            count += @boolToInt(team.players_alive > 0);
+        }
+        return count;
     }
 
     fn over(game: Game) bool {
-        for (game.teams) |team| {
-            if (team.players_alive == 0) return true;
-        }
-        return false;
+        return game.aliveTeamCount() <= 1;
     }
 };
 
