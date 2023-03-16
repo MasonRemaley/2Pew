@@ -1676,7 +1676,7 @@ const Game = struct {
         entities.deleteAll(.spring);
         entities.deleteAll(.hook);
 
-        const progression = &.{ .ranger, .ranger, .militia, .militia, .triangle, .triangle };
+        const progression = &.{ .ranger, .militia, .ranger, .militia, .triangle, .triangle };
         const team_init: Team = .{
             .ship_progression_index = 0,
             .ship_progression = progression,
