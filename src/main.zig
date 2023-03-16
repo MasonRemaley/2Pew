@@ -451,24 +451,28 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     },
                 });
 
-                // If this is a playe controlled ship, spawn a new ship for the player using this
+                // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
                 if (entities.getComponent(entity.handle, .ship)) |ship| {
                     if (entities.getComponent(entity.handle, .input)) |input| {
                         // give player their next ship
                         const player = &game.players[ship.player];
-                        player.ship_progression_index += 1;
-                        if (player.ship_progression_index >= player.ship_progression.len) {
-                            // this player would lose the game, but instead let's just
-                            // give them another ship
-                            player.ship_progression_index = 0;
-                        }
-                        const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                        const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
-                        const facing_angle = new_angle + math.pi;
+                        const team = &game.teams[player.team];
+                        team.ship_progression_index += 1;
+                        if (team.ship_progression_index >= team.ship_progression.len) {
+                            team.players_alive -= 1;
+                            if (team.players_alive == 0 and !game.over()) {
+                                const happy_team = Game.otherTeam(player.team);
+                                game.spawnTeamVictory(entities, display_center, happy_team);
+                            }
+                        } else {
+                            const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                            const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
+                            const facing_angle = new_angle + math.pi;
 
-                        // Create a new ship from this ship's input, and then destroy it!
-                        _ = game.createShip(entities, ship.player, new_pos, facing_angle, input.*);
+                            // Create a new ship from this ship's input, and then destroy it!
+                            _ = game.createShip(entities, ship.player, new_pos, facing_angle, input.*);
+                        }
                     }
                 }
 
@@ -732,6 +736,20 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
                 null, // center of angle
                 c.SDL_FLIP_NONE,
             ));
+
+            if (entities.getComponent(entity.handle, .ship)) |ship| {
+                const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
+
+                sdlAssertZero(c.SDL_RenderCopyEx(
+                    renderer,
+                    sprite.texture,
+                    null, // source rectangle
+                    &dest_rect,
+                    0,
+                    null, // center of angle
+                    c.SDL_FLIP_NONE,
+                ));
+            }
         }
     }
 
@@ -815,8 +833,13 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
 }
 
 const Player = struct {
+    team: u1,
+};
+
+const Team = struct {
     ship_progression_index: u32,
     ship_progression: []const Ship.Class,
+    players_alive: u2,
 };
 
 // TODO(mason): what types of errors are possible?
@@ -1215,6 +1238,7 @@ const Game = struct {
     assets: *Assets,
 
     players: [4]Player,
+    teams: [2]Team,
 
     shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
     explosion_animation: Animation.Index,
@@ -1237,6 +1261,8 @@ const Game = struct {
     triangle_radius: f32,
 
     stars: [150]Star,
+
+    team_sprites: [2]Sprite.Index,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -1325,8 +1351,8 @@ const Game = struct {
                 .player = player_index,
             },
             .health = .{
-                .hp = 80,
-                .max_hp = 80,
+                .hp = 100,
+                .max_hp = 100,
             },
             .rb = .{
                 .pos = pos,
@@ -1504,15 +1530,15 @@ const Game = struct {
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
         const triangle_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
 
-        const progression = &.{ .ranger, .militia, .triangle };
-        const player_init: Player = .{
-            .ship_progression_index = 0,
-            .ship_progression = progression,
+        const team_sprites: [2]Sprite.Index = .{
+            try assets.loadSprite("img/team0.png"),
+            try assets.loadSprite("img/team1.png"),
         };
 
         return .{
             .assets = assets,
-            .players = .{ player_init, player_init, player_init, player_init },
+            .teams = undefined,
+            .players = undefined,
             .shrapnel_animations = shrapnel_animations,
             .explosion_animation = explosion_animation,
 
@@ -1542,6 +1568,8 @@ const Game = struct {
             .triangle_radius = triangle_radius,
 
             .stars = undefined,
+
+            .team_sprites = team_sprites,
         };
     }
 
@@ -1554,7 +1582,8 @@ const Game = struct {
         input: Input,
     ) EntityHandle {
         const player = game.players[player_index];
-        return switch (player.ship_progression[player.ship_progression_index]) {
+        const team = game.teams[player.team];
+        return switch (team.ship_progression[team.ship_progression_index]) {
             .ranger => game.createRanger(entities, player_index, pos, angle, input),
             .militia => game.createMilitia(entities, player_index, pos, angle, input),
             .triangle => game.createTriangle(entities, player_index, pos, angle, input),
@@ -1587,6 +1616,23 @@ const Game = struct {
         entities.deleteAll(.hook);
 
         _ = scenario; // TODO
+
+        const progression = &.{ .ranger, .ranger, .militia, .militia, .triangle, .triangle };
+        const team_init: Team = .{
+            .ship_progression_index = 0,
+            .ship_progression = progression,
+            .players_alive = 2,
+        };
+        game.teams = .{
+            team_init,
+            team_init,
+        };
+        game.players = .{
+            .{ .team = 0 },
+            .{ .team = 1 },
+            .{ .team = 0 },
+            .{ .team = 1 },
+        };
 
         // Set up players
         {
@@ -1709,6 +1755,37 @@ const Game = struct {
 
         // Create stars
         generateStars(&game.stars);
+    }
+
+    fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team: u1) void {
+        for (0..500) |_| {
+            const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(300);
+            _ = entities.create(.{
+                .lifetime = .{
+                    .seconds = 1000,
+                },
+                .rb = .{
+                    .pos = pos,
+                    .vel = random_vel,
+                    .angle = 2 * math.pi * std.crypto.random.float(f32),
+                    .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                    .radius = 16,
+                    .density = 0.001,
+                },
+                .sprite = game.team_sprites[team],
+            });
+        }
+    }
+
+    fn otherTeam(team: u1) u1 {
+        return 1 - team;
+    }
+
+    fn over(game: Game) bool {
+        for (game.teams) |team| {
+            if (team.players_alive == 0) return true;
+        }
+        return false;
     }
 };
 
