@@ -1268,7 +1268,12 @@ const Ship = struct {
     class: Class,
     player: u2,
 
-    const Class = enum { ranger, militia, triangle };
+    const Class = enum {
+        ranger,
+        militia,
+        triangle,
+        kevin,
+    };
 };
 
 const Sprite = struct {
@@ -1326,6 +1331,9 @@ const Game = struct {
 
     triangle_animations: ShipAnimations,
     triangle_radius: f32,
+
+    kevin_animations: ShipAnimations,
+    kevin_radius: f32,
 
     stars: [150]Star,
 
@@ -1502,6 +1510,57 @@ const Game = struct {
         });
     }
 
+    fn createKevin(
+        self: *const @This(),
+        entities: *Entities,
+        player_index: u2,
+        pos: V,
+        angle: f32,
+        input: Input,
+    ) EntityHandle {
+        return entities.create(.{
+            .ship = .{
+                .class = .kevin,
+                .still = self.kevin_animations.still,
+                .accel = self.kevin_animations.accel,
+                .turn_speed = math.pi * 1.1,
+                .thrust = 300,
+                .player = player_index,
+            },
+            .health = .{
+                .hp = 300,
+                .max_hp = 300,
+            },
+            .rb = .{
+                .pos = pos,
+                .vel = .{ .x = 0, .y = 0 },
+                .angle = angle,
+                .radius = 32,
+                .rotation_vel = 0.0,
+                .density = 0.02,
+            },
+            .collider = .{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            .animation = .{
+                .index = self.kevin_animations.still,
+                .time_passed = 0,
+            },
+            .turret = .{
+                .radius = 32,
+                .angle = 0,
+                .cooldown = 0,
+                .cooldown_amount = 0.2,
+                .projectile_speed = 500,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 18,
+                .projectile_radius = 18,
+            },
+            .input = input,
+        });
+    }
+
     fn init(assets: *Assets) !Game {
         const ring_bg = try assets.loadSprite("img/ring.png");
         const star_small = try assets.loadSprite("img/star/small.png");
@@ -1594,9 +1653,28 @@ const Game = struct {
             triangle_sprites[1],
         }, triangle_steady_thrust, 10, math.pi / 2.0);
 
+        const kevin_sprites = [_]Sprite.Index{
+            try assets.loadSprite("img/ship/kevin0.png"),
+            try assets.loadSprite("img/ship/kevin1.png"),
+            try assets.loadSprite("img/ship/kevin2.png"),
+            try assets.loadSprite("img/ship/kevin3.png"),
+        };
+        const kevin_still = try assets.addAnimation(&.{
+            kevin_sprites[0],
+        }, null, 30, math.pi / 2.0);
+        const kevin_steady_thrust = try assets.addAnimation(&.{
+            kevin_sprites[2],
+            kevin_sprites[3],
+        }, null, 10, math.pi / 2.0);
+        const kevin_accel = try assets.addAnimation(&.{
+            kevin_sprites[0],
+            kevin_sprites[1],
+        }, kevin_steady_thrust, 10, math.pi / 2.0);
+
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
         const triangle_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
+        const kevin_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
 
         const team_sprites: [4]Sprite.Index = .{
             try assets.loadSprite("img/team0.png"),
@@ -1639,6 +1717,12 @@ const Game = struct {
             },
             .triangle_radius = triangle_radius,
 
+            .kevin_animations = .{
+                .still = kevin_still,
+                .accel = kevin_accel,
+            },
+            .kevin_radius = kevin_radius,
+
             .stars = undefined,
 
             .team_sprites = team_sprites,
@@ -1661,6 +1745,7 @@ const Game = struct {
             .ranger => game.createRanger(entities, player_index, pos, angle, input),
             .militia => game.createMilitia(entities, player_index, pos, angle, input),
             .triangle => game.createTriangle(entities, player_index, pos, angle, input),
+            .kevin => game.createKevin(entities, player_index, pos, angle, input),
         };
     }
 
@@ -1669,6 +1754,7 @@ const Game = struct {
             .ranger => game.ranger_animations.still,
             .militia => game.militia_animations.still,
             .triangle => game.triangle_animations.still,
+            .kevin => game.kevin_animations.still,
         };
         const animation = game.assets.animations.items[@enumToInt(animation_index)];
         const sprite_index = game.assets.frames.items[animation.start];
@@ -1712,7 +1798,15 @@ const Game = struct {
             .deathmatch_2v2_no_rocks,
             .deathmatch_2v2_one_rock,
             => {
-                const progression = &.{ .ranger, .militia, .ranger, .militia, .triangle, .triangle };
+                const progression = &.{
+                    .ranger,
+                    .militia,
+                    .ranger,
+                    .militia,
+                    .triangle,
+                    .triangle,
+                    .kevin,
+                };
                 const team_init: Team = .{
                     .ship_progression_index = 0,
                     .ship_progression = progression,
@@ -1733,7 +1827,12 @@ const Game = struct {
             },
 
             .deathmatch_1v1, .deathmatch_1v1_one_rock => {
-                const progression = &.{ .ranger, .militia, .triangle };
+                const progression = &.{
+                    .ranger,
+                    .militia,
+                    .triangle,
+                    .kevin,
+                };
                 const team_init: Team = .{
                     .ship_progression_index = 0,
                     .ship_progression = progression,
@@ -1752,7 +1851,12 @@ const Game = struct {
             },
 
             .royale_4p => {
-                const progression = &.{ .ranger, .militia, .triangle };
+                const progression = &.{
+                    .ranger,
+                    .militia,
+                    .triangle,
+                    .kevin,
+                };
                 const team_init: Team = .{
                     .ship_progression_index = 0,
                     .ship_progression = progression,
