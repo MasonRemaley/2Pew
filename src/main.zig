@@ -230,26 +230,32 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // The basic ranger ship has 80 HP.
                 var total_damage: f32 = 0;
                 const max_shield = 1.0;
-                if (entities.getComponent(entity.handle, .health)) |health| {
-                    var shield_scale: f32 = 0.0;
-                    if (entities.getComponent(entity.handle, .front_shield) != null) {
-                        var dot = V.unit(rb.angle).dot(normal);
-                        shield_scale = std.math.max(dot, 0.0);
-                    }
-                    const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
-                    if (damage >= 2) {
-                        total_damage += health.damage(damage);
+                const entity_health = entities.getComponent(entity.handle, .health);
+                const other_health = entities.getComponent(other_entity.handle, .health);
+                if (entity_health) |health| {
+                    if (other_health == null or other_health.?.invulnerable_s <= 0.0) {
+                        var shield_scale: f32 = 0.0;
+                        if (entities.getComponent(entity.handle, .front_shield) != null) {
+                            var dot = V.unit(rb.angle).dot(normal);
+                            shield_scale = std.math.max(dot, 0.0);
+                        }
+                        const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
+                        if (damage >= 2) {
+                            total_damage += health.damage(damage);
+                        }
                     }
                 }
-                if (entities.getComponent(other_entity.handle, .health)) |health| {
-                    var shield_scale: f32 = 0.0;
-                    if (entities.getComponent(entity.handle, .front_shield) != null) {
-                        var dot = V.unit(other.rb.angle).dot(normal);
-                        shield_scale = std.math.max(-dot, 0.0);
-                    }
-                    const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
-                    if (damage >= 2) {
-                        total_damage += health.damage(damage);
+                if (other_health) |health| {
+                    if (entity_health == null or entity_health.?.invulnerable_s <= 0.0) {
+                        var shield_scale: f32 = 0.0;
+                        if (entities.getComponent(entity.handle, .front_shield) != null) {
+                            var dot = V.unit(other.rb.angle).dot(normal);
+                            shield_scale = std.math.max(-dot, 0.0);
+                        }
+                        const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
+                        if (damage >= 2) {
+                            total_damage += health.damage(damage);
+                        }
                     }
                 }
 
