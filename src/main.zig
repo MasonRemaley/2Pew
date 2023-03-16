@@ -421,42 +421,35 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // XXX: don't always attach to the center? this is easy to do, but, it won't cause
                 // rotation the way you'd expect at the moment since the current physics system doesn't
                 // have opinions on rotation. We can add that though!
+                // XXX: make a public changeArchetype function so that we can do this (remove component add component) in a single
+                // move, could also be named removeComponentsAddComponents or such, probably
+                // should work even if overlap?
+                // XXX: dup logic confusing..contact list easier?
+                // XXX: better handling if missing components?
                 {
-                    var hooked = false;
                     if (entities.getComponent(entity.handle, .hook)) |hook| {
-                        if (!other_entity.handle.eql(hook.origin)) {
-                            // XXX: make a public changeArchetype function so that we can do this in a single
-                            // move, could also be named removeComponentsAddComponents or such, probably
-                            // should work even if overlap?
-                            entities.removeComponents(entity.handle, .{ .hook, .collider });
-                            entities.addComponents(entity.handle, .{ .spring = Spring{
-                                .start = entity.handle,
-                                .end = other_entity.handle,
-                                .k = hook.k,
-                                .max_len = rb.pos.distance(other.rb.pos),
-                                .min_len = 0.0,
-                                .damping = hook.damping,
-                            } });
-                            hooked = true;
+                        if (entities.getComponent(hook.spring, .spring)) |spring| {
+                            if (!spring.start.eql(other_entity.handle)) {
+                                spring.end = other_entity.handle;
+                                const start_pos = entities.getComponent(spring.start, .rb).?.pos;
+                                const end_pos = entities.getComponent(spring.end, .rb).?.pos;
+                                spring.max_len = end_pos.minus(start_pos).length();
+                                entities.remove(entity.handle);
+                                continue;
+                            }
                         }
                     }
                     if (entities.getComponent(other_entity.handle, .hook)) |hook| {
-                        if (!entity.handle.eql(hook.origin)) {
-                            entities.removeComponents(other_entity.handle, .{.hook});
-                            entities.addComponents(other_entity.handle, .{ .spring = Spring{
-                                .start = entity.handle,
-                                .end = other_entity.handle,
-                                .k = hook.k,
-                                .max_len = rb.pos.distance(other.rb.pos),
-                                .min_len = 0.0,
-                                .damping = hook.damping,
-                            } });
-                            hooked = true;
+                        if (entities.getComponent(hook.spring, .spring)) |spring| {
+                            if (!spring.start.eql(entity.handle)) {
+                                spring.end = entity.handle;
+                                const start_pos = entities.getComponent(spring.start, .rb).?.pos;
+                                const end_pos = entities.getComponent(spring.end, .rb).?.pos;
+                                spring.max_len = end_pos.minus(start_pos).length();
+                                entities.remove(other_entity.handle);
+                                continue;
+                            }
                         }
-                    }
-                    // XXX: continue afte first one..?
-                    if (hooked) {
-                        continue;
                     }
                 }
             }
@@ -654,15 +647,8 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // If has a grapple hook, delete it first
                 if (entities.getComponent(entity.handle, .grapple_gun)) |grapple_gun| {
                     if (grapple_gun.live) |live| {
-                        for (live.springs) |spring| {
-                            if (entities.exists(spring)) {
-                                entities.remove(spring);
-                            }
-                        }
-                        for (live.joints) |joint| {
-                            if (entities.exists(joint)) {
-                                entities.remove(joint);
-                            }
+                        if (entities.exists(live.spring)) {
+                            entities.remove(live.spring);
                         }
                         if (entities.exists(live.hook)) {
                             entities.remove(live.hook);
@@ -769,114 +755,68 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // XXX: increase cooldown?
                 if (gg.live) |live| {
                     // XXX: hacky tests for now...
-                    for (live.joints) |piece| {
-                        if (entities.exists(piece)) {
-                            entities.remove(piece);
-                        }
-                    }
-                    for (live.springs) |piece| {
-                        if (entities.exists(piece)) {
-                            entities.remove(piece);
-                        }
+                    if (entities.exists(live.spring)) {
+                        entities.remove(live.spring);
                     }
                     if (entities.exists(live.hook)) {
                         entities.remove(live.hook);
                     }
                     gg.live = null;
                 } else {
-                    // XXX: behave sensibly if the ship that fired it dies...right now crashes cause
-                    // one side of the spring has a bad generation
-                    // XXX: change sprite!
-                    // XXX: how do i make it connect? we could replace the hook with the thing it's connected
-                    // to when it hits, but, then it'd always connect to the center. so really we wanna
-                    // create a new spring that's very strong between the hook and the thing it's connected to.
-                    // this means we need to either add a new spring later, or allow for disconnected springs.
-                    // if we had addcomponent we could have a hook that dynamically creates a spring on contact,
-                    // that's what we actually want!
-                    // for now though lets just make the spring ends optional and make a note that this is a good
-                    // place for addcomponent.
-                    // XXX: then again, addcomponent is easy to add. we just create a new entity move over the components
-                    // then delete the old one, and remap the handle.
-                    gg.live = .{
-                        .joints = undefined,
-                        .springs = undefined,
-                        .hook = undefined,
-                    };
-
-                    // XXX: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
-                    var dir = V.unit(rb.angle + gg.angle);
-                    var vel = rb.vel;
-                    const segment_len = GrappleGun.total_length / @intToFloat(f32, GrappleGun.segments);
-                    var pos = rb.pos.plus(dir.scaled(segment_len));
-                    // XXX: measure in mass instead since it dosn't have a size
-                    const density = GrappleGun.rope_density / @intToFloat(f32, GrappleGun.segments);
-                    for (0..gg.live.?.joints.len) |i| {
-                        gg.live.?.joints[i] = entities.create(.{
-                            .rb = .{
-                                .pos = pos,
-                                .vel = vel,
-                                .radius = 1,
-                                .density = density,
-                                .damping = GrappleGun.damping,
-                            },
-                            // XXX: ...
-                            // .sprite = game.bullet_small,
-                        });
-                        // XXX: why can't set to same?
-                        pos.add(dir.scaled(segment_len / 10.0));
-                    }
-                    // XXX: i think the damping code is broken, if i set this to be critically damped
-                    // it explodes--even over damping shouldn't do that it should slow things down
-                    // extra!
-                    // XXX: instead of doing damage to own ship, destroy or just ignore if touches own ship?
-                    const hook = Hook{
-                        .damping = 0.0,
-                        .k = 10000.0,
-                        .origin = entity.handle,
-                    };
                     const hook_speed = 2000.0;
-                    const hook_density = density;
-                    const hook_radius = 2;
-                    gg.live.?.hook = entities.create(.{
-                        .rb = .{
-                            .pos = pos,
-                            .vel = vel.plus(dir.scaled(hook_speed)),
-                            .angle = 0,
-                            .rotation_vel = 0,
-                            .radius = hook_radius,
-                            .density = hook_density,
-                            .damping = GrappleGun.damping,
-                        },
+                    const hook_radius = 4;
+                    const hook_density = 0.0005;
+                    const spring_k = 10000.0;
+                    // XXX: NOW: why does messing with damping cause it to
+                    // blow up now (at 60hz at least)?
+                    const damping = 0.0;
+                    const spring_length = 1000.0;
+
+                    const dir = V.unit(rb.angle + gg.angle);
+
+                    const hook_rb = RigidBody{
+                        .pos = rb.pos.plus(dir.scaled(hook_radius)),
+                        .vel = rb.vel.plus(dir.scaled(hook_speed)),
+                        .angle = 0,
+                        .rotation_vel = 0,
+                        .radius = hook_radius,
+                        .density = hook_density,
+                        .damping = 1.0,
+                    };
+                    const hook = entities.create(.{
+                        .rb = hook_rb,
                         .collider = .{
                             .collision_damping = 0,
                             .layer = .hook,
                         },
-                        .hook = hook,
-                        // XXX: ...
-                        // .sprite = game.bullet_small,
+                        .hook = Hook{
+                            .origin = entity.handle,
+                            .spring = undefined,
+                        },
+                        .sprite = game.bullet_small,
                     });
+
+                    const spring = entities.create(.{
+                        .spring = .{
+                            .start = entity.handle,
+                            .end = hook,
+                            .k = spring_k,
+                            .max_len = spring_length,
+                            .min_len = 0.0,
+                            .damping = damping,
+                        },
+                    });
+                    // XXX: would have springs be force generators make this any easier?
+                    entities.getComponent(hook, .hook).?.spring = spring;
+
+                    gg.live = .{
+                        .hook = hook,
+                        .spring = spring,
+                    };
+
                     // XXX: maybe to avoid this changing out velocity too much we actually do roll it
                     // back up instead of deleting when done?
-                    const hook_mass = hook_density * math.pi * hook_radius * hook_radius;
-                    rb.impulse.add(dir.scaled(-hook_speed * hook_mass / rb.mass()));
-                    for (0..(gg.live.?.springs.len)) |i| {
-                        gg.live.?.springs[i] = entities.create(.{
-                            .spring = .{
-                                .start = if (i == 0)
-                                    entity.handle
-                                else
-                                    gg.live.?.joints[i - 1],
-                                .end = if (i < gg.live.?.joints.len)
-                                    gg.live.?.joints[i]
-                                else
-                                    gg.live.?.hook,
-                                .k = hook.k,
-                                .max_len = segment_len,
-                                .min_len = 0.0,
-                                .damping = hook.damping,
-                            },
-                        });
-                    }
+                    rb.impulse.add(dir.scaled(-hook_speed * hook_rb.mass() / rb.mass()));
                 }
             }
         }
@@ -1193,8 +1133,7 @@ const Spring = struct {
 
 const Hook = struct {
     origin: EntityHandle,
-    damping: f32,
-    k: f32,
+    spring: EntityHandle,
 };
 
 const Lifetime = struct {
@@ -1248,14 +1187,6 @@ const Turret = struct {
 };
 
 const GrappleGun = struct {
-    // XXX: put constants in one place...
-    // XXX: segmetns does change max length cause of give or something? affect spring constant?
-    const segments = 5;
-    const total_length = 400.0;
-    // XXX: measure in mass instead since it dosn't have a size
-    const rope_density = 1.0;
-    const damping = 0.8;
-
     /// Together with angle, this is the location of the gun from the center
     /// of the containing object. Pixels.
     radius: f32,
@@ -1279,8 +1210,7 @@ const GrappleGun = struct {
 
     /// The live chain of projectiles.
     live: ?struct {
-        springs: [segments]EntityHandle,
-        joints: [segments - 1]EntityHandle,
+        spring: EntityHandle,
         hook: EntityHandle,
     } = null,
 };
