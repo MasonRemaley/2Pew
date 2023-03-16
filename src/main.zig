@@ -25,7 +25,7 @@ const Entities = ecs.Entities(.{
     .sprite = Sprite.Index,
     .animation = Animation.Playback,
     .collider = Collider,
-    .turret = Turret,
+    .turrets = [2]Turret,
     .grapple_gun = GrappleGun,
     .health = Health,
     .spring = Spring,
@@ -528,37 +528,38 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
     // Update turrets
     {
-        var it = entities.iterator(.{ .turret, .input, .rb });
+        var it = entities.iterator(.{ .turrets, .input, .rb });
         while (it.next()) |entity| {
-            var turret = entity.comps.turret;
-            var input = entity.comps.input;
-            var rb = entity.comps.rb;
-            turret.cooldown -= delta_s;
-            if (input.isAction(.fire, .positive, .active) and turret.cooldown <= 0) {
-                turret.cooldown = turret.cooldown_amount;
-                _ = entities.create(.{
-                    .damage = .{
-                        .hp = turret.projectile_damage,
-                    },
-                    .rb = .{
-                        .pos = rb.pos.plus(V.unit(rb.angle + turret.angle).scaled(turret.radius)),
-                        .vel = V.unit(rb.angle).scaled(turret.projectile_speed).plus(rb.vel),
-                        .angle = 0,
-                        .rotation_vel = 0,
-                        .radius = turret.projectile_radius,
-                        // TODO(mason): modify math to accept 0 and inf mass
-                        .density = 0.001,
-                    },
-                    .sprite = game.bullet_small,
-                    .collider = .{
-                        // Lasers gain energy when bouncing off of rocks
-                        .collision_damping = 1,
-                        .layer = .projectile,
-                    },
-                    .lifetime = .{
-                        .seconds = turret.projectile_lifetime,
-                    },
-                });
+            for (entity.comps.turrets) |*turret| {
+                const input = entity.comps.input;
+                const rb = entity.comps.rb;
+                turret.cooldown -= delta_s;
+                if (input.isAction(.fire, .positive, .active) and turret.cooldown <= 0) {
+                    turret.cooldown = turret.cooldown_amount;
+                    _ = entities.create(.{
+                        .damage = .{
+                            .hp = turret.projectile_damage,
+                        },
+                        .rb = .{
+                            .pos = rb.pos.plus(V.unit(rb.angle + turret.angle).scaled(turret.radius)),
+                            .vel = V.unit(rb.angle).scaled(turret.projectile_speed).plus(rb.vel),
+                            .angle = 0,
+                            .rotation_vel = 0,
+                            .radius = turret.projectile_radius,
+                            // TODO(mason): modify math to accept 0 and inf mass
+                            .density = 0.001,
+                        },
+                        .sprite = game.bullet_small,
+                        .collider = .{
+                            // Lasers gain energy when bouncing off of rocks
+                            .collision_damping = 1,
+                            .layer = .projectile,
+                        },
+                        .lifetime = .{
+                            .seconds = turret.projectile_lifetime,
+                        },
+                    });
+                }
             }
         }
     }
@@ -1100,6 +1101,20 @@ const Turret = struct {
     projectile_damage: f32,
     /// Radius of spawned projectiles.
     projectile_radius: f32,
+
+    enabled: bool = true,
+
+    pub const none: Turret = .{
+        .radius = undefined,
+        .angle = undefined,
+        .cooldown = undefined,
+        .cooldown_amount = undefined,
+        .projectile_speed = undefined,
+        .projectile_lifetime = undefined,
+        .projectile_damage = undefined,
+        .projectile_radius = undefined,
+        .enabled = false,
+    };
 };
 
 const GrappleGun = struct {
@@ -1393,15 +1408,18 @@ const Game = struct {
                 .index = self.ranger_animations.still,
                 .time_passed = 0,
             },
-            .turret = .{
-                .radius = self.ranger_radius,
-                .angle = 0,
-                .cooldown = 0,
-                .cooldown_amount = 0.10,
-                .projectile_speed = 550,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 6,
-                .projectile_radius = 8,
+            .turrets = .{
+                .{
+                    .radius = self.ranger_radius,
+                    .angle = 0,
+                    .cooldown = 0,
+                    .cooldown_amount = 0.10,
+                    .projectile_speed = 550,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 6,
+                    .projectile_radius = 8,
+                },
+                Turret.none,
             },
             .input = input,
         });
@@ -1445,15 +1463,18 @@ const Game = struct {
                 .index = self.triangle_animations.still,
                 .time_passed = 0,
             },
-            .turret = .{
-                .radius = radius,
-                .angle = 0,
-                .cooldown = 0,
-                .cooldown_amount = 0.2,
-                .projectile_speed = 700,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 12,
-                .projectile_radius = 12,
+            .turrets = .{
+                .{
+                    .radius = radius,
+                    .angle = 0,
+                    .cooldown = 0,
+                    .cooldown_amount = 0.2,
+                    .projectile_speed = 700,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 12,
+                    .projectile_radius = 12,
+                },
+                Turret.none,
             },
             .input = input,
         });
@@ -1547,15 +1568,27 @@ const Game = struct {
                 .index = self.kevin_animations.still,
                 .time_passed = 0,
             },
-            .turret = .{
-                .radius = 32,
-                .angle = 0,
-                .cooldown = 0,
-                .cooldown_amount = 0.2,
-                .projectile_speed = 500,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 18,
-                .projectile_radius = 18,
+            .turrets = .{
+                .{
+                    .radius = 32,
+                    .angle = math.pi * 0.1,
+                    .cooldown = 0,
+                    .cooldown_amount = 0.2,
+                    .projectile_speed = 500,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 18,
+                    .projectile_radius = 18,
+                },
+                .{
+                    .radius = 32,
+                    .angle = math.pi * -0.1,
+                    .cooldown = 0,
+                    .cooldown_amount = 0.2,
+                    .projectile_speed = 500,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 18,
+                    .projectile_radius = 18,
+                },
             },
             .input = input,
         });
@@ -1787,7 +1820,7 @@ const Game = struct {
         entities.deleteAll(.sprite);
         entities.deleteAll(.animation);
         entities.deleteAll(.collider);
-        entities.deleteAll(.turret);
+        entities.deleteAll(.turrets);
         entities.deleteAll(.grapple_gun);
         entities.deleteAll(.health);
         entities.deleteAll(.spring);
