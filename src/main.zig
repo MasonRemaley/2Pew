@@ -449,30 +449,32 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
     // TODO(mason): take velocity from before impact? i may have messed that up somehow
     // Explode things that reach 0 hp
     {
-        var it = entities.iterator(.{ .health, .rb });
+        var it = entities.iterator(.{.health});
         while (it.next()) |entity| {
             const health = entity.comps.health;
-            const rb = entity.comps.rb;
+
             if (health.hp <= 0) {
                 // spawn explosion here
-                _ = entities.create(.{
-                    .lifetime = .{
-                        .seconds = 100,
-                    },
-                    .rb = .{
-                        .pos = rb.pos,
-                        .vel = rb.vel,
-                        .angle = 0,
-                        .rotation_vel = 0,
-                        .radius = 32,
-                        .density = 0.001,
-                    },
-                    .animation = .{
-                        .index = game.explosion_animation,
-                        .time_passed = 0,
-                        .destroys_entity = true,
-                    },
-                });
+                if (entities.getComponent(entity.handle, .rb)) |rb| {
+                    _ = entities.create(.{
+                        .lifetime = .{
+                            .seconds = 100,
+                        },
+                        .rb = .{
+                            .pos = rb.pos,
+                            .vel = rb.vel,
+                            .angle = 0,
+                            .rotation_vel = 0,
+                            .radius = 32,
+                            .density = 0.001,
+                        },
+                        .animation = .{
+                            .index = game.explosion_animation,
+                            .time_passed = 0,
+                            .destroys_entity = true,
+                        },
+                    });
+                }
 
                 // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
