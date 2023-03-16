@@ -503,6 +503,13 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 entities.remove(entity.handle);
                 continue;
             }
+
+            // Regen health. Should probably have a delay first...
+            const regen_cap = health.regen_ratio * health.max_hp;
+            const regen_speed = health.regen_ratio_speed * health.max_hp;
+            if (health.hp < regen_cap) {
+                health.hp = std.math.min(health.hp + regen_speed * delta_s, regen_cap);
+            }
         }
     }
 
@@ -795,7 +802,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
                     health_bar_size.plus(.{ .x = 2, .y = 2 }),
                 )));
                 const hp_percent = health.hp / health.max_hp;
-                if (hp_percent > 0.45) {
+                if (hp_percent >= health.regen_ratio) {
                     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
                 } else {
                     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
@@ -1269,6 +1276,8 @@ const Collider = struct {
 const Health = struct {
     hp: f32,
     max_hp: f32,
+    regen_ratio: f32 = 1.0 / 3.0,
+    regen_ratio_speed: f32 = 0.1,
 };
 
 const Ship = struct {
@@ -1446,6 +1455,7 @@ const Game = struct {
             .health = .{
                 .hp = 100,
                 .max_hp = 100,
+                .regen_ratio = 0.5,
             },
             .rb = .{
                 .pos = pos,
