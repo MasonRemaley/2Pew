@@ -127,6 +127,9 @@ fn poll(entities: *Entities, game: *Game) bool {
                 c.SDL_SCANCODE_3 => {
                     game.setupScenario(entities, .deathmatch_2v2_one_rock);
                 },
+                c.SDL_SCANCODE_4 => {
+                    game.setupScenario(entities, .deathmatch_1v1);
+                },
                 else => {},
             },
             else => {},
@@ -1282,8 +1285,10 @@ const Sprite = struct {
 const Game = struct {
     assets: *Assets,
 
-    players: [4]Player,
-    teams: [2]Team,
+    players_buffer: [4]Player,
+    players: []Player,
+    teams_buffer: [2]Team,
+    teams: []Team,
 
     shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
     explosion_animation: Animation.Index,
@@ -1583,7 +1588,9 @@ const Game = struct {
         return .{
             .assets = assets,
             .teams = undefined,
+            .teams_buffer = undefined,
             .players = undefined,
+            .players_buffer = undefined,
             .shrapnel_animations = shrapnel_animations,
             .explosion_animation = explosion_animation,
 
@@ -1660,6 +1667,7 @@ const Game = struct {
         deathmatch_2v2,
         deathmatch_2v2_no_rocks,
         deathmatch_2v2_one_rock,
+        deathmatch_1v1,
     };
 
     fn setupScenario(game: *Game, entities: *Entities, scenario: Scenario) void {
@@ -1677,22 +1685,50 @@ const Game = struct {
         entities.deleteAll(.spring);
         entities.deleteAll(.hook);
 
-        const progression = &.{ .ranger, .militia, .ranger, .militia, .triangle, .triangle };
-        const team_init: Team = .{
-            .ship_progression_index = 0,
-            .ship_progression = progression,
-            .players_alive = 2,
-        };
-        game.teams = .{
-            team_init,
-            team_init,
-        };
-        game.players = .{
-            .{ .team = 0 },
-            .{ .team = 1 },
-            .{ .team = 0 },
-            .{ .team = 1 },
-        };
+        switch (scenario) {
+            .deathmatch_2v2,
+            .deathmatch_2v2_no_rocks,
+            .deathmatch_2v2_one_rock,
+            => {
+                const progression = &.{ .ranger, .militia, .ranger, .militia, .triangle, .triangle };
+                const team_init: Team = .{
+                    .ship_progression_index = 0,
+                    .ship_progression = progression,
+                    .players_alive = 2,
+                };
+                const teams = game.teams_buffer[0..2];
+                teams.* = .{ team_init, team_init };
+                game.teams = teams;
+
+                const players = game.players_buffer[0..4];
+                players.* = .{
+                    .{ .team = 0 },
+                    .{ .team = 1 },
+                    .{ .team = 0 },
+                    .{ .team = 1 },
+                };
+                game.players = players;
+            },
+
+            .deathmatch_1v1 => {
+                const progression = &.{ .ranger, .militia, .triangle };
+                const team_init: Team = .{
+                    .ship_progression_index = 0,
+                    .ship_progression = progression,
+                    .players_alive = 1,
+                };
+                const teams = game.teams_buffer[0..2];
+                teams.* = .{ team_init, team_init };
+                game.teams = teams;
+
+                const players = game.players_buffer[0..2];
+                players.* = .{
+                    .{ .team = 0 },
+                    .{ .team = 1 },
+                };
+                game.players = players;
+            },
+        }
 
         // Set up players
         {
@@ -1780,7 +1816,7 @@ const Game = struct {
                 },
             };
 
-            for (input_devices, 0..) |input, i| {
+            for (game.players, input_devices[0..game.players.len], 0..) |_, input, i| {
                 const angle = math.pi / 2.0 * @intToFloat(f32, i);
                 const pos = display_center.plus(V.unit(angle).scaled(50));
                 const player_index = @intCast(u2, i);
@@ -1793,6 +1829,7 @@ const Game = struct {
             .deathmatch_2v2_no_rocks => 0,
             .deathmatch_2v2_one_rock => 1,
             .deathmatch_2v2 => 3,
+            .deathmatch_1v1 => 3,
         };
         for (0..rock_amt) |_| {
             const speed = 20 + std.crypto.random.float(f32) * 300;
