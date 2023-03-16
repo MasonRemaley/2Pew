@@ -95,10 +95,17 @@ pub fn main() !void {
     var delta_s: f32 = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
+    // We can use `fx_loop_s` as a time parameter for looping effects without needing extra
+    // state everywhere. We loop it at 1000 so that we don't lose precision as the game runs, 1000
+    // was chosen so that so long as our effect frequency per second can be any number with three or
+    // less digits after the decimal and still loop seemlessly when we reset back to zero.
+    var fx_loop_s: f32 = 0.0;
+    const max_fx_loop_s: f32 = 1000.0;
+
     while (true) {
         if (poll(&entities, &game)) return;
         update(&entities, &game, delta_s);
-        render(assets, &entities, game, delta_s);
+        render(assets, &entities, game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get supririsng floating point
         // results if it's too close to zero!
@@ -108,6 +115,7 @@ pub fn main() !void {
         const max_frame_time = 1.0 / 30.0;
         var last_delta_s = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
         delta_s = lerp(delta_s, std.math.min(last_delta_s, max_frame_time), delta_rwa_bias);
+        fx_loop_s = @mod(fx_loop_s + delta_s, max_fx_loop_s);
         if (profile) std.debug.print("{d}ms\n", .{last_delta_s * 1000.0});
     }
 }
@@ -230,8 +238,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
                     if (damage >= 2) {
-                        health.damage(damage);
-                        total_damage += damage;
+                        total_damage += health.damage(damage);
                     }
                 }
                 if (entities.getComponent(other_entity.handle, .health)) |health| {
@@ -242,8 +249,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
                     if (damage >= 2) {
-                        health.damage(damage);
-                        total_damage += damage;
+                        total_damage += health.damage(damage);
                     }
                 }
 
@@ -341,7 +347,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 rb.vel.add(gravity_v);
                 if (entities.getComponent(entity.handle, .health)) |health| {
                     // punishment for leaving the circle
-                    health.damage(delta_s * 4);
+                    _ = health.damage(delta_s * 4);
                 }
             }
 
@@ -409,35 +415,35 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     if (ship_rb.pos.distanceSqrd(rb.pos) <
                         ship_rb.radius * ship_rb.radius + rb.radius * rb.radius)
                     {
-                        health.damage(damage.hp);
+                        if (health.damage(damage.hp) > 0.0) {
+                            // spawn shrapnel here
+                            const shrapnel_animation = game.shrapnel_animations[
+                                std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                            ];
+                            const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                                .scaled(rb.vel.length() * 0.2);
+                            _ = entities.create(.{
+                                .lifetime = .{
+                                    .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
+                                },
+                                .rb = .{
+                                    .pos = ship_rb.pos,
+                                    .vel = ship_rb.vel.plus(rb.vel.scaled(0.2)).plus(random_vector),
+                                    .angle = 2 * math.pi * std.crypto.random.float(f32),
+                                    .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                                    .radius = game.animationRadius(shrapnel_animation),
+                                    .density = 0.001,
+                                },
+                                .animation = .{
+                                    .index = shrapnel_animation,
+                                    .time_passed = 0,
+                                    .destroys_entity = true,
+                                },
+                            });
 
-                        // spawn shrapnel here
-                        const shrapnel_animation = game.shrapnel_animations[
-                            std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
-                        ];
-                        const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                            .scaled(rb.vel.length() * 0.2);
-                        _ = entities.create(.{
-                            .lifetime = .{
-                                .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
-                            },
-                            .rb = .{
-                                .pos = ship_rb.pos,
-                                .vel = ship_rb.vel.plus(rb.vel.scaled(0.2)).plus(random_vector),
-                                .angle = 2 * math.pi * std.crypto.random.float(f32),
-                                .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                                .radius = game.animationRadius(shrapnel_animation),
-                                .density = 0.001,
-                            },
-                            .animation = .{
-                                .index = shrapnel_animation,
-                                .time_passed = 0,
-                                .destroys_entity = true,
-                            },
-                        });
-
-                        entities.remove(damage_entity.handle);
-                        break;
+                            entities.remove(damage_entity.handle);
+                            break;
+                        }
                     }
                 }
             }
@@ -513,6 +519,9 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 health.hp = std.math.min(health.hp + regen_speed * delta_s, max_regen);
             }
             health.regen_cooldown_s = std.math.max(health.regen_cooldown_s - delta_s, 0.0);
+
+            // Update invulnerability
+            health.invulnerable_s = std.math.max(health.invulnerable_s - delta_s, 0.0);
         }
     }
 
@@ -709,8 +718,13 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
+fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop_s: f32) void {
     const renderer = assets.renderer;
+
+    // This was added for the flash effect and then not used since it already requires a timer
+    // state. We'll be wanting it later and I don't feel like deleting and retyping the explanation
+    // for it.
+    _ = fx_loop_s;
 
     // Clear screen
     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
@@ -761,28 +775,42 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32) void {
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
             const dest_rect = sdlRect(rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
 
-            sdlAssertZero(c.SDL_RenderCopyEx(
-                renderer,
-                frame.sprite.texture,
-                null, // source rectangle
-                &dest_rect,
-                toDegrees(rb.angle + frame.angle),
-                null, // center of angle
-                c.SDL_FLIP_NONE,
-            ));
+            var hidden = false;
+            if (entities.getComponent(entity.handle, .health)) |health| {
+                if (health.invulnerable_s > 0.0) {
+                    var flashes_ps: f32 = 2;
+                    if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
+                        flashes_ps = 4;
+                    }
+                    hidden = std.math.sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0;
+                }
+            }
 
-            if (entities.getComponent(entity.handle, .ship)) |ship| {
-                const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
-
+            // We should probably make the sprites half opacity instead of turning them off when
+            // flashing for a less jarring effect, but that is difficult right now.
+            if (!hidden) {
                 sdlAssertZero(c.SDL_RenderCopyEx(
                     renderer,
-                    sprite.texture,
+                    frame.sprite.texture,
                     null, // source rectangle
                     &dest_rect,
-                    0,
+                    toDegrees(rb.angle + frame.angle),
                     null, // center of angle
                     c.SDL_FLIP_NONE,
                 ));
+
+                if (entities.getComponent(entity.handle, .ship)) |ship| {
+                    const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
+                    sdlAssertZero(c.SDL_RenderCopyEx(
+                        renderer,
+                        sprite.texture,
+                        null, // source rectangle
+                        &dest_rect,
+                        0,
+                        null, // center of angle
+                        c.SDL_FLIP_NONE,
+                    ));
+                }
             }
         }
     }
@@ -1279,16 +1307,24 @@ const Collider = struct {
 };
 
 const Health = struct {
+    const max_invulnerable_s: f32 = 4.0;
+
     hp: f32,
     max_hp: f32,
     max_regen_cooldown_s: f32 = 1.0,
     regen_cooldown_s: f32 = 0.0,
     regen_ratio: f32 = 1.0 / 3.0,
     regen_s: f32 = 1.0,
+    invulnerable_s: f32 = max_invulnerable_s,
 
-    fn damage(self: *@This(), amount: f32) void {
-        self.hp -= amount;
-        self.regen_cooldown_s = self.max_regen_cooldown_s;
+    fn damage(self: *@This(), amount: f32) f32 {
+        if (self.invulnerable_s <= 0.0) {
+            self.hp -= amount;
+            self.regen_cooldown_s = self.max_regen_cooldown_s;
+            return amount;
+        } else {
+            return 0;
+        }
     }
 };
 
