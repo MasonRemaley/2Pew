@@ -30,6 +30,7 @@ const Entities = ecs.Entities(.{
     .health = Health,
     .spring = Spring,
     .hook = Hook,
+    .front_shield = struct {},
 });
 const EntityHandle = ecs.EntityHandle;
 
@@ -214,16 +215,26 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // very hard bonk is around 300.
                 // The basic ranger ship has 80 HP.
                 var total_damage: f32 = 0;
-
+                const max_shield = 0.5;
                 if (entities.getComponent(entity.handle, .health)) |health| {
-                    const damage = remap(20, 300, 0, 80, impulse.length());
+                    var shield_scale: f32 = 0.0;
+                    if (entities.getComponent(entity.handle, .front_shield) != null) {
+                        var dot = V.unit(rb.angle).dot(normal);
+                        shield_scale = 1.0 - std.math.max(dot, 0.0);
+                    }
+                    const damage = lerp(1.0 - max_shield, 1.0, shield_scale) * remap(20, 300, 0, 80, impulse.length());
                     if (damage >= 2) {
                         health.hp -= damage;
                         total_damage += damage;
                     }
                 }
                 if (entities.getComponent(other_entity.handle, .health)) |health| {
-                    const damage = remap(20, 300, 0, 80, other_impulse.length());
+                    var shield_scale: f32 = 0.0;
+                    if (entities.getComponent(entity.handle, .front_shield) != null) {
+                        var dot = V.unit(other.rb.angle).dot(normal);
+                        shield_scale = 1.0 - std.math.max(-dot, 0.0);
+                    }
+                    const damage = lerp(1.0 - max_shield, 1.0, shield_scale) * remap(20, 300, 0, 80, other_impulse.length());
                     if (damage >= 2) {
                         health.hp -= damage;
                         total_damage += damage;
@@ -1481,6 +1492,7 @@ const Game = struct {
             //     .projectile_speed = 0,
             // },
             .input = input,
+            .front_shield = .{},
         });
     }
 
