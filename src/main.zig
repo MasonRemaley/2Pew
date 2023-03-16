@@ -122,7 +122,10 @@ fn poll(entities: *Entities, game: *Game) bool {
                     game.setupScenario(entities, .deathmatch_2v2);
                 },
                 c.SDL_SCANCODE_2 => {
-                    game.setupScenario(entities, .asteroids);
+                    game.setupScenario(entities, .deathmatch_2v2_no_rocks);
+                },
+                c.SDL_SCANCODE_3 => {
+                    game.setupScenario(entities, .deathmatch_2v2_one_rock);
                 },
                 else => {},
             },
@@ -458,10 +461,10 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         // give player their next ship
                         const player = &game.players[ship.player];
                         const team = &game.teams[player.team];
-                        team.ship_progression_index += 1;
                         if (team.ship_progression_index >= team.ship_progression.len) {
+                            const already_over = game.over();
                             team.players_alive -= 1;
-                            if (team.players_alive == 0 and !game.over()) {
+                            if (team.players_alive == 0 and !already_over) {
                                 const happy_team = Game.otherTeam(player.team);
                                 game.spawnTeamVictory(entities, display_center, happy_team);
                             }
@@ -1582,8 +1585,10 @@ const Game = struct {
         input: Input,
     ) EntityHandle {
         const player = game.players[player_index];
-        const team = game.teams[player.team];
-        return switch (team.ship_progression[team.ship_progression_index]) {
+        const team = &game.teams[player.team];
+        const progression_index = team.ship_progression_index;
+        team.ship_progression_index += 1;
+        return switch (team.ship_progression[progression_index]) {
             .ranger => game.createRanger(entities, player_index, pos, angle, input),
             .militia => game.createMilitia(entities, player_index, pos, angle, input),
             .triangle => game.createTriangle(entities, player_index, pos, angle, input),
@@ -1598,7 +1603,11 @@ const Game = struct {
         return sprite.radius();
     }
 
-    const Scenario = enum { deathmatch_2v2, asteroids };
+    const Scenario = enum {
+        deathmatch_2v2,
+        deathmatch_2v2_no_rocks,
+        deathmatch_2v2_one_rock,
+    };
 
     fn setupScenario(game: *Game, entities: *Entities, scenario: Scenario) void {
         entities.deleteAll(.ship);
@@ -1614,8 +1623,6 @@ const Game = struct {
         entities.deleteAll(.health);
         entities.deleteAll(.spring);
         entities.deleteAll(.hook);
-
-        _ = scenario; // TODO
 
         const progression = &.{ .ranger, .ranger, .militia, .militia, .triangle, .triangle };
         const team_init: Team = .{
@@ -1723,12 +1730,18 @@ const Game = struct {
             for (input_devices, 0..) |input, i| {
                 const angle = math.pi / 2.0 * @intToFloat(f32, i);
                 const pos = display_center.plus(V.unit(angle).scaled(50));
-                _ = game.createShip(entities, @intCast(u2, i), pos, angle, input);
+                const player_index = @intCast(u2, i);
+                _ = game.createShip(entities, player_index, pos, angle, input);
             }
         }
 
         // Create rocks
-        for (0..3) |_| {
+        const rock_amt: usize = switch (scenario) {
+            .deathmatch_2v2_no_rocks => 0,
+            .deathmatch_2v2_one_rock => 1,
+            .deathmatch_2v2 => 3,
+        };
+        for (0..rock_amt) |_| {
             const speed = 20 + std.crypto.random.float(f32) * 300;
             const radius = 25 + std.crypto.random.float(f32) * 110;
             const sprite = game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, game.rock_sprites.len)];
