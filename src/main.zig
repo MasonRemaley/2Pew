@@ -159,6 +159,12 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         var it = entities.iterator(.{.input});
         while (it.next()) |entity| {
             entity.comps.input.update();
+
+            if (entities.getComponent(entity.handle, .health)) |health| {
+                if (health.invulnerable_s > 0.0) {
+                    entity.comps.input.state.fire.positive = .inactive;
+                }
+            }
         }
     }
 
