@@ -1487,6 +1487,9 @@ const Game = struct {
     kevin_animations: ShipAnimations,
     kevin_radius: f32,
 
+    wendy_animations: ShipAnimations,
+    wendy_radius: f32,
+
     stars: [150]Star,
 
     team_sprites: [4]Sprite.Index,
@@ -1742,17 +1745,17 @@ const Game = struct {
     ) EntityHandle {
         return entities.create(.{
             .ship = .{
-                .class = .kevin,
-                .still = self.kevin_animations.still,
-                .accel = self.kevin_animations.accel,
-                .turn_speed = math.pi * 1.1,
-                .thrust = 300,
+                .class = .wendy,
+                .still = self.wendy_animations.still,
+                .accel = self.wendy_animations.accel,
+                .turn_speed = math.pi * 1.0,
+                .thrust = 200,
                 .player = player_index,
                 .omnithrusters = true,
             },
             .health = .{
-                .hp = 300,
-                .max_hp = 300,
+                .hp = 400,
+                .max_hp = 400,
             },
             .rb = .{
                 .pos = pos,
@@ -1767,30 +1770,12 @@ const Game = struct {
                 .layer = .vehicle,
             },
             .animation = .{
-                .index = self.kevin_animations.still,
+                .index = self.wendy_animations.still,
                 .time_passed = 0,
             },
             .turrets = .{
-                .{
-                    .radius = 32,
-                    .angle = math.pi * 0.1,
-                    .cooldown = 0,
-                    .cooldown_amount = 0.2,
-                    .projectile_speed = 500,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 18,
-                    .projectile_radius = 18,
-                },
-                .{
-                    .radius = 32,
-                    .angle = math.pi * -0.1,
-                    .cooldown = 0,
-                    .cooldown_amount = 0.2,
-                    .projectile_speed = 500,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 18,
-                    .projectile_radius = 18,
-                },
+                Turret.none,
+                Turret.none,
             },
             .input = input,
         });
@@ -1906,10 +1891,29 @@ const Game = struct {
             kevin_sprites[1],
         }, kevin_steady_thrust, 10, math.pi / 2.0);
 
+        const wendy_sprites = [_]Sprite.Index{
+            try assets.loadSprite("img/ship/wendy0.png"),
+            try assets.loadSprite("img/ship/wendy1.png"),
+            try assets.loadSprite("img/ship/wendy2.png"),
+            try assets.loadSprite("img/ship/wendy3.png"),
+        };
+        const wendy_still = try assets.addAnimation(&.{
+            wendy_sprites[0],
+        }, null, 30, math.pi / 2.0);
+        const wendy_steady_thrust = try assets.addAnimation(&.{
+            wendy_sprites[2],
+            wendy_sprites[3],
+        }, null, 10, math.pi / 2.0);
+        const wendy_accel = try assets.addAnimation(&.{
+            wendy_sprites[0],
+            wendy_sprites[1],
+        }, wendy_steady_thrust, 10, math.pi / 2.0);
+
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
         const triangle_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
         const kevin_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
+        const wendy_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
 
         const team_sprites: [4]Sprite.Index = .{
             try assets.loadSprite("img/team0.png"),
@@ -1958,6 +1962,12 @@ const Game = struct {
             },
             .kevin_radius = kevin_radius,
 
+            .wendy_animations = .{
+                .still = wendy_still,
+                .accel = wendy_accel,
+            },
+            .wendy_radius = wendy_radius,
+
             .stars = undefined,
 
             .team_sprites = team_sprites,
@@ -1991,7 +2001,7 @@ const Game = struct {
             .militia => game.militia_animations.still,
             .triangle => game.triangle_animations.still,
             .kevin => game.kevin_animations.still,
-            .wendy => game.kevin_animations.still,
+            .wendy => game.wendy_animations.still,
         };
         const animation = game.assets.animations.items[@enumToInt(animation_index)];
         const sprite_index = game.assets.frames.items[animation.start];
@@ -2043,6 +2053,7 @@ const Game = struct {
                     .militia,
                     .triangle,
                     .triangle,
+                    .wendy,
                     .kevin,
                 };
                 const team_init: Team = .{
@@ -2069,6 +2080,7 @@ const Game = struct {
                     .ranger,
                     .militia,
                     .triangle,
+                    .wendy,
                     .kevin,
                 };
                 const team_init: Team = .{
@@ -2090,9 +2102,11 @@ const Game = struct {
 
             .royale_4p => {
                 const progression = &.{
+                    .wendy,
                     .ranger,
                     .militia,
                     .triangle,
+                    .wendy,
                     .kevin,
                 };
                 const team_init: Team = .{
