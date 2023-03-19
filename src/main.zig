@@ -175,14 +175,14 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const ship = entity.comps.ship;
             const animation = entity.comps.animation;
             const input = entity.comps.input;
-            if (input.isAction(.forward, .positive, .activated)) {
+            if (input.isAction(.thrust_forward, .positive, .activated)) {
                 // TODO(mason): do initialziers that reference the thing they're being set on still
                 // need to be on separate lines? (this doesn't do that anymore either way)
                 animation.* = .{
                     .index = ship.accel,
                     .time_passed = 0,
                 };
-            } else if (input.isAction(.forward, .positive, .deactivated)) {
+            } else if (input.isAction(.thrust_forward, .positive, .deactivated)) {
                 animation.* = .{
                     .index = ship.still,
                     .time_passed = 0,
@@ -546,17 +546,9 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const input = entity.comps.input;
 
             if (ship.omnithrusters) {
-                const left = @intToFloat(f32, @boolToInt(input.isAction(.turn, .negative, .active)));
-                const right = @intToFloat(f32, @boolToInt(input.isAction(.turn, .positive, .active)));
-                const up = @intToFloat(f32, @boolToInt(input.isAction(.forward, .negative, .active)));
-                const down = @intToFloat(f32, @boolToInt(input.isAction(.forward, .positive, .active)));
-
-                const x = right - left;
-                const y = up - down;
-
-                rb.vel.add(V{
-                    .x = x * ship.thrust * delta_s,
-                    .y = y * ship.thrust * delta_s,
+                rb.vel.add(.{
+                    .x = input.getAxis(.thrust_x) * ship.thrust * delta_s,
+                    .y = input.getAxis(.thrust_y) * ship.thrust * delta_s,
                 });
             } else {
                 // convert to 1.0 or 0.0
@@ -565,7 +557,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     2 * math.pi,
                 );
 
-                const thrust_input = @intToFloat(f32, @boolToInt(input.isAction(.forward, .positive, .active)));
+                const thrust_input = @intToFloat(f32, @boolToInt(input.isAction(.thrust_forward, .positive, .active)));
                 const thrust = V.unit(rb.angle);
                 rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
             }
@@ -579,23 +571,32 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             for (entity.comps.turrets) |*turret| {
                 const input = entity.comps.input;
                 const rb = entity.comps.rb;
-                turret.cooldown -= delta_s;
-                if (input.isAction(.fire, .positive, .active) and turret.cooldown <= 0) {
-                    turret.cooldown = turret.cooldown_amount;
+                turret.cooldown_s -= delta_s;
+                if (input.isAction(.fire, .positive, .active) and turret.cooldown_s <= 0) {
+                    turret.cooldown_s = turret.max_cooldown_s;
+                    // TODO(mason): just make separate component for wall
+                    var angle = rb.angle;
+                    var vel = V.unit(angle).scaled(turret.projectile_speed).plus(rb.vel);
+                    var sprite = game.bullet_small;
+                    if (turret.aim_opposite_movement) {
+                        angle = rb.vel.angle() + std.math.pi;
+                        vel = V.zero;
+                        sprite = game.bullet_shiny;
+                    }
                     _ = entities.create(.{
                         .damage = .{
                             .hp = turret.projectile_damage,
                         },
                         .rb = .{
-                            .pos = rb.pos.plus(V.unit(rb.angle + turret.angle).scaled(turret.radius)),
-                            .vel = V.unit(rb.angle).scaled(turret.projectile_speed).plus(rb.vel),
+                            .pos = rb.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius)),
+                            .vel = vel,
                             .angle = 0,
                             .rotation_vel = 0,
                             .radius = turret.projectile_radius,
                             // TODO(mason): modify math to accept 0 and inf mass
                             .density = 0.001,
                         },
-                        .sprite = game.bullet_small,
+                        .sprite = sprite,
                         .collider = .{
                             // Lasers gain energy when bouncing off of rocks
                             .collision_damping = 1,
@@ -618,11 +619,11 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             var gg = entity.comps.grapple_gun;
             var input = entity.comps.input;
             var rb = entity.comps.rb;
-            gg.cooldown -= delta_s;
-            if (input.isAction(.fire, .positive, .activated) and gg.cooldown <= 0) {
-                gg.cooldown = gg.cooldown_amount;
+            gg.cooldown_s -= delta_s;
+            if (input.isAction(.fire, .positive, .activated) and gg.cooldown_s <= 0) {
+                gg.cooldown_s = gg.max_cooldown_s;
 
-                // XXX: increase cooldown?
+                // XXX: increase cooldown_s?
                 if (gg.live) |live| {
                     for (live.joints) |piece| {
                         entities.remove(piece);
@@ -988,7 +989,9 @@ const Input = struct {
     fn ActionMap(comptime Action: type) type {
         return struct {
             turn: Action,
-            forward: Action,
+            thrust_forward: Action,
+            thrust_x: Action,
+            thrust_y: Action,
             fire: Action,
 
             fn init(default: Action) @This() {
@@ -1160,9 +1163,11 @@ const Turret = struct {
     /// center of the containing object. Radians.
     angle: f32,
     /// Seconds until ready. Less than or equal to 0 means ready.
-    cooldown: f32,
+    cooldown_s: f32,
     /// Seconds until ready. Cooldown is set to this after firing.
-    cooldown_amount: f32,
+    max_cooldown_s: f32,
+
+    aim_opposite_movement: bool = false,
 
     /// pixels per second
     projectile_speed: f32,
@@ -1178,8 +1183,8 @@ const Turret = struct {
     pub const none: Turret = .{
         .radius = undefined,
         .angle = undefined,
-        .cooldown = undefined,
-        .cooldown_amount = undefined,
+        .cooldown_s = undefined,
+        .max_cooldown_s = undefined,
         .projectile_speed = undefined,
         .projectile_lifetime = undefined,
         .projectile_damage = undefined,
@@ -1198,9 +1203,9 @@ const GrappleGun = struct {
     /// center of the containing object. Radians.
     angle: f32,
     /// Seconds until ready. Less than or equal to 0 means ready.
-    cooldown: f32,
+    cooldown_s: f32,
     /// Seconds until ready. Cooldown is set to this after firing.
-    cooldown_amount: f32,
+    max_cooldown_s: f32,
 
     /// pixels per second
     projectile_speed: f32,
@@ -1425,6 +1430,7 @@ const Game = struct {
     star_large: Sprite.Index,
     planet_red: Sprite.Index,
     bullet_small: Sprite.Index,
+    bullet_shiny: Sprite.Index,
 
     rock_sprites: [rock_sprite_names.len]Sprite.Index,
 
@@ -1505,8 +1511,8 @@ const Game = struct {
                 .{
                     .radius = self.ranger_radius,
                     .angle = 0,
-                    .cooldown = 0,
-                    .cooldown_amount = 0.10,
+                    .cooldown_s = 0,
+                    .max_cooldown_s = 0.10,
                     .projectile_speed = 550,
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 6,
@@ -1561,8 +1567,8 @@ const Game = struct {
                 .{
                     .radius = radius,
                     .angle = 0,
-                    .cooldown = 0,
-                    .cooldown_amount = 0.2,
+                    .cooldown_s = 0,
+                    .max_cooldown_s = 0.2,
                     .projectile_speed = 700,
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 12,
@@ -1614,8 +1620,8 @@ const Game = struct {
             // .grapple_gun = .{
             //     .radius = self.ranger_radius * 10.0,
             //     .angle = 0,
-            //     .cooldown = 0,
-            //     .cooldown_amount = 0.2,
+            //     .cooldown_s = 0,
+            //     .max_cooldown_s = 0.2,
             //     // XXX: when nonzero, causes the ship to move. wouldn't happen if there was equal
             //     // kickback!
             //     .projectile_speed = 0,
@@ -1666,8 +1672,8 @@ const Game = struct {
                 .{
                     .radius = 32,
                     .angle = math.pi * 0.1,
-                    .cooldown = 0,
-                    .cooldown_amount = 0.2,
+                    .cooldown_s = 0,
+                    .max_cooldown_s = 0.2,
                     .projectile_speed = 500,
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 18,
@@ -1676,8 +1682,8 @@ const Game = struct {
                 .{
                     .radius = 32,
                     .angle = math.pi * -0.1,
-                    .cooldown = 0,
-                    .cooldown_amount = 0.2,
+                    .cooldown_s = 0,
+                    .max_cooldown_s = 0.2,
                     .projectile_speed = 500,
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 18,
@@ -1714,7 +1720,7 @@ const Game = struct {
                 .pos = pos,
                 .vel = .{ .x = 0, .y = 0 },
                 .angle = angle,
-                .radius = 32,
+                .radius = self.wendy_radius,
                 .rotation_vel = 0.0,
                 .density = 0.02,
             },
@@ -1727,7 +1733,17 @@ const Game = struct {
                 .time_passed = 0,
             },
             .turrets = .{
-                Turret.none,
+                .{
+                    .radius = self.wendy_radius,
+                    .angle = 0,
+                    .cooldown_s = 0,
+                    .max_cooldown_s = 0.1,
+                    .projectile_speed = 0,
+                    .projectile_lifetime = 5.0,
+                    .projectile_damage = 50,
+                    .projectile_radius = 8,
+                    .aim_opposite_movement = true,
+                },
                 Turret.none,
             },
             .input = input,
@@ -1740,6 +1756,7 @@ const Game = struct {
         const star_large = try assets.loadSprite("img/star/large.png");
         const planet_red = try assets.loadSprite("img/planet-red.png");
         const bullet_small = try assets.loadSprite("img/bullet/small.png");
+        const bullet_shiny = try assets.loadSprite("img/bullet/shiny.png");
 
         var shrapnel_sprites: [shrapnel_sprite_names.len]Sprite.Index = undefined;
         for (&shrapnel_sprites, shrapnel_sprite_names) |*s, name| {
@@ -1889,6 +1906,7 @@ const Game = struct {
             .star_large = star_large,
             .planet_red = planet_red,
             .bullet_small = bullet_small,
+            .bullet_shiny = bullet_shiny,
             .rock_sprites = rock_sprites,
 
             .ranger_animations = .{
@@ -1999,7 +2017,6 @@ const Game = struct {
             .deathmatch_2v2_one_rock,
             => {
                 const progression = &.{
-                    .wendy,
                     .ranger,
                     .militia,
                     .ranger,
@@ -2055,7 +2072,6 @@ const Game = struct {
 
             .royale_4p => {
                 const progression = &.{
-                    .wendy,
                     .ranger,
                     .militia,
                     .triangle,
@@ -2105,12 +2121,12 @@ const Game = struct {
             }
 
             const controller_default = Input.ControllerMap{
-                .turn = .{
-                    .axis = c.SDL_CONTROLLER_AXIS_LEFTX,
-                },
-                .forward = .{
+                .turn = .{ .axis = c.SDL_CONTROLLER_AXIS_LEFTX },
+                .thrust_forward = .{
                     .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_B },
                 },
+                .thrust_x = .{ .axis = c.SDL_CONTROLLER_AXIS_LEFTX },
+                .thrust_y = .{ .axis = c.SDL_CONTROLLER_AXIS_LEFTY },
                 .fire = .{
                     .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_A },
                 },
@@ -2120,9 +2136,14 @@ const Game = struct {
                     .positive = c.SDL_SCANCODE_D,
                     .negative = c.SDL_SCANCODE_A,
                 },
-                .forward = .{
-                    .positive = c.SDL_SCANCODE_W,
-                    .negative = c.SDL_SCANCODE_S,
+                .thrust_forward = .{ .positive = c.SDL_SCANCODE_W },
+                .thrust_x = .{
+                    .positive = c.SDL_SCANCODE_D,
+                    .negative = c.SDL_SCANCODE_A,
+                },
+                .thrust_y = .{
+                    .positive = c.SDL_SCANCODE_S,
+                    .negative = c.SDL_SCANCODE_W,
                 },
                 .fire = .{
                     .positive = c.SDL_SCANCODE_LSHIFT,
@@ -2133,9 +2154,17 @@ const Game = struct {
                     .positive = c.SDL_SCANCODE_RIGHT,
                     .negative = c.SDL_SCANCODE_LEFT,
                 },
-                .forward = .{
-                    .positive = c.SDL_SCANCODE_UP,
-                    .negative = c.SDL_SCANCODE_DOWN,
+                .thrust_forward = .{
+                    .positive = c.SDL_SCANCODE_DOWN,
+                    .negative = c.SDL_SCANCODE_UP,
+                },
+                .thrust_x = .{
+                    .positive = c.SDL_SCANCODE_RIGHT,
+                    .negative = c.SDL_SCANCODE_LEFT,
+                },
+                .thrust_y = .{
+                    .positive = c.SDL_SCANCODE_DOWN,
+                    .negative = c.SDL_SCANCODE_UP,
                 },
                 .fire = .{
                     .positive = c.SDL_SCANCODE_RSHIFT,
@@ -2143,7 +2172,9 @@ const Game = struct {
             };
             const keyboard_none: Input.KeyboardMap = .{
                 .turn = .{},
-                .forward = .{},
+                .thrust_forward = .{},
+                .thrust_x = .{},
+                .thrust_y = .{},
                 .fire = .{},
             };
 
