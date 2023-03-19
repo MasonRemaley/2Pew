@@ -359,9 +359,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 rb.vel.add(gravity_v);
                 if (entities.getComponent(entity.handle, .health)) |health| {
                     // punishment for leaving the circle
-                    if (!health.debugPhys()) {
-                        _ = health.damage(delta_s * 4);
-                    }
+                    _ = health.damage(delta_s * 4);
                 }
             }
 
@@ -369,22 +367,6 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 rb.angle + rb.rotation_vel * delta_s,
                 2 * math.pi,
             );
-
-            if (entities.getComponent(entity.handle, .health)) |health| {
-                if (health.debugPhys()) {
-                    if (entities.getComponent(entity.handle, .input)) |input| {
-                        if (input.isAction(.forward, .positive, .inactive) and rb.vel.length() > 100) {
-                            rb.vel = rb.vel.scaled(std.math.pow(f32, 0.5, delta_s));
-                        }
-
-                        if (input.isAction(.forward, .positive, .active) or rb.vel.length() > 100) {
-                            var dot = V.unit(rb.angle).dot(rb.vel.normalized());
-                            var damping = remap_clamped(-0.5, 1, 0.4, 1.0, dot);
-                            rb.vel = rb.vel.scaled(std.math.pow(f32, damping, delta_s));
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -544,13 +526,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
             // Regen health
             var max_regen = health.regen_ratio * health.max_hp;
-            if (health.debugPhys()) {
-                max_regen *= 1.5;
-            }
             var regen_speed = max_regen / health.regen_s;
-            if (health.debugPhys()) {
-                regen_speed *= 1.5;
-            }
             if (health.regen_cooldown_s <= 0.0 and health.hp < max_regen) {
                 health.hp = std.math.min(health.hp + regen_speed * delta_s, max_regen);
             }
@@ -593,12 +569,6 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 const thrust = V.unit(rb.angle);
                 rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
             }
-
-            if (entity.comps.input.isAction(.dbg, .positive, .activated)) {
-                if (entities.getComponent(entity.handle, .health)) |health| {
-                    health.dbg += 1;
-                }
-            }
         }
     }
 
@@ -612,12 +582,6 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 turret.cooldown -= delta_s;
                 if (input.isAction(.fire, .positive, .active) and turret.cooldown <= 0) {
                     turret.cooldown = turret.cooldown_amount;
-                    var damage = turret.projectile_damage;
-                    if (entities.getComponent(entity.handle, .health)) |health| {
-                        if (health.debugPhys()) {
-                            damage *= 2;
-                        }
-                    }
                     _ = entities.create(.{
                         .damage = .{
                             .hp = turret.projectile_damage,
@@ -1026,7 +990,6 @@ const Input = struct {
             turn: Action,
             forward: Action,
             fire: Action,
-            dbg: Action,
 
             fn init(default: Action) @This() {
                 var map: @This() = undefined;
@@ -1384,21 +1347,11 @@ const Health = struct {
     regen_ratio: f32 = 1.0 / 3.0,
     regen_s: f32 = 2.0,
     invulnerable_s: f32 = max_invulnerable_s,
-    dbg: u32 = 0,
-
-    fn debugPhys(self: *const @This()) bool {
-        return self.dbg >= 3;
-    }
 
     fn damage(self: *@This(), amount: f32) f32 {
         if (self.invulnerable_s <= 0.0) {
-            if (self.debugPhys()) {
-                self.hp -= amount / 2;
-                self.regen_cooldown_s = self.max_regen_cooldown_s / 2;
-            } else {
-                self.hp -= amount;
-                self.regen_cooldown_s = self.max_regen_cooldown_s;
-            }
+            self.hp -= amount;
+            self.regen_cooldown_s = self.max_regen_cooldown_s;
             return amount;
         } else {
             return 0;
@@ -2161,9 +2114,6 @@ const Game = struct {
                 .fire = .{
                     .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_A },
                 },
-                .dbg = .{
-                    .buttons = .{ .positive = 3 },
-                },
             };
             const keyboard_wasd = Input.KeyboardMap{
                 .turn = .{
@@ -2177,7 +2127,6 @@ const Game = struct {
                 .fire = .{
                     .positive = c.SDL_SCANCODE_LSHIFT,
                 },
-                .dbg = .{ .positive = c.SDL_SCANCODE_TAB },
             };
             const keyboard_arrows = Input.KeyboardMap{
                 .turn = .{
@@ -2191,13 +2140,11 @@ const Game = struct {
                 .fire = .{
                     .positive = c.SDL_SCANCODE_RSHIFT,
                 },
-                .dbg = .{ .positive = c.SDL_SCANCODE_RSHIFT },
             };
             const keyboard_none: Input.KeyboardMap = .{
                 .turn = .{},
                 .forward = .{},
                 .fire = .{},
-                .dbg = .{},
             };
 
             var input_devices = [_]Input{
