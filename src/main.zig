@@ -1404,6 +1404,7 @@ const Ship = struct {
         militia,
         triangle,
         kevin,
+        wendy,
     };
 };
 
@@ -1465,6 +1466,9 @@ const Game = struct {
 
     kevin_animations: ShipAnimations,
     kevin_radius: f32,
+
+    wendy_animations: ShipAnimations,
+    wendy_radius: f32,
 
     stars: [150]Star,
 
@@ -1711,6 +1715,51 @@ const Game = struct {
         });
     }
 
+    fn createWendy(
+        self: *const @This(),
+        entities: *Entities,
+        player_index: u2,
+        pos: V,
+        angle: f32,
+        input: Input,
+    ) EntityHandle {
+        return entities.create(.{
+            .ship = .{
+                .class = .wendy,
+                .still = self.wendy_animations.still,
+                .accel = self.wendy_animations.accel,
+                .turn_speed = math.pi * 1.0,
+                .thrust = 200,
+                .player = player_index,
+            },
+            .health = .{
+                .hp = 400,
+                .max_hp = 400,
+            },
+            .rb = .{
+                .pos = pos,
+                .vel = .{ .x = 0, .y = 0 },
+                .angle = angle,
+                .radius = 32,
+                .rotation_vel = 0.0,
+                .density = 0.02,
+            },
+            .collider = .{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            .animation = .{
+                .index = self.wendy_animations.still,
+                .time_passed = 0,
+            },
+            .turrets = .{
+                Turret.none,
+                Turret.none,
+            },
+            .input = input,
+        });
+    }
+
     fn init(assets: *Assets) !Game {
         const ring_bg = try assets.loadSprite("img/ring.png");
         const star_small = try assets.loadSprite("img/star/small.png");
@@ -1821,10 +1870,29 @@ const Game = struct {
             kevin_sprites[1],
         }, kevin_steady_thrust, 10, math.pi / 2.0);
 
+        const wendy_sprites = [_]Sprite.Index{
+            try assets.loadSprite("img/ship/wendy0.png"),
+            try assets.loadSprite("img/ship/wendy1.png"),
+            try assets.loadSprite("img/ship/wendy2.png"),
+            try assets.loadSprite("img/ship/wendy3.png"),
+        };
+        const wendy_still = try assets.addAnimation(&.{
+            wendy_sprites[0],
+        }, null, 30, math.pi / 2.0);
+        const wendy_steady_thrust = try assets.addAnimation(&.{
+            wendy_sprites[2],
+            wendy_sprites[3],
+        }, null, 10, math.pi / 2.0);
+        const wendy_accel = try assets.addAnimation(&.{
+            wendy_sprites[0],
+            wendy_sprites[1],
+        }, wendy_steady_thrust, 10, math.pi / 2.0);
+
         const ranger_radius = @intToFloat(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
         const militia_radius = @intToFloat(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
         const triangle_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
         const kevin_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
+        const wendy_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
 
         const team_sprites: [4]Sprite.Index = .{
             try assets.loadSprite("img/team0.png"),
@@ -1873,6 +1941,12 @@ const Game = struct {
             },
             .kevin_radius = kevin_radius,
 
+            .wendy_animations = .{
+                .still = wendy_still,
+                .accel = wendy_accel,
+            },
+            .wendy_radius = wendy_radius,
+
             .stars = undefined,
 
             .team_sprites = team_sprites,
@@ -1896,6 +1970,7 @@ const Game = struct {
             .militia => game.createMilitia(entities, player_index, pos, angle, input),
             .triangle => game.createTriangle(entities, player_index, pos, angle, input),
             .kevin => game.createKevin(entities, player_index, pos, angle, input),
+            .wendy => game.createWendy(entities, player_index, pos, angle, input),
         };
     }
 
@@ -1905,6 +1980,7 @@ const Game = struct {
             .militia => game.militia_animations.still,
             .triangle => game.triangle_animations.still,
             .kevin => game.kevin_animations.still,
+            .wendy => game.wendy_animations.still,
         };
         const animation = game.assets.animations.items[@enumToInt(animation_index)];
         const sprite_index = game.assets.frames.items[animation.start];
@@ -1949,12 +2025,14 @@ const Game = struct {
             .deathmatch_2v2_one_rock,
             => {
                 const progression = &.{
+                    .wendy,
                     .ranger,
                     .militia,
                     .ranger,
                     .militia,
                     .triangle,
                     .triangle,
+                    .wendy,
                     .kevin,
                 };
                 const team_init: Team = .{
@@ -1981,6 +2059,7 @@ const Game = struct {
                     .ranger,
                     .militia,
                     .triangle,
+                    .wendy,
                     .kevin,
                 };
                 const team_init: Team = .{
@@ -2002,9 +2081,11 @@ const Game = struct {
 
             .royale_4p => {
                 const progression = &.{
+                    .wendy,
                     .ranger,
                     .militia,
                     .triangle,
+                    .wendy,
                     .kevin,
                 };
                 const team_init: Team = .{
