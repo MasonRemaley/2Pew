@@ -569,15 +569,30 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const rb = entity.comps.rb;
             const input = entity.comps.input;
 
-            rb.angle = @mod(
-                rb.angle + input.getAxis(.turn) * ship.turn_speed * delta_s,
-                2 * math.pi,
-            );
+            if (ship.omnithrusters) {
+                const left = @intToFloat(f32, @boolToInt(input.isAction(.turn, .negative, .active)));
+                const right = @intToFloat(f32, @boolToInt(input.isAction(.turn, .positive, .active)));
+                const up = @intToFloat(f32, @boolToInt(input.isAction(.forward, .negative, .active)));
+                const down = @intToFloat(f32, @boolToInt(input.isAction(.forward, .positive, .active)));
 
-            // convert to 1.0 or 0.0
-            const thrust_input = @intToFloat(f32, @boolToInt(input.isAction(.forward, .positive, .active)));
-            const thrust = V.unit(rb.angle);
-            rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
+                const x = right - left;
+                const y = up - down;
+
+                rb.vel.add(V{
+                    .x = x * ship.thrust * delta_s,
+                    .y = y * ship.thrust * delta_s,
+                });
+            } else {
+                // convert to 1.0 or 0.0
+                rb.angle = @mod(
+                    rb.angle + input.getAxis(.turn) * ship.turn_speed * delta_s,
+                    2 * math.pi,
+                );
+
+                const thrust_input = @intToFloat(f32, @boolToInt(input.isAction(.forward, .positive, .active)));
+                const thrust = V.unit(rb.angle);
+                rb.vel.add(thrust.scaled(thrust_input * ship.thrust * delta_s));
+            }
 
             if (entity.comps.input.isAction(.dbg, .positive, .activated)) {
                 if (entities.getComponent(entity.handle, .health)) |health| {
@@ -821,7 +836,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            const dest_rect = sdlRect(rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
+            var dest_rect = sdlRect(rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
 
             var hidden = false;
             if (entities.getComponent(entity.handle, .health)) |health| {
@@ -849,6 +864,10 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
                 if (entities.getComponent(entity.handle, .ship)) |ship| {
                     const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
+                    dest_rect.x -= @divTrunc(dest_rect.w, 2);
+                    dest_rect.y -= @divTrunc(dest_rect.h, 2);
+                    dest_rect.w *= 2;
+                    dest_rect.h *= 2;
                     sdlAssertZero(c.SDL_RenderCopyEx(
                         renderer,
                         sprite.texture,
@@ -1360,10 +1379,10 @@ const Health = struct {
 
     hp: f32,
     max_hp: f32,
-    max_regen_cooldown_s: f32 = 1.0,
+    max_regen_cooldown_s: f32 = 1.5,
     regen_cooldown_s: f32 = 0.0,
     regen_ratio: f32 = 1.0 / 3.0,
-    regen_s: f32 = 1.0,
+    regen_s: f32 = 2.0,
     invulnerable_s: f32 = max_invulnerable_s,
     dbg: u32 = 0,
 
@@ -1395,6 +1414,7 @@ const Ship = struct {
     turn_speed: f32,
     /// pixels per second squared
     thrust: f32,
+    omnithrusters: bool = false,
 
     class: Class,
     player: u2,
@@ -1404,6 +1424,7 @@ const Ship = struct {
         militia,
         triangle,
         kevin,
+        wendy,
     };
 };
 
@@ -1711,6 +1732,70 @@ const Game = struct {
         });
     }
 
+    fn createWendy(
+        self: *const @This(),
+        entities: *Entities,
+        player_index: u2,
+        pos: V,
+        angle: f32,
+        input: Input,
+    ) EntityHandle {
+        return entities.create(.{
+            .ship = .{
+                .class = .kevin,
+                .still = self.kevin_animations.still,
+                .accel = self.kevin_animations.accel,
+                .turn_speed = math.pi * 1.1,
+                .thrust = 300,
+                .player = player_index,
+                .omnithrusters = true,
+            },
+            .health = .{
+                .hp = 300,
+                .max_hp = 300,
+            },
+            .rb = .{
+                .pos = pos,
+                .vel = .{ .x = 0, .y = 0 },
+                .angle = angle,
+                .radius = 32,
+                .rotation_vel = 0.0,
+                .density = 0.02,
+            },
+            .collider = .{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            .animation = .{
+                .index = self.kevin_animations.still,
+                .time_passed = 0,
+            },
+            .turrets = .{
+                .{
+                    .radius = 32,
+                    .angle = math.pi * 0.1,
+                    .cooldown = 0,
+                    .cooldown_amount = 0.2,
+                    .projectile_speed = 500,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 18,
+                    .projectile_radius = 18,
+                },
+                .{
+                    .radius = 32,
+                    .angle = math.pi * -0.1,
+                    .cooldown = 0,
+                    .cooldown_amount = 0.2,
+                    .projectile_speed = 500,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 18,
+                    .projectile_radius = 18,
+                },
+            },
+            .input = input,
+        });
+    }
+
     fn init(assets: *Assets) !Game {
         const ring_bg = try assets.loadSprite("img/ring.png");
         const star_small = try assets.loadSprite("img/star/small.png");
@@ -1896,6 +1981,7 @@ const Game = struct {
             .militia => game.createMilitia(entities, player_index, pos, angle, input),
             .triangle => game.createTriangle(entities, player_index, pos, angle, input),
             .kevin => game.createKevin(entities, player_index, pos, angle, input),
+            .wendy => game.createWendy(entities, player_index, pos, angle, input),
         };
     }
 
@@ -1905,6 +1991,7 @@ const Game = struct {
             .militia => game.militia_animations.still,
             .triangle => game.triangle_animations.still,
             .kevin => game.kevin_animations.still,
+            .wendy => game.kevin_animations.still,
         };
         const animation = game.assets.animations.items[@enumToInt(animation_index)];
         const sprite_index = game.assets.frames.items[animation.start];
@@ -1949,6 +2036,7 @@ const Game = struct {
             .deathmatch_2v2_one_rock,
             => {
                 const progression = &.{
+                    .wendy,
                     .ranger,
                     .militia,
                     .ranger,
@@ -2070,9 +2158,10 @@ const Game = struct {
                 },
                 .forward = .{
                     .positive = c.SDL_SCANCODE_W,
+                    .negative = c.SDL_SCANCODE_S,
                 },
                 .fire = .{
-                    .positive = c.SDL_SCANCODE_S,
+                    .positive = c.SDL_SCANCODE_LSHIFT,
                 },
                 .dbg = .{ .positive = c.SDL_SCANCODE_TAB },
             };
@@ -2083,9 +2172,10 @@ const Game = struct {
                 },
                 .forward = .{
                     .positive = c.SDL_SCANCODE_UP,
+                    .negative = c.SDL_SCANCODE_DOWN,
                 },
                 .fire = .{
-                    .positive = c.SDL_SCANCODE_DOWN,
+                    .positive = c.SDL_SCANCODE_RSHIFT,
                 },
                 .dbg = .{ .positive = c.SDL_SCANCODE_RSHIFT },
             };
