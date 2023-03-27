@@ -18,11 +18,8 @@ const EntityGeneration = switch (builtin.mode) {
 
 pub const max_entities: SlotIndex = 1000000;
 const invalid_entity_index = std.math.maxInt(SlotIndex);
-// TODO: can now tweak for perf. note that lower numbers are better
-// tests though, may wanna make configurable for that reason.
 const page_size = 4096;
 
-// TODO: set reasonable values for these
 const max_pages = max_entities / 32;
 const max_archetypes = 40000;
 
@@ -31,16 +28,13 @@ pub const EntityHandle = struct {
     generation: EntityGeneration,
 };
 
-// TODO: really it should just be called components but then can't use that anywhere else...
 pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
-        // XXX: used??
         pub const Component = FieldEnum(Entity);
 
         // `Archetype` is a bit set with a bit for each component type.
         const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
 
-        // TODO: rename to components?
         // `Entity` has a field for every possible component type. This is for convenience, it is
         // not used at runtime. Fields are sorted from greatest to least alignment, see `PageHeader` for
         // rational.
@@ -653,7 +647,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     });
                 };
 
-                // TODO: mostly dup of above just made * [*]? can we clean this up?
                 const ComponentArrays = entity: {
                     var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
                     var i = 0;
