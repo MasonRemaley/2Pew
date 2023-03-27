@@ -34,24 +34,26 @@ pub const EntityHandle = struct {
 // TODO: really it should just be called components but then can't use that anywhere else...
 pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
+        // XXX: used??
         pub const Component = FieldEnum(Entity);
 
         // `Archetype` is a bit set with a bit for each component type.
-        const Archetype: type = std.bit_set.IntegerBitSet(std.meta.fields(Entity).len);
+        const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
 
         // TODO: rename to components?
         // `Entity` has a field for every possible component type. This is for convenience, it is
         // not used at runtime. Fields are sorted from greatest to least alignment, see `PageHeader` for
         // rational.
         pub const Entity = entity: {
-            var fields: [std.meta.fields(@TypeOf(componentTypes)).len]Type.StructField = undefined;
-            for (std.meta.fields(@TypeOf(componentTypes)), 0..) |registered, i| {
+            const component_names = @typeInfo(@TypeOf(componentTypes)).Struct.fields;
+            var fields: [component_names.len]Type.StructField = undefined;
+            for (component_names, 0..) |component_name, i| {
                 fields[i] = Type.StructField{
-                    .name = registered.name,
-                    .type = @field(componentTypes, registered.name),
+                    .name = component_name.name,
+                    .type = @field(componentTypes, component_name.name),
                     .default_value = null,
                     .is_comptime = false,
-                    .alignment = @alignOf(registered.type),
+                    .alignment = @alignOf(component_name.type),
                 };
             }
             const AlignmentDescending = struct {
@@ -72,8 +74,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
         };
 
         pub const Prefab = prefab: {
-            var fields: [std.meta.fields(Entity).len]Type.StructField = undefined;
-            for (std.meta.fields(Entity), 0..) |field, i| {
+            const component_types = @typeInfo(Entity).Struct.fields;
+            var fields: [component_types.len]Type.StructField = undefined;
+            for (component_types, 0..) |field, i| {
                 fields[i] = Type.StructField{
                     .name = field.name,
                     .type = ?field.type,
@@ -127,7 +130,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 var components_size: u16 = 0;
                 var max_component_alignment: u16 = 1;
                 var first = true;
-                inline for (std.meta.fields(Entity), 0..) |component, i| {
+                inline for (@typeInfo(Entity).Struct.fields, 0..) |component, i| {
                     if (archetype.isSet(i)) {
                         if (first) {
                             first = false;
@@ -202,12 +205,16 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return @intToPtr([*]EntityHandle, @ptrToInt(self) + self.handle_array);
             }
 
-            fn componentArray(self: *PageHeader, comptime componentField: Component) [*]std.meta.fieldInfo(Entity, componentField).type {
+            fn ComponentArray(comptime componentField: Component) type {
+                return [*]std.meta.fieldInfo(Entity, componentField).type;
+            }
+
+            fn componentArray(self: *PageHeader, comptime componentField: Component) ComponentArray(componentField) {
                 var ptr: usize = self.component_arrays;
-                inline for (std.meta.fields(Entity), 0..) |component, i| {
+                inline for (@typeInfo(Entity).Struct.fields, 0..) |component, i| {
                     if (self.archetype.isSet(i)) {
                         if (@intToEnum(Component, i) == componentField) {
-                            return @intToPtr([*]std.meta.fieldInfo(Entity, componentField).type, @ptrToInt(self) + ptr);
+                            return @intToPtr(ComponentArray(componentField), @ptrToInt(self) + ptr);
                         }
 
                         ptr += @sizeOf(component.type) * self.capacity;
@@ -489,16 +496,16 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const components_added = components_added: {
                 if (@TypeOf(add_components) == Prefab) {
                     var components_added = Archetype.initEmpty();
-                    inline for (comptime std.meta.fieldNames(@TypeOf(add_components))) |fieldName| {
-                        if (@field(add_components, fieldName) != null) {
-                            components_added.set(std.meta.fieldIndex(Entity, fieldName).?);
+                    inline for (comptime @typeInfo(@TypeOf(add_components)).Struct.fields) |field| {
+                        if (@field(add_components, field.name) != null) {
+                            components_added.set(std.meta.fieldIndex(Entity, field.name).?);
                         }
                     }
                     break :components_added components_added;
                 } else comptime {
                     var components_added = Archetype.initEmpty();
-                    for (std.meta.fieldNames(@TypeOf(add_components))) |fieldName| {
-                        components_added.set(std.meta.fieldIndex(Entity, fieldName).?);
+                    for (@typeInfo(@TypeOf(add_components)).Struct.fields) |field| {
+                        components_added.set(std.meta.fieldIndex(Entity, field.name).?);
                     }
                     break :components_added components_added;
                 }
@@ -553,7 +560,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 // Copy the old components
                 const copy = previous_archetype.intersectWith(archetype)
                     .differenceWith(components_added);
-                inline for (0..std.meta.fields(Entity).len) |i| {
+                inline for (0..@typeInfo(Entity).Struct.fields.len) |i| {
                     if (copy.isSet(i)) {
                         const field = @intToEnum(Component, i);
                         page.componentArray(field)[slot.index_in_page] = old_page.componentArray(field)[old_index_in_page];
@@ -579,7 +586,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             // Initialize the new entity
-            inline for (std.meta.fields(@TypeOf(add_components))) |f| {
+            inline for (@typeInfo(@TypeOf(add_components)).Struct.fields) |f| {
                 const field = @intToEnum(Component, std.meta.fieldIndex(Entity, f.name).?);
                 if (@TypeOf(add_components) == Prefab) {
                     if (@field(add_components, f.name)) |component| {
@@ -620,11 +627,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
         pub fn Iterator(comptime components: anytype) type {
             return struct {
                 const Components = entity: {
-                    var fields: [std.meta.fields(@TypeOf(components)).len]Type.StructField = undefined;
+                    var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
                     var i = 0;
                     for (components) |component| {
                         const entityFieldEnum: Component = component;
-                        const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
+                        const entityField = std.meta.fieldInfo(Entity, entityFieldEnum);
                         const FieldType = *entityField.type;
                         fields[i] = Type.StructField{
                             .name = entityField.name,
@@ -648,11 +655,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                 // TODO: mostly dup of above just made * [*]? can we clean this up?
                 const ComponentArrays = entity: {
-                    var fields: [std.meta.fields(@TypeOf(components)).len]Type.StructField = undefined;
+                    var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
                     var i = 0;
                     for (components) |component| {
                         const entityFieldEnum: Component = component;
-                        const entityField = std.meta.fields(Entity)[@enumToInt(entityFieldEnum)];
+                        const entityField = std.meta.fieldInfo(Entity, entityFieldEnum);
                         const FieldType = [*]entityField.type;
                         fields[i] = Type.StructField{
                             .name = entityField.name,
@@ -711,7 +718,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     self.index_in_page = 0;
                     if (page) |pl| {
                         self.handle_array = pl.handleArray();
-                        inline for (std.meta.fields(ComponentArrays)) |field| {
+                        inline for (@typeInfo(ComponentArrays).Struct.fields) |field| {
                             const entity_field = @intToEnum(Component, std.meta.fieldIndex(Entity, field.name).?);
                             @field(self.component_arrays, field.name) = pl.componentArray(entity_field);
                         }
@@ -746,7 +753,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         // If it exists, return it
                         var item: Item = undefined;
                         item.handle = self.handle_array[self.index_in_page];
-                        inline for (std.meta.fields(Components)) |field| {
+                        inline for (@typeInfo(Components).Struct.fields) |field| {
                             @field(item.comps, field.name) = &@field(self.component_arrays, field.name)[self.index_in_page];
                         }
                         self.index_in_page += 1;
