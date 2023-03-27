@@ -100,7 +100,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         // A page contains entities of a single archetype.
         const PageHeader = struct {
-            next: ?*PageHeader,
+            next_available: ?*PageHeader,
             prev: ?*PageHeader,
             archetype: Archetype,
             len: u16,
@@ -155,7 +155,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 page_pool.items.len += 1;
                 var page = page_pool.items[page_index];
                 page.* = PageHeader{
-                    .next = null,
+                    .next_available = null,
                     .prev = null,
                     .archetype = archetype,
                     .capacity = conservative_capacity,
@@ -221,73 +221,73 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // A linked list of max_pages of a single archetype. Pages with available space are kept sorted
         // to the front of the list.
         const PageList = struct {
-            head: ?*PageHeader = null,
+            available: ?*PageHeader = null,
             tail: ?*PageHeader = null,
 
-            fn moveToHead(self: *@This(), page: *PageHeader) void {
-                if (self.head != page) {
-                    self.remove(page);
-                    self.prepend(page);
+            fn moveToHeadOfAvailable(self: *@This(), page: *PageHeader) void {
+                if (self.available != page) {
+                    self.removeFromAvailable(page);
+                    self.prependAvailable(page);
                 }
             }
 
-            fn moveToTail(self: *@This(), page: *PageHeader) void {
+            fn moveToTailOfAvailable(self: *@This(), page: *PageHeader) void {
                 if (self.tail != page) {
-                    self.remove(page);
-                    self.append(page);
+                    self.removeFromAvailable(page);
+                    self.appendToAvailable(page);
                 }
             }
 
-            fn remove(self: *@This(), page: *PageHeader) void {
+            fn removeFromAvailable(self: *@This(), page: *PageHeader) void {
                 // Update head/tail
-                if (self.head == page)
-                    self.head = page.next;
+                if (self.available == page)
+                    self.available = page.next_available;
                 if (self.tail == page)
                     self.tail = page.prev;
 
                 // Update the previous node
                 if (page.prev) |prev| {
-                    prev.next = page.next;
+                    prev.next_available = page.next_available;
                 }
 
                 // Update the next node
-                if (page.next) |next| {
-                    next.prev = page.prev;
+                if (page.next_available) |next_available| {
+                    next_available.prev = page.prev;
                 }
 
                 // Invaidate prev/next
                 page.prev = undefined;
-                page.next = undefined;
+                page.next_available = undefined;
             }
 
-            fn prepend(self: *@This(), page: *PageHeader) void {
+            fn prependAvailable(self: *@This(), page: *PageHeader) void {
                 // Update prev/next
                 page.prev = null;
-                page.next = self.head;
+                page.next_available = self.available;
 
                 // Update the current head's prev
-                if (self.head) |head| {
-                    head.prev = page;
+                if (self.available) |available| {
+                    available.prev = page;
                 }
 
                 // Update head and tail
-                self.head = page;
+                self.available = page;
                 if (self.tail == null) self.tail = page;
             }
 
-            fn append(self: *@This(), page: *PageHeader) void {
+            fn appendToAvailable(self: *@This(), page: *PageHeader) void {
                 // Update prev/next
                 page.prev = self.tail;
-                page.next = null;
+                page.next_available = null;
 
                 // Update the current tail's next
                 if (self.tail) |tail| {
-                    tail.next = page;
+                    tail.next_available = page;
                 }
 
                 // Update head and tail
                 self.tail = page;
-                if (self.head == null) self.head = page;
+                if (self.available == null) self.available = page;
             }
         };
 
@@ -414,7 +414,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // list
             if (was_full) {
                 const page_list: *PageList = self.page_lists.getPtr(page.archetype).?;
-                page_list.moveToHead(page);
+                page_list.moveToHeadOfAvailable(page);
             }
 
             // Increment this entity slot's generation so future uses will fail
@@ -529,18 +529,18 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     }
                     const newPage = try PageHeader.init(&self.page_pool, archetype);
                     entry.value_ptr.* = PageList{};
-                    entry.value_ptr.*.prepend(newPage);
+                    entry.value_ptr.*.prependAvailable(newPage);
                 }
                 break :page entry.value_ptr;
             };
 
             // TODO: only possiblly necessary if didn't juts create one
             // If the head does not have space, create a new head that has space
-            if (page_list.head.?.len == page_list.head.?.capacity) {
+            if (page_list.available.?.len == page_list.available.?.capacity) {
                 const newPage = try PageHeader.init(&self.page_pool, archetype);
-                page_list.prepend(newPage);
+                page_list.prependAvailable(newPage);
             }
-            const page = page_list.head.?;
+            const page = page_list.available.?;
 
             // Create the new entity
             const slot = &self.slots[entity.index];
@@ -570,13 +570,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 // the page list
                 if (was_full) {
                     const old_page_list: *PageList = self.page_lists.getPtr(slot.page.archetype).?;
-                    old_page_list.moveToHead(page);
+                    old_page_list.moveToHeadOfAvailable(page);
                 }
             }
 
             // If the new page is now full, move it to the end of the page list
             if (page.len == page.capacity) {
-                page_list.moveToTail(page);
+                page_list.moveToTailOfAvailable(page);
             }
 
             // Initialize the new entity
@@ -725,7 +725,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         if (self.page == null) {
                             const nextPageList = while (self.page_lists.next()) |page| {
                                 if (page.key_ptr.supersetOf(self.archetype)) {
-                                    break page.value_ptr.head;
+                                    break page.value_ptr.available;
                                 }
                             } else return null;
                             self.setPage(nextPageList);
@@ -739,7 +739,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         } else {
                             // If we didn't find anything, advance to the next page in this archetype
                             // page list
-                            self.setPage(self.page.?.next);
+                            self.setPage(self.page.?.next_available);
                             continue;
                         }
 
@@ -806,10 +806,10 @@ test "limits" {
     {
         var page_lists = entities.page_lists.iterator();
         while (page_lists.next()) |page_list| {
-            var page: ?*@TypeOf(entities).PageHeader = page_list.value_ptr.head;
+            var page: ?*@TypeOf(entities).PageHeader = page_list.value_ptr.available;
             while (page) |p| {
                 try std.testing.expect(p.len == 0);
-                page = p.next;
+                page = p.next_available;
             }
         }
     }
