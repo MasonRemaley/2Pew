@@ -101,6 +101,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // A page contains entities of a single archetype.
         const PageHeader = struct {
             next_available: ?*PageHeader,
+            next: ?*PageHeader,
             prev: ?*PageHeader,
             archetype: Archetype,
             len: u16,
@@ -156,6 +157,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 var page = page_pool.items[page_index];
                 page.* = PageHeader{
                     .next_available = null,
+                    // XXX: about to be overwritten?
+                    .next = null,
                     .prev = null,
                     .archetype = archetype,
                     .capacity = conservative_capacity,
@@ -223,6 +226,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         const PageList = struct {
             available: ?*PageHeader = null,
             tail: ?*PageHeader = null,
+            all: *PageHeader,
 
             fn moveToHeadOfAvailable(self: *@This(), page: *PageHeader) void {
                 if (self.available != page) {
@@ -273,6 +277,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 // Update head and tail
                 self.available = page;
                 if (self.tail == null) self.tail = page;
+            }
+
+            fn prependAll(self: *@This(), page: *PageHeader) void {
+                page.next = self.all;
+                self.all = page;
             }
 
             fn appendToAvailable(self: *@This(), page: *PageHeader) void {
@@ -528,7 +537,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         std.log.warn("archetype map halfway depleted", .{});
                     }
                     const newPage = try PageHeader.init(&self.page_pool, archetype);
-                    entry.value_ptr.* = PageList{};
+                    entry.value_ptr.* = PageList{
+                        .all = newPage,
+                    };
                     entry.value_ptr.*.prependAvailable(newPage);
                 }
                 break :page entry.value_ptr;
@@ -539,6 +550,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             if (page_list.available.?.len == page_list.available.?.capacity) {
                 const newPage = try PageHeader.init(&self.page_pool, archetype);
                 page_list.prependAvailable(newPage);
+                page_list.prependAll(newPage);
             }
             const page = page_list.available.?;
 
@@ -739,7 +751,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         } else {
                             // If we didn't find anything, advance to the next page in this archetype
                             // page list
-                            self.setPage(self.page.?.next_available);
+                            self.setPage(self.page.?.next);
                             continue;
                         }
 
@@ -809,7 +821,7 @@ test "limits" {
             var page: ?*@TypeOf(entities).PageHeader = page_list.value_ptr.available;
             while (page) |p| {
                 try std.testing.expect(p.len == 0);
-                page = p.next_available;
+                page = p.next;
             }
         }
     }
