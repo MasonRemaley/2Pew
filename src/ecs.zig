@@ -178,7 +178,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 allocator.free(@ptrCast(*[page_size]u8, self));
             }
 
-            fn createEntity(self: *@This(), handle: EntityHandle) u16 {
+            fn createEntityAssumeCapacity(self: *@This(), handle: EntityHandle) u16 {
                 var handles = self.handleArray();
                 for (0..self.capacity) |i| {
                     if (handles[i].index == invalid_entity_index) {
@@ -220,12 +220,39 @@ pub fn Entities(comptime componentTypes: anytype) type {
         };
 
         // XXX: move more logic into page list to make it easier to follow? but don't always have ref to
-        // list...
+        // list...can make static method if need to!
         // A linked list of max_pages of a single archetype. Pages with available space are kept sorted
         // to the front of the list.
         const PageList = struct {
-            available: ?*PageHeader = null,
+            available: ?*PageHeader,
             all: *PageHeader,
+
+            fn initEnsureAvailable(page_pool: *ArrayListUnmanaged(*PageHeader), archetype: Archetype) !PageList {
+                const newPage = try PageHeader.init(page_pool, archetype);
+                return .{
+                    .all = newPage,
+                    .available = newPage,
+                };
+            }
+
+            fn ensureAvailable(self: *PageList, page_pool: *ArrayListUnmanaged(*PageHeader)) !void {
+                if (self.available == null) {
+                    // XXX: self.all.archetype is a bit weird here but works...
+                    const newPage = try PageHeader.init(page_pool, self.all.archetype);
+                    self.available = newPage;
+                    // XXX: just inline it?
+                    self.prependAll(newPage);
+                }
+            }
+
+            fn createEntityAssumeCapacity(self: *@This(), slot: *EntitySlot, handle: EntityHandle) void {
+                // XXX: create available if needed here?
+                slot.page = self.available.?;
+                slot.index_in_page = slot.page.createEntityAssumeCapacity(handle);
+                if (slot.page.len == slot.page.capacity) {
+                    self.popFrontAvailable();
+                }
+            }
 
             fn popFrontAvailable(self: *@This()) void {
                 self.available = self.available.?.next_available;
@@ -360,9 +387,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const page = slot.page;
             const was_full = page.len == page.capacity;
             page.removeEntity(slot.index_in_page);
-
-            // If this page didn't have space before but does now, move it to the front of the page
-            // list
             if (was_full) {
                 const page_list: *PageList = self.page_lists.getPtr(page.archetype).?;
                 page_list.prependAvailable(page);
@@ -419,6 +443,25 @@ pub fn Entities(comptime componentTypes: anytype) type {
             _ = try self.setArchetype(entity, .{}, components, false);
         }
 
+        fn getOrPutPageListEnsureAvailable(self: *@This(), archetype: Archetype) !*PageList {
+            comptime assert(max_archetypes > 0);
+
+            const entry = self.page_lists.getOrPutAssumeCapacity(archetype);
+
+            if (entry.found_existing) {
+                try entry.value_ptr.*.ensureAvailable(&self.page_pool);
+            } else {
+                if (self.page_lists.count() >= max_archetypes) {
+                    return error.OutOfArchetypes;
+                } else if (self.page_lists.count() == max_archetypes / 2) {
+                    std.log.warn("archetype map halfway depleted", .{});
+                }
+                entry.value_ptr.* = try PageList.initEnsureAvailable(&self.page_pool, archetype);
+            }
+
+            return entry.value_ptr;
+        }
+
         // TODO: test the failure conditions here?
         // TODO: early out if no change?
         // TODO: make remove_components comptime?
@@ -468,42 +511,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const archetype = previous_archetype.unionWith(components_added)
                 .differenceWith(components_removed);
 
-            // Get the page list for this archetype
-            const page_list: *PageList = page: {
-                comptime assert(max_archetypes > 0);
-                const entry = self.page_lists.getOrPutAssumeCapacity(archetype);
-                if (!entry.found_existing) {
-                    if (self.page_lists.count() >= max_archetypes) {
-                        return error.OutOfArchetypes;
-                    } else if (self.page_lists.count() == max_archetypes / 2) {
-                        std.log.warn("archetype map halfway depleted", .{});
-                    }
-                    const newPage = try PageHeader.init(&self.page_pool, archetype);
-                    entry.value_ptr.* = PageList{
-                        .all = newPage,
-                    };
-                    entry.value_ptr.*.prependAvailable(newPage);
-                }
-                break :page entry.value_ptr;
-            };
-
-            // TODO: only possiblly necessary if didn't juts create one
-            // If the head does not have space, create a new head that has space
-            if (page_list.available == null) {
-                const newPage = try PageHeader.init(&self.page_pool, archetype);
-                page_list.prependAvailable(newPage);
-                page_list.prependAll(newPage);
-            }
-
             // Create the new entity
             const slot = &self.slots[entity.index];
             const old_page = slot.page;
             const old_index_in_page = slot.index_in_page;
-            slot.page = page_list.available.?;
-            slot.index_in_page = slot.page.createEntity(entity);
-            if (slot.page.len == slot.page.capacity) {
-                page_list.popFrontAvailable();
-            }
+            const page_list = try self.getOrPutPageListEnsureAvailable(archetype);
+            page_list.createEntityAssumeCapacity(slot, entity);
 
             // If this entity data is replacing an existing one, copy the original components over
             if (!create_entity) {
