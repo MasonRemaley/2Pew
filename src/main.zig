@@ -2490,4 +2490,5 @@ fn remap_clamped(
 test {
     _ = ecs;
     _ = @import("minimum_alignment_allocator.zig");
+    _ = @import("segmented_list.zig");
 }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const SegmentedList = @import("segmented_list.zig").SegmentedList;
 
 const assert = std.debug.assert;
 
@@ -8,7 +9,6 @@ const FieldEnum = std.meta.FieldEnum;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const ArrayListAlignedUnmanaged = std.ArrayListAlignedUnmanaged;
-const SegmentedList = std.SegmentedList;
 const Type = std.builtin.Type;
 
 const SlotIndex = u32;
@@ -140,7 +140,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     if (archetype.isSet(i)) {
                         if (first) {
                             first = false;
-                            max_component_alignment = @alignOf(component.type);
+                            // XXX: inserted this fix to fix archetypes with ONLY zsts. there may be a better fix, but,
+                            // we don't care cause we're replacing this memory layout anyway i just want the tests to pass.
+                            max_component_alignment = std.math.max(@alignOf(component.type), 1);
                         }
                         components_size += @sizeOf(component.type);
                     }
@@ -879,6 +881,20 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
         }
     };
+}
+
+// Could use a more exhaustive test, this at least makes sure it compiles which was a problem
+// at one point!
+test "zero-sized-component" {
+    var allocator = std.heap.page_allocator;
+    var entities = try Entities(.{ .x = struct {} }).init(allocator);
+    defer entities.deinit(allocator);
+
+    const a = entities.create(.{ .x = .{} });
+    const b = entities.create(.{});
+
+    try std.testing.expect(entities.getComponent(a, .x) != null);
+    try std.testing.expect(entities.getComponent(b, .x) == null);
 }
 
 test "limits" {

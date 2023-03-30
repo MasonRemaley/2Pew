@@ -1,4 +1,4 @@
-const std = @import("std.zig");
+const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 const mem = std.mem;
@@ -93,6 +93,7 @@ pub fn SegmentedList(comptime T: type, comptime prealloc_item_count: usize) type
         };
 
         prealloc_segment: [prealloc_item_count]T = undefined,
+        // TODO: if zero sized, don't spend space on this?
         dynamic_segments: [][*]T = &[_][*]T{},
         len: usize = 0,
 
@@ -180,6 +181,10 @@ pub fn SegmentedList(comptime T: type, comptime prealloc_item_count: usize) type
 
         /// Only grows capacity, or retains current capacity.
         pub fn growCapacity(self: *Self, allocator: Allocator, new_capacity: usize) Allocator.Error!void {
+            if (@sizeOf(T) == 0) {
+                return;
+            }
+
             const new_cap_shelf_count = shelfCount(new_capacity);
             const old_shelf_count = @intCast(ShelfIndex, self.dynamic_segments.len);
             if (new_cap_shelf_count <= old_shelf_count) return;
@@ -205,6 +210,10 @@ pub fn SegmentedList(comptime T: type, comptime prealloc_item_count: usize) type
         /// Only shrinks capacity or retains current capacity.
         /// It may fail to reduce the capacity in which case the capacity will remain unchanged.
         pub fn shrinkCapacity(self: *Self, allocator: Allocator, new_capacity: usize) void {
+            if (@sizeOf(T) == 0) {
+                return;
+            }
+
             if (new_capacity <= prealloc_item_count) {
                 const len = @intCast(ShelfIndex, self.dynamic_segments.len);
                 self.freeShelves(allocator, len, 0);
@@ -271,6 +280,12 @@ pub fn SegmentedList(comptime T: type, comptime prealloc_item_count: usize) type
         }
 
         pub fn uncheckedAt(self: anytype, index: usize) AtType(@TypeOf(self)) {
+            if (@sizeOf(T) == 0) {
+                // TODO: what's the correct way to get a pointer for a zst?
+                var t = T{};
+                return &t;
+            }
+
             if (index < prealloc_item_count) {
                 return &self.prealloc_segment[index];
             }
@@ -308,6 +323,10 @@ pub fn SegmentedList(comptime T: type, comptime prealloc_item_count: usize) type
         }
 
         fn freeShelves(self: *Self, allocator: Allocator, from_count: ShelfIndex, to_count: ShelfIndex) void {
+            if (@sizeOf(T) == 0) {
+                return;
+            }
+
             var i = from_count;
             while (i != to_count) {
                 i -= 1;
@@ -531,4 +550,33 @@ fn log2_int_ceil(comptime T: type, x: T) std.math.Log2Int(T) {
     if (@as(T, 1) << log2_val == x)
         return log2_val;
     return log2_val + 1;
+}
+
+test "zero-sized-item" {
+    var l = SegmentedList(void, 0){};
+    defer l.deinit(testing.allocator);
+
+    try testing.expect(l.count() == 0);
+    try l.append(testing.allocator, {});
+    try testing.expectEqual({}, l.at(0).*);
+    try testing.expect(l.count() == 1);
+
+    for (0..10) |_| {
+        try l.append(testing.allocator, {});
+    }
+
+    for (0..11) |i| {
+        try testing.expectEqual({}, l.at(i).*);
+    }
+    try testing.expect(l.count() == 11);
+
+    try testing.expectEqual({}, l.pop().?);
+    try testing.expect(l.count() == 10);
+
+    for (0..10) |_| {
+        try testing.expectEqual({}, l.pop().?);
+    }
+    try testing.expect(l.count() == 0);
+
+    try testing.expect(l.pop() == null);
 }
