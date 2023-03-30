@@ -25,10 +25,10 @@ pub fn main() !void {
 
 fn benchEcs() !void {
     var pa = std.heap.page_allocator;
-    var buffer = try pa.alloc(u8, ecs.max_entities * 200);
+    var buffer = try pa.alloc(u8, ecs.max_entities * 1024);
     defer pa.free(buffer);
     var fba = std.heap.FixedBufferAllocator.init(buffer);
-    var maa = MinimumAlignmentAllocator.init(fba.allocator(), 6);
+    var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
     const allocator = maa.allocator();
 
     // Init

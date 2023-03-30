@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const SegmentedList = @import("segmented_list.zig").SegmentedList;
+const SegmentedListFirstShelfCount = @import("segmented_list.zig").SegmentedListFirstShelfCount;
 
 const assert = std.debug.assert;
 
@@ -109,6 +109,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
             entity_pointer: EntityPointer,
         };
 
+        const first_shelf_count = 8;
+
         // XXX: rename this idk to what yet
         // A linked list of max_pages of a single archetype. Pages with available space are kept sorted
         // to the front of the list.
@@ -116,7 +118,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const Components = components: {
                 var fields: [@typeInfo(Entity).Struct.fields.len]Type.StructField = undefined;
                 for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
-                    const FieldType = SegmentedList(field.type, 0);
+                    const FieldType = SegmentedListFirstShelfCount(field.type, first_shelf_count, false);
                     fields[i] = Type.StructField{
                         .name = field.name,
                         // XXX: make the desired modifications to segmented list eventually?
@@ -138,7 +140,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             };
 
             // A segmented list for each component.
-            handles: SegmentedList(EntityHandle, 0) = .{},
+            handles: SegmentedListFirstShelfCount(EntityHandle, first_shelf_count, false) = .{},
             comps: Components = .{},
             archetype: Archetype,
             // XXX: this as a type?
@@ -211,7 +213,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             fn ComponentIterator(comptime componentField: Component) type {
-                return SegmentedList(ComponentType(componentField), 0).Iterator;
+                return SegmentedListFirstShelfCount(ComponentType(componentField), first_shelf_count, false).Iterator;
             }
 
             fn componentIterator(self: *@This(), comptime componentField: Component) ComponentIterator(componentField) {
@@ -220,7 +222,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // XXX: do we still need invalid handles or no? (if so do it the better way where zig's type system
             // knows about it...)
-            const HandleIterator = SegmentedList(EntityHandle, 0).Iterator;
+            const HandleIterator = SegmentedListFirstShelfCount(EntityHandle, first_shelf_count, false).Iterator;
 
             fn handleIterator(self: *@This()) HandleIterator {
                 return self.handles.iterator(0);
@@ -598,9 +600,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         if (self.handle_iterator.peek()) |handle| {
                             var item: Item = undefined;
                             item.handle = handle.*;
-                            comptime assert(self.page_list.?.handles.prealloc_segment.len == 0);
+                            comptime assert(@TypeOf(self.page_list.?.handles).prealloc_count == 0);
                             inline for (@typeInfo(Components).Struct.fields) |field| {
-                                comptime assert(@field(self.page_list.?.comps, field.name).prealloc_segment.len == 0);
+                                comptime assert(@TypeOf(@field(self.page_list.?.comps, field.name)).prealloc_count == 0);
+                                comptime assert(@TypeOf(@field(self.page_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.page_list.?.handles).first_shelf_exp);
                                 @field(item.comps, field.name) = &@field(self.page_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
                             }
                             _ = self.handle_iterator.next();
