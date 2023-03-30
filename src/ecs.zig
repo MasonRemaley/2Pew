@@ -8,6 +8,7 @@ const FieldEnum = std.meta.FieldEnum;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const ArrayListAlignedUnmanaged = std.ArrayListAlignedUnmanaged;
+const SegmentedList = std.SegmentedList;
 const Type = std.builtin.Type;
 
 const SlotIndex = u32;
@@ -90,12 +91,22 @@ pub fn Entities(comptime componentTypes: anytype) type {
             });
         };
 
+        // XXX: temp for refactor
+        const EntityIndex = struct {
+            page: *PageHeader,
+            index_in_page: u16,
+        };
+        // XXX: temp for refactor
+        const EntityPointer = struct {
+            page_list: *PageList,
+            index: EntityIndex,
+        };
+
         // Each entity handle points to a slot which in turn points to the actual entity data.
         // This indirection allows the actual data to move without invalidating the handle.
         const EntitySlot = struct {
             generation: EntityGeneration,
-            page: *PageHeader,
-            index_in_page: u16,
+            entity_pointer: EntityPointer,
         };
 
         // A page contains entities of a single archetype.
@@ -108,6 +119,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             component_arrays: u16,
             handle_array: u16,
 
+            // XXX: assert page alignment or at least explain?
             fn init(page_pool: *ArrayListUnmanaged(*PageHeader), archetype: Archetype) !*PageHeader {
                 comptime assert(@sizeOf(PageHeader) < page_size);
 
@@ -219,19 +231,50 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
         };
 
-        // XXX: move more logic into page list to make it easier to follow? but don't always have ref to
-        // list...can make static method if need to!
+        // XXX: rename this idk to what yet
         // A linked list of max_pages of a single archetype. Pages with available space are kept sorted
         // to the front of the list.
         const PageList = struct {
+            const Components = components: {
+                var fields: [@typeInfo(Entity).Struct.fields.len]Type.StructField = undefined;
+                for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
+                    const FieldType = SegmentedList(field.type, 0);
+                    fields[i] = Type.StructField{
+                        .name = field.name,
+                        // XXX: make the desired modifications to segmented list eventually?
+                        .type = FieldType,
+                        .default_value = &FieldType{},
+                        .is_comptime = false,
+                        .alignment = @alignOf(FieldType),
+                    };
+                }
+                break :components @Type(Type{
+                    .Struct = Type.Struct{
+                        .layout = .Auto,
+                        .backing_integer = null,
+                        .fields = &fields,
+                        .decls = &[_]Type.Declaration{},
+                        .is_tuple = false,
+                    },
+                });
+            };
+
+            // XXX: remove these eventually...
             available: ?*PageHeader,
             all: *PageHeader,
+
+            // A segmented list for each component.
+            comps: Components = .{},
+            archetype: Archetype,
+            len: SlotIndex,
 
             fn initEnsureAvailable(page_pool: *ArrayListUnmanaged(*PageHeader), archetype: Archetype) !PageList {
                 const newPage = try PageHeader.init(page_pool, archetype);
                 return .{
                     .all = newPage,
                     .available = newPage,
+                    .archetype = archetype,
+                    .len = 0,
                 };
             }
 
@@ -245,13 +288,33 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 }
             }
 
+            // XXX: better api that returns pointers so don't have to recalculate them?
             fn createEntityAssumeCapacity(self: *@This(), slot: *EntitySlot, handle: EntityHandle) void {
+                // XXX: could optimize this logic a little since all lists are gonna match eachother, also
+                // only really need one size, etc
+                // XXX: self.archetype vs making these nullable?
+                // slot.entity_pointer.index.index_in_page = self.len;
+                // slot.entity_pointer.index.page = self; // ...
+                inline for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
+                    if (self.archetype.isSet(i)) {
+                        // XXX: don't use page allocator lol, handle failure
+                        _ = @field(self.comps, field.name).addOne(std.heap.page_allocator) catch unreachable;
+                    }
+                }
+                // XXX: can't overflow because fails earlier right?
+                self.len += 1;
                 // XXX: create available if needed here?
-                slot.page = self.available.?;
-                slot.index_in_page = slot.page.createEntityAssumeCapacity(handle);
-                if (slot.page.len == slot.page.capacity) {
+                slot.entity_pointer.index.page = self.available.?;
+                slot.entity_pointer.page_list = self;
+                slot.entity_pointer.index.index_in_page = slot.entity_pointer.index.page.createEntityAssumeCapacity(handle);
+                if (slot.entity_pointer.index.page.len == slot.entity_pointer.index.page.capacity) {
                     self.popFrontAvailable();
                 }
+            }
+
+            fn removeEntity(self: *PageList, index: EntityIndex) void {
+                _ = self; // ...
+                index.page.removeEntity(index.index_in_page);
             }
 
             fn popFrontAvailable(self: *@This()) void {
@@ -267,6 +330,42 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 page.next = self.all;
                 self.all = page;
             }
+
+            fn ComponentType(comptime componentField: Component) type {
+                return *std.meta.fieldInfo(Entity, componentField).type;
+            }
+
+            fn getComponent(self: *@This(), index: EntityIndex, comptime componentField: Component) ComponentType(componentField) {
+                _ = self;
+                return &index.page.componentArray(componentField)[index.index_in_page];
+            }
+
+            fn getHandle(self: *@This(), index: EntityIndex) EntityHandle {
+                _ = self;
+                return index.index.page.handleArray()[index.index_in_page];
+            }
+
+            // fn handleArray(self: *@This()) [*]EntityHandle {
+            //     return @intToPtr([*]EntityHandle, @ptrToInt(self) + self.handle_array);
+            // }
+
+            // fn ComponentArray(comptime componentField: Component) type {
+            //     return [*]std.meta.fieldInfo(Entity, componentField).type;
+            // }
+
+            // fn componentArray(self: *PageHeader, comptime componentField: Component) ComponentArray(componentField) {
+            //     var ptr: usize = self.component_arrays;
+            //     inline for (@typeInfo(Entity).Struct.fields, 0..) |component, i| {
+            //         if (self.archetype.isSet(i)) {
+            //             if (@intToEnum(Component, i) == componentField) {
+            //                 return @intToPtr(ComponentArray(componentField), @ptrToInt(self) + ptr);
+            //             }
+
+            //             ptr += @sizeOf(component.type) * self.capacity;
+            //         }
+            //     }
+            //     unreachable;
+            // }
         };
 
         slots: []EntitySlot,
@@ -343,8 +442,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     self.slots.len += 1;
                     self.slots[top] = .{
                         .generation = 0,
-                        .page = undefined,
-                        .index_in_page = undefined,
+                        .entity_pointer = undefined,
                     };
                     break :index @intCast(SlotIndex, top);
                 } else {
@@ -384,12 +482,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // Unset the exists bit, and reorder the page
             const slot = &self.slots[entity.index];
-            const page = slot.page;
-            const was_full = page.len == page.capacity;
-            page.removeEntity(slot.index_in_page);
+            const was_full = slot.entity_pointer.index.page.len == slot.entity_pointer.index.page.capacity;
+            slot.entity_pointer.page_list.removeEntity(slot.entity_pointer.index);
             if (was_full) {
-                const page_list: *PageList = self.page_lists.getPtr(page.archetype).?;
-                page_list.prependAvailable(page);
+                const page_list: *PageList = self.page_lists.getPtr(slot.entity_pointer.index.page.archetype).?;
+                page_list.prependAvailable(slot.entity_pointer.index.page);
             }
 
             // Increment this entity slot's generation so future uses will fail
@@ -479,7 +576,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const previous_archetype = if (create_entity)
                 Archetype.initEmpty()
             else
-                self.slots[entity.index].page.archetype;
+                self.slots[entity.index].entity_pointer.index.page.archetype;
 
             const components_added = components_added: {
                 if (@TypeOf(add_components) == Prefab) {
@@ -513,8 +610,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // Create the new entity
             const slot = &self.slots[entity.index];
-            const old_page = slot.page;
-            const old_index_in_page = slot.index_in_page;
+            const old_entity_pointer = slot.entity_pointer;
             const page_list = try self.getOrPutPageListEnsureAvailable(archetype);
             page_list.createEntityAssumeCapacity(slot, entity);
 
@@ -526,20 +622,19 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 inline for (0..@typeInfo(Entity).Struct.fields.len) |i| {
                     if (copy.isSet(i)) {
                         const field = @intToEnum(Component, i);
-                        slot.page.componentArray(field)[slot.index_in_page] = old_page.componentArray(field)[old_index_in_page];
+                        slot.entity_pointer.page_list.getComponent(slot.entity_pointer.index, field).* = old_entity_pointer.page_list.getComponent(old_entity_pointer.index, field).*;
                     }
                 }
 
                 // TODO: dup code from Entities(...){...}.remove(...)
                 // Delete the old entity
-                const was_full = old_page.len == old_page.capacity;
-                old_page.removeEntity(old_index_in_page);
+                const was_full = old_entity_pointer.index.page.len == old_entity_pointer.index.page.capacity;
+                old_entity_pointer.index.page.removeEntity(old_entity_pointer.index.index_in_page);
 
                 // If the old page didn't have space before but does now, move it to the front of
                 // the page list
                 if (was_full) {
-                    const old_page_list: *PageList = self.page_lists.getPtr(old_page.archetype).?;
-                    old_page_list.prependAvailable(old_page);
+                    old_entity_pointer.page_list.prependAvailable(old_entity_pointer.index.page);
                 }
             }
 
@@ -548,10 +643,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 const field = @intToEnum(Component, std.meta.fieldIndex(Entity, f.name).?);
                 if (@TypeOf(add_components) == Prefab) {
                     if (@field(add_components, f.name)) |component| {
-                        slot.page.componentArray(field)[slot.index_in_page] = component;
+                        slot.entity_pointer.page_list.getComponent(slot.entity_pointer.index, field).* = component;
                     }
                 } else {
-                    slot.page.componentArray(field)[slot.index_in_page] = @field(add_components, f.name);
+                    slot.entity_pointer.page_list.getComponent(slot.entity_pointer.index, field).* = @field(add_components, f.name);
                 }
             }
 
@@ -571,11 +666,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return error.BadGeneration;
             }
 
+            // XXX: should it just return null from there or is that slower?
             const slot = self.slots[entity.index];
-            if (!slot.page.archetype.isSet(@enumToInt(component))) {
+            if (!slot.entity_pointer.index.page.archetype.isSet(@enumToInt(component))) {
                 return null;
             }
-            return &slot.page.componentArray(component)[slot.index_in_page];
+            return slot.entity_pointer.page_list.getComponent(slot.entity_pointer.index, component);
         }
 
         pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: Component) ?*std.meta.fieldInfo(Entity, component).type {
@@ -741,8 +837,8 @@ test "limits" {
     // Make sure our page index type is big enough
     {
         // TODO: break this out into constant?
-        const EntitySlot = Entities(.{}).EntitySlot;
-        const IndexInPage = std.meta.fields(EntitySlot)[std.meta.fieldIndex(EntitySlot, "index_in_page").?].type;
+        const EntityIndex = Entities(.{}).EntityIndex;
+        const IndexInPage = std.meta.fields(EntityIndex)[std.meta.fieldIndex(EntityIndex, "index_in_page").?].type;
         assert(std.math.maxInt(IndexInPage) > page_size);
     }
 
@@ -811,10 +907,10 @@ test "free list" {
     const entity_2_0 = entities.create(.{});
     const entity_3_0 = entities.create(.{});
 
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].index_in_page, 0);
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index.index_in_page, 0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
     entities.remove(entity_1_0);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].index_in_page, 3);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index.index_in_page, 3);
     try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 0 }, entity_3_0);
     entities.remove(entity_3_0);
 
@@ -822,11 +918,11 @@ test "free list" {
     const entity_1_1 = entities.create(.{});
     const entity_4_0 = entities.create(.{});
 
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].index_in_page, 0);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].index_in_page, 2);
-    try std.testing.expectEqual(entities.slots[entity_3_1.index].index_in_page, 1);
-    try std.testing.expectEqual(entities.slots[entity_1_1.index].index_in_page, 3);
-    try std.testing.expectEqual(entities.slots[entity_4_0.index].index_in_page, 4);
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index.index_in_page, 0);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index.index_in_page, 2);
+    try std.testing.expectEqual(entities.slots[entity_3_1.index].entity_pointer.index.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_1_1.index].entity_pointer.index.index_in_page, 3);
+    try std.testing.expectEqual(entities.slots[entity_4_0.index].entity_pointer.index.index_in_page, 4);
 
     try std.testing.expectEqual(EntityHandle{ .index = 0, .generation = 0 }, entity_0_0);
     try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
