@@ -28,7 +28,7 @@ fn benchEcs() !void {
     var buffer = try pa.alloc(u8, ecs.max_entities * 200);
     defer pa.free(buffer);
     var fba = std.heap.FixedBufferAllocator.init(buffer);
-    var maa = MinimumAlignmentAllocator.init(fba.allocator(), 64);
+    var maa = MinimumAlignmentAllocator.init(fba.allocator(), 6);
     const allocator = maa.allocator();
 
     // Init

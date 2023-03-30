@@ -598,7 +598,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         if (self.handle_iterator.peek()) |handle| {
                             var item: Item = undefined;
                             item.handle = handle.*;
+                            comptime assert(self.page_list.?.handles.prealloc_segment.len == 0);
                             inline for (@typeInfo(Components).Struct.fields) |field| {
+                                comptime assert(@field(self.page_list.?.comps, field.name).prealloc_segment.len == 0);
                                 @field(item.comps, field.name) = &@field(self.page_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
                             }
                             _ = self.handle_iterator.next();
