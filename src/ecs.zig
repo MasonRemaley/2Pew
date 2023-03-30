@@ -291,6 +291,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     break :index index;
                 } else if (self.slots.len < max_entities) {
                     if (self.slots.len == max_entities / 2) {
+                        // XXX: why does this only show up in debug builds of bench?
                         std.log.warn("entity slots halfway depleted", .{});
                     }
                     // Add a new entity to the end of the list
@@ -551,33 +552,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     });
                 };
 
-                const ComponentIterators = entity: {
-                    var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
-                    var i = 0;
-                    for (components) |component| {
-                        const entityFieldEnum: Component = component;
-                        const entityField = std.meta.fieldInfo(Entity, entityFieldEnum);
-                        const FieldType = PageList.ComponentIterator(entityFieldEnum);
-                        fields[i] = Type.StructField{
-                            .name = entityField.name,
-                            .type = FieldType,
-                            .default_value = null,
-                            .is_comptime = false,
-                            .alignment = @alignOf(FieldType),
-                        };
-                        i += 1;
-                    }
-                    break :entity @Type(Type{
-                        .Struct = Type.Struct{
-                            .layout = .Auto,
-                            .backing_integer = null,
-                            .fields = &fields,
-                            .decls = &[_]Type.Declaration{},
-                            .is_tuple = false,
-                        },
-                    });
-                };
-
                 // TODO: maybe have a getter on the iterator for the handle since that's less often used instead of returning it here?
                 const Item = struct {
                     handle: EntityHandle,
@@ -587,7 +561,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 archetype: Archetype,
                 page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList).Iterator,
                 page_list: ?*PageList,
-                component_iterators: ComponentIterators,
                 handle_iterator: PageList.HandleIterator,
 
                 fn init(entities: *Entities(componentTypes)) @This() {
@@ -604,20 +577,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         .page_lists = entities.page_lists.iterator(),
                         .page_list = null,
                         // XXX: ...
-                        .component_iterators = undefined,
                         .handle_iterator = undefined,
                     };
-                }
-
-                fn setPageList(self: *@This(), page_list: ?*PageList) void {
-                    self.page_list = page_list;
-                    if (self.page_list) |pl| {
-                        self.handle_iterator = pl.handleArray();
-                        inline for (@typeInfo(ComponentIterators).Struct.fields) |field| {
-                            const entity_field = @intToEnum(Component, std.meta.fieldIndex(Entity, field.name).?);
-                            @field(self.component_iterators, field.name) = pl.componentIterator(entity_field);
-                        }
-                    }
                 }
 
                 pub fn next(self: *@This()) ?Item {
@@ -631,19 +592,16 @@ pub fn Entities(comptime componentTypes: anytype) type {
                                 }
                             } else return null;
                             self.handle_iterator = self.page_list.?.handleIterator();
-                            inline for (@typeInfo(ComponentIterators).Struct.fields) |field| {
-                                const entity_field = @intToEnum(Component, std.meta.fieldIndex(Entity, field.name).?);
-                                @field(self.component_iterators, field.name) = self.page_list.?.componentIterator(entity_field);
-                            }
                         }
 
                         // Get the next entity in this page list, if it exists
-                        if (self.handle_iterator.next()) |handle| {
+                        if (self.handle_iterator.peek()) |handle| {
                             var item: Item = undefined;
                             item.handle = handle.*;
                             inline for (@typeInfo(Components).Struct.fields) |field| {
-                                @field(item.comps, field.name) = @field(self.component_iterators, field.name).next().?;
+                                @field(item.comps, field.name) = &@field(self.page_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
                             }
+                            _ = self.handle_iterator.next();
                             return item;
                         }
 
