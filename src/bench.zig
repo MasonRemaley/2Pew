@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ecs = @import("ecs.zig");
+const MinimumAlignmentAllocator = @import("minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
 const Entities = ecs.Entities;
 const EntityHandle = ecs.EntityHandle;
 
@@ -23,13 +24,17 @@ pub fn main() !void {
 }
 
 fn benchEcs() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+    var pa = std.heap.page_allocator;
+    var buffer = try pa.alloc(u8, ecs.max_entities * 200);
+    defer pa.free(buffer);
+    var fba = std.heap.FixedBufferAllocator.init(buffer);
+    var maa = MinimumAlignmentAllocator.init(fba.allocator(), 64);
+    const allocator = maa.allocator();
 
     // Init
     var timer = try std.time.Timer.start();
     var entities = try Entities(.{ .x = u128, .y = u256, .z = u128 }).init(allocator);
-    defer entities.deinit(allocator);
+    defer entities.deinit();
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Create entities

@@ -151,20 +151,26 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 };
             }
 
+            fn deinit(self: *@This(), allocator: Allocator) void {
+                inline for (@typeInfo(Entity).Struct.fields) |field| {
+                    @field(self.comps, field.name).deinit(allocator);
+                }
+                self.handles.deinit(allocator);
+            }
+
             // XXX: better api that returns pointers so don't have to recalculate them?
-            fn createEntity(self: *@This(), handle: EntityHandle) u32 {
+            fn createEntity(self: *@This(), allocator: Allocator, handle: EntityHandle) !u32 {
                 // XXX: could optimize this logic a little since all lists are gonna match eachother, also
                 // only really need one size, etc
                 // XXX: self.archetype vs making these nullable?
                 inline for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
                     if (self.archetype.isSet(i)) {
-                        // XXX: don't use page allocator lol, and handle failure
                         // XXX: dup math cross components, here and iterator and remove
-                        _ = @field(self.comps, field.name).addOne(std.heap.page_allocator) catch unreachable;
+                        _ = try @field(self.comps, field.name).addOne(allocator);
                     }
                 }
                 // XXX: same notes here
-                self.handles.append(std.heap.page_allocator, handle) catch unreachable;
+                try self.handles.append(allocator, handle);
                 // XXX: can't overflow because fails earlier right?
                 const index = self.len;
                 self.len += 1;
@@ -180,7 +186,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 assert(entity_index.index_in_page < self.len);
                 inline for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
                     if (self.archetype.isSet(i)) {
-                        // XXX: don't use page allocator lol, and handle failure
                         // XXX: here and below, i think it's okay to pop assign as lon gas we do unchecked, since
                         // the memory is guarenteed to be there right? (the problem case is swap removing if size 1)
                         var components = &@field(self.comps, field.name);
@@ -233,12 +238,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
         };
 
         // XXX: any easy way to encapsulate this? i guess into the slot map pattern or what?
+        allocator: Allocator,
         slots: []EntitySlot,
         free_slot_indices: []SlotIndex,
         page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList),
 
         pub fn init(allocator: Allocator) !@This() {
             return .{
+                .allocator = allocator,
                 .slots = entities: {
                     var entities = try allocator.alloc(EntitySlot, max_entities);
                     entities.len = 0;
@@ -259,10 +266,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
             };
         }
 
-        pub fn deinit(self: *@This(), allocator: Allocator) void {
-            allocator.free(self.slots);
-            allocator.free(self.free_slot_indices);
-            self.page_lists.deinit(allocator);
+        pub fn deinit(self: *@This()) void {
+            self.allocator.free(self.slots);
+            self.allocator.free(self.free_slot_indices);
+            for (self.page_lists.values()) |*page_list| {
+                page_list.deinit(self.allocator);
+            }
+            self.page_lists.deinit(self.allocator);
         }
 
         pub fn create(self: *@This(), entity: anytype) EntityHandle {
@@ -454,7 +464,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const old_entity_pointer = slot.entity_pointer;
             const page_list = try self.getOrPutPageListEnsureAvailable(archetype);
             slot.entity_pointer.page_list = page_list;
-            slot.entity_pointer.index.index_in_page = page_list.createEntity(entity);
+            slot.entity_pointer.index.index_in_page = try page_list.createEntity(self.allocator, entity);
 
             // If this entity data is replacing an existing one, copy the original components over
             if (!create_entity) {
@@ -658,12 +668,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
     };
 }
 
+// XXX: use testing allocator--i think i'm leaking memory right now. that's FINE since like we're gonna use
+// a fixed buffer, but wanna get it right anyway.
 // Could use a more exhaustive test, this at least makes sure it compiles which was a problem
 // at one point!
 test "zero-sized-component" {
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{ .x = struct {} }).init(allocator);
-    defer entities.deinit(allocator);
+    defer entities.deinit();
 
     const a = entities.create(.{ .x = .{} });
     const b = entities.create(.{});
@@ -675,7 +687,7 @@ test "zero-sized-component" {
 test "free list" {
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{}).init(allocator);
-    defer entities.deinit(allocator);
+    defer entities.deinit();
 
     const entity_0_0 = entities.create(.{});
     try std.testing.expectEqual(entity_0_0, EntityHandle{ .index = 0, .generation = 0 });
@@ -747,7 +759,7 @@ test "limits" {
 
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{}).init(allocator);
-    defer entities.deinit(allocator);
+    defer entities.deinit();
     var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
     defer created.deinit();
 
@@ -802,7 +814,7 @@ test "limits" {
 test "safety" {
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{}).init(allocator);
-    defer entities.deinit(allocator);
+    defer entities.deinit();
 
     const entity = entities.create(.{});
     entities.remove(entity);
@@ -817,7 +829,7 @@ test "safety" {
 test "random data" {
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
-    defer entities.deinit(allocator);
+    defer entities.deinit();
 
     const Data = struct {
         x: ?u32 = null,
@@ -1100,7 +1112,7 @@ test "random data" {
 test "minimal iter test" {
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
-    defer entities.deinit(allocator);
+    defer entities.deinit();
 
     const entity_0 = entities.create(.{ .x = 10, .y = 20 });
     const entity_1 = entities.create(.{ .x = 30, .y = 40 });
@@ -1167,7 +1179,7 @@ test "prefabs" {
     var allocator = std.heap.page_allocator;
 
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
-    defer entities.deinit(allocator);
+    defer entities.deinit();
 
     var prefab: @TypeOf(entities).Prefab = .{ .y = 10, .z = 20 };
     var instance = entities.create(prefab);

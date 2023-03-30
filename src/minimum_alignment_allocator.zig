@@ -1,11 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const MinimumAlignmentAllocator = struct {
+pub const MinimumAlignmentAllocator = struct {
     child_allocator: Allocator,
     log2_min_alignment: u8,
 
-    fn init(child_allocator: Allocator, log2_min_alignment: u8) MinimumAlignmentAllocator {
+    pub fn init(child_allocator: Allocator, log2_min_alignment: u8) MinimumAlignmentAllocator {
         return .{
             .child_allocator = child_allocator,
             .log2_min_alignment = log2_min_alignment,
@@ -31,7 +31,7 @@ const MinimumAlignmentAllocator = struct {
         return self.child_allocator.rawFree(buf, self.adjustAlignment(log2_buf_align), ret_addr);
     }
 
-    fn allocator(self: *@This()) Allocator {
+    pub fn allocator(self: *@This()) Allocator {
         return .{
             .ptr = self,
             .vtable = &.{
