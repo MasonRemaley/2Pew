@@ -36,6 +36,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // `Archetype` is a bit set with a bit for each component type.
         const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
 
+        // XXX: sorting based on size no longer matters for these!
         // `Entity` has a field for every possible component type. This is for convenience, it is
         // not used at runtime. Fields are sorted from greatest to least alignment, see `PageHeader` for
         // rational.
@@ -93,8 +94,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         // XXX: temp for refactor
         const EntityIndex = struct {
-            page: *PageHeader,
-            index_in_page: u16,
+            index_in_page: u32,
         };
         // XXX: temp for refactor
         const EntityPointer = struct {
@@ -107,130 +107,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
         const EntitySlot = struct {
             generation: EntityGeneration,
             entity_pointer: EntityPointer,
-        };
-
-        // A page contains entities of a single archetype.
-        const PageHeader = struct {
-            next_available: ?*PageHeader,
-            next: ?*PageHeader,
-            archetype: Archetype,
-            len: u16,
-            capacity: u16,
-            component_arrays: u16,
-            handle_array: u16,
-
-            // XXX: assert page alignment or at least explain?
-            fn init(page_pool: *ArrayListUnmanaged(*PageHeader), archetype: Archetype) !*PageHeader {
-                comptime assert(@sizeOf(PageHeader) < page_size);
-
-                var ptr: u16 = 0;
-
-                // Store the header, no alignment necessary since we start out page aligned
-                ptr += @sizeOf(PageHeader);
-
-                // Store the handle array
-                comptime assert(@alignOf(PageHeader) >= @alignOf(EntityHandle));
-                const handle_array = ptr;
-
-                // Calculate how many entities can actually be stored
-                var components_size: u16 = 0;
-                var max_component_alignment: u16 = 1;
-                var first = true;
-                inline for (@typeInfo(Entity).Struct.fields, 0..) |component, i| {
-                    if (archetype.isSet(i)) {
-                        if (first) {
-                            first = false;
-                            // XXX: inserted this fix to fix archetypes with ONLY zsts. there may be a better fix, but,
-                            // we don't care cause we're replacing this memory layout anyway i just want the tests to pass.
-                            max_component_alignment = std.math.max(@alignOf(component.type), 1);
-                        }
-                        components_size += @sizeOf(component.type);
-                    }
-                }
-
-                const padding_conservative = max_component_alignment - 1;
-                const entity_size = @sizeOf(EntityHandle) + components_size;
-                const conservative_capacity = (page_size - ptr - padding_conservative) / entity_size;
-
-                assert(conservative_capacity > 0);
-
-                ptr += @sizeOf(EntityHandle) * conservative_capacity;
-
-                // Store the component arrays
-                ptr = std.mem.alignForwardGeneric(u16, ptr, max_component_alignment);
-                const component_arrays = ptr;
-
-                if (page_pool.items.len == page_pool.capacity) {
-                    return error.OutOfPages;
-                } else if (page_pool.items.len == page_pool.capacity / 2) {
-                    std.log.warn("page pool halfway depleted", .{});
-                }
-                var page_index = page_pool.items.len;
-                page_pool.items.len += 1;
-                var page = page_pool.items[page_index];
-                page.* = PageHeader{
-                    .next_available = null,
-                    // XXX: about to be overwritten?
-                    .next = null,
-                    .archetype = archetype,
-                    .capacity = conservative_capacity,
-                    .len = 0,
-                    .handle_array = handle_array,
-                    .component_arrays = component_arrays,
-                };
-
-                // Initialize with invalid handles
-                var handles = page.handleArray();
-                for (0..conservative_capacity) |i| {
-                    handles[i].index = invalid_entity_index;
-                }
-
-                return page;
-            }
-
-            fn deinit(self: *PageHeader, allocator: Allocator) void {
-                allocator.free(@ptrCast(*[page_size]u8, self));
-            }
-
-            fn createEntityAssumeCapacity(self: *@This(), handle: EntityHandle) u16 {
-                var handles = self.handleArray();
-                for (0..self.capacity) |i| {
-                    if (handles[i].index == invalid_entity_index) {
-                        handles[i] = handle;
-                        self.len += 1;
-                        return @intCast(u16, i);
-                    }
-                }
-                // TODO: restructure so this assertions is checked at the beginning of this call again by having it return null?
-                unreachable; // Page in available list has no space available
-            }
-
-            fn removeEntity(self: *PageHeader, index: usize) void {
-                self.len -= 1;
-                self.handleArray()[index].index = invalid_entity_index;
-            }
-
-            fn handleArray(self: *@This()) [*]EntityHandle {
-                return @intToPtr([*]EntityHandle, @ptrToInt(self) + self.handle_array);
-            }
-
-            fn ComponentArray(comptime componentField: Component) type {
-                return [*]std.meta.fieldInfo(Entity, componentField).type;
-            }
-
-            fn componentArray(self: *PageHeader, comptime componentField: Component) ComponentArray(componentField) {
-                var ptr: usize = self.component_arrays;
-                inline for (@typeInfo(Entity).Struct.fields, 0..) |component, i| {
-                    if (self.archetype.isSet(i)) {
-                        if (@intToEnum(Component, i) == componentField) {
-                            return @intToPtr(ComponentArray(componentField), @ptrToInt(self) + ptr);
-                        }
-
-                        ptr += @sizeOf(component.type) * self.capacity;
-                    }
-                }
-                unreachable;
-            }
         };
 
         // XXX: rename this idk to what yet
@@ -261,76 +137,68 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 });
             };
 
-            // XXX: remove these eventually...
-            available: ?*PageHeader,
-            all: *PageHeader,
-
             // A segmented list for each component.
+            handles: SegmentedList(EntityHandle, 0) = .{},
             comps: Components = .{},
             archetype: Archetype,
+            // XXX: this as a type?
             len: SlotIndex,
 
-            fn initEnsureAvailable(page_pool: *ArrayListUnmanaged(*PageHeader), archetype: Archetype) !PageList {
-                const newPage = try PageHeader.init(page_pool, archetype);
+            fn init(archetype: Archetype) !PageList {
                 return .{
-                    .all = newPage,
-                    .available = newPage,
                     .archetype = archetype,
                     .len = 0,
                 };
             }
 
-            fn ensureAvailable(self: *PageList, page_pool: *ArrayListUnmanaged(*PageHeader)) !void {
-                if (self.available == null) {
-                    // XXX: self.all.archetype is a bit weird here but works...
-                    const newPage = try PageHeader.init(page_pool, self.all.archetype);
-                    self.available = newPage;
-                    // XXX: just inline it?
-                    self.prependAll(newPage);
-                }
-            }
-
             // XXX: better api that returns pointers so don't have to recalculate them?
-            fn createEntityAssumeCapacity(self: *@This(), slot: *EntitySlot, handle: EntityHandle) void {
+            fn createEntity(self: *@This(), handle: EntityHandle) u32 {
                 // XXX: could optimize this logic a little since all lists are gonna match eachother, also
                 // only really need one size, etc
                 // XXX: self.archetype vs making these nullable?
-                // slot.entity_pointer.index.index_in_page = self.len;
-                // slot.entity_pointer.index.page = self; // ...
                 inline for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
                     if (self.archetype.isSet(i)) {
-                        // XXX: don't use page allocator lol, handle failure
+                        // XXX: don't use page allocator lol, and handle failure
+                        // XXX: dup math cross components, here and iterator and remove
                         _ = @field(self.comps, field.name).addOne(std.heap.page_allocator) catch unreachable;
                     }
                 }
+                // XXX: same notes here
+                self.handles.append(std.heap.page_allocator, handle) catch unreachable;
                 // XXX: can't overflow because fails earlier right?
+                const index = self.len;
                 self.len += 1;
-                // XXX: create available if needed here?
-                slot.entity_pointer.index.page = self.available.?;
-                slot.entity_pointer.page_list = self;
-                slot.entity_pointer.index.index_in_page = slot.entity_pointer.index.page.createEntityAssumeCapacity(handle);
-                if (slot.entity_pointer.index.page.len == slot.entity_pointer.index.page.capacity) {
-                    self.popFrontAvailable();
+                return index;
+            }
+
+            // XXX: put in (debug mode?) protection to prevent doing this while iterating? same for creating?
+            // XXX: document that the ecs moves structures (so e.g. internal pointers will get invalidated). this
+            // was already true but only happened when changing shape before which is less commonly done.
+            fn removeEntity(self: *PageList, entity_index: EntityIndex, slots: *[]EntitySlot) void {
+                // XXX: instead of separate len use handles len? or fold all into same thing eventually anyway..?
+                // XXX: only needed in debug mode right?
+                assert(entity_index.index_in_page < self.len);
+                inline for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
+                    if (self.archetype.isSet(i)) {
+                        // XXX: don't use page allocator lol, and handle failure
+                        // XXX: here and below, i think it's okay to pop assign as lon gas we do unchecked, since
+                        // the memory is guarenteed to be there right? (the problem case is swap removing if size 1)
+                        var components = &@field(self.comps, field.name);
+                        components.uncheckedAt(entity_index.index_in_page).* = components.pop().?;
+                    }
                 }
-            }
-
-            fn removeEntity(self: *PageList, index: EntityIndex) void {
-                _ = self; // ...
-                index.page.removeEntity(index.index_in_page);
-            }
-
-            fn popFrontAvailable(self: *@This()) void {
-                self.available = self.available.?.next_available;
-            }
-
-            fn prependAvailable(self: *@This(), page: *PageHeader) void {
-                page.next_available = self.available;
-                self.available = page;
-            }
-
-            fn prependAll(self: *@This(), page: *PageHeader) void {
-                page.next = self.all;
-                self.all = page;
+                const moved_handle = self.handles.pop().?;
+                // XXX: only really need to update the generation here right?
+                self.handles.uncheckedAt(entity_index.index_in_page).* = moved_handle;
+                // XXX: checking this in case we're deleting the last one in which case we don't wanna mess with
+                // slots...? we also maybe don't wanna do the above stuff but may not matter?? is there a way to
+                // make this less error prone? maybe in general don't do logic when last one, or return stuff to
+                // be used outside to avoid probme based on order, etc
+                if (entity_index.index_in_page != self.handles.len) {
+                    // XXX: don't need to check generation, always checked at public interface right?
+                    slots.*[moved_handle.index].entity_pointer.index.index_in_page = entity_index.index_in_page;
+                }
+                self.len -= 1;
             }
 
             fn ComponentType(comptime componentField: Component) type {
@@ -338,98 +206,35 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             fn ComponentIterator(comptime componentField: Component) type {
-                const Item = ComponentType(componentField);
-                return struct {
-                    i: usize = 0,
-                    page: ?*PageHeader,
-                    fn next(self: *@This()) ?*Item {
-                        while (self.page != null) {
-                            while (self.i < self.page.?.capacity) : (self.i += 1) {
-                                if (self.page.?.handleArray()[self.i].index != invalid_entity_index) {
-                                    break;
-                                }
-                            } else {
-                                self.i = 0;
-                                self.page = self.page.?.next;
-                                continue;
-                            }
-
-                            const item = &self.page.?.componentArray(componentField)[self.i];
-                            self.i += 1;
-                            return item;
-                        }
-                        return null;
-                    }
-                };
+                return SegmentedList(ComponentType(componentField), 0).Iterator;
             }
 
             fn componentIterator(self: *@This(), comptime componentField: Component) ComponentIterator(componentField) {
-                return .{ .page = self.all };
+                return @field(self.comps, std.meta.fieldInfo(Entity, componentField).name).iterator(0);
             }
 
-            const HandleIterator = struct {
-                i: usize = 0,
-                page: ?*PageHeader,
-                fn next(self: *@This()) ?EntityHandle {
-                    while (self.page != null) {
-                        while (self.i < self.page.?.capacity) : (self.i += 1) {
-                            if (self.page.?.handleArray()[self.i].index != invalid_entity_index) {
-                                break;
-                            }
-                        } else {
-                            self.i = 0;
-                            self.page = self.page.?.next;
-                            continue;
-                        }
-
-                        const item = self.page.?.handleArray()[self.i];
-                        self.i += 1;
-                        return item;
-                    }
-                    return null;
-                }
-            };
+            // XXX: do we still need invalid handles or no? (if so do it the better way where zig's type system
+            // knows about it...)
+            const HandleIterator = SegmentedList(EntityHandle, 0).Iterator;
 
             fn handleIterator(self: *@This()) HandleIterator {
-                return .{ .page = self.all };
+                return self.handles.iterator(0);
             }
 
             fn getComponent(self: *@This(), index: EntityIndex, comptime componentField: Component) *ComponentType(componentField) {
-                _ = self;
-                return &index.page.componentArray(componentField)[index.index_in_page];
+                // XXX: unchecked is correct right? assert in debug mode or no?
+                return @field(self.comps, std.meta.fieldInfo(Entity, componentField).name).uncheckedAt(index.index_in_page);
             }
 
             fn getHandle(self: *@This(), index: EntityIndex) EntityHandle {
-                _ = self;
-                return index.index.page.handleArray()[index.index_in_page];
+                // XXX: unchecked is correct right? assert in debug mode or no?
+                return self.handles.uncheckedAt(index.index_in_page);
             }
-
-            // fn handleArray(self: *@This()) [*]EntityHandle {
-            //     return @intToPtr([*]EntityHandle, @ptrToInt(self) + self.handle_array);
-            // }
-
-            // fn ComponentArray(comptime componentField: Component) type {
-            //     return [*]std.meta.fieldInfo(Entity, componentField).type;
-            // }
-
-            // fn componentArray(self: *PageHeader, comptime componentField: Component) ComponentArray(componentField) {
-            //     var ptr: usize = self.component_arrays;
-            //     inline for (@typeInfo(Entity).Struct.fields, 0..) |component, i| {
-            //         if (self.archetype.isSet(i)) {
-            //             if (@intToEnum(Component, i) == componentField) {
-            //                 return @intToPtr(ComponentArray(componentField), @ptrToInt(self) + ptr);
-            //             }
-
-            //             ptr += @sizeOf(component.type) * self.capacity;
-            //         }
-            //     }
-            //     unreachable;
-            // }
         };
 
+        // XXX: any easy way to encapsulate this? i guess into the slot map pattern or what?
         slots: []EntitySlot,
         free_slot_indices: []SlotIndex,
-        page_pool: ArrayListUnmanaged(*PageHeader),
         page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList),
 
         pub fn init(allocator: Allocator) !@This() {
@@ -451,19 +256,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     try page_lists.ensureTotalCapacity(allocator, max_archetypes + 1);
                     break :page_lists page_lists;
                 },
-                .page_pool = page_pool: {
-                    var page_pool = try ArrayListUnmanaged(*PageHeader).initCapacity(allocator, max_pages);
-                    _ = page_pool.addManyAsArrayAssumeCapacity(max_pages);
-                    for (page_pool.items) |*page| {
-                        page.* = @ptrCast(*PageHeader, try allocator.alignedAlloc(
-                            [page_size]u8,
-                            std.mem.page_size,
-                            1,
-                        ));
-                    }
-                    page_pool.items.len = 0;
-                    break :page_pool page_pool;
-                },
             };
         }
 
@@ -471,11 +263,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
             allocator.free(self.slots);
             allocator.free(self.free_slot_indices);
             self.page_lists.deinit(allocator);
-            self.page_pool.items.len = max_pages;
-            for (self.page_pool.items) |page| {
-                page.deinit(allocator);
-            }
-            self.page_pool.deinit(allocator);
         }
 
         pub fn create(self: *@This(), entity: anytype) EntityHandle {
@@ -541,12 +328,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // Unset the exists bit, and reorder the page
             const slot = &self.slots[entity.index];
-            const was_full = slot.entity_pointer.index.page.len == slot.entity_pointer.index.page.capacity;
-            slot.entity_pointer.page_list.removeEntity(slot.entity_pointer.index);
-            if (was_full) {
-                const page_list: *PageList = self.page_lists.getPtr(slot.entity_pointer.index.page.archetype).?;
-                page_list.prependAvailable(slot.entity_pointer.index.page);
-            }
+            slot.entity_pointer.page_list.removeEntity(slot.entity_pointer.index, &self.slots);
 
             // Increment this entity slot's generation so future uses will fail
             if (EntityGeneration != u0) {
@@ -604,15 +386,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             const entry = self.page_lists.getOrPutAssumeCapacity(archetype);
 
-            if (entry.found_existing) {
-                try entry.value_ptr.*.ensureAvailable(&self.page_pool);
-            } else {
+            if (!entry.found_existing) {
+                // XXX: just do this with the allocator now? check once at the end of every frame for the halfway
+                // mark or whatever
                 if (self.page_lists.count() >= max_archetypes) {
                     return error.OutOfArchetypes;
                 } else if (self.page_lists.count() == max_archetypes / 2) {
                     std.log.warn("archetype map halfway depleted", .{});
                 }
-                entry.value_ptr.* = try PageList.initEnsureAvailable(&self.page_pool, archetype);
+                entry.value_ptr.* = try PageList.init(archetype);
             }
 
             return entry.value_ptr;
@@ -635,7 +417,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const previous_archetype = if (create_entity)
                 Archetype.initEmpty()
             else
-                self.slots[entity.index].entity_pointer.index.page.archetype;
+                self.slots[entity.index].entity_pointer.page_list.archetype;
 
             const components_added = components_added: {
                 if (@TypeOf(add_components) == Prefab) {
@@ -671,7 +453,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const slot = &self.slots[entity.index];
             const old_entity_pointer = slot.entity_pointer;
             const page_list = try self.getOrPutPageListEnsureAvailable(archetype);
-            page_list.createEntityAssumeCapacity(slot, entity);
+            slot.entity_pointer.page_list = page_list;
+            slot.entity_pointer.index.index_in_page = page_list.createEntity(entity);
 
             // If this entity data is replacing an existing one, copy the original components over
             if (!create_entity) {
@@ -685,16 +468,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     }
                 }
 
-                // TODO: dup code from Entities(...){...}.remove(...)
                 // Delete the old entity
-                const was_full = old_entity_pointer.index.page.len == old_entity_pointer.index.page.capacity;
-                old_entity_pointer.index.page.removeEntity(old_entity_pointer.index.index_in_page);
-
-                // If the old page didn't have space before but does now, move it to the front of
-                // the page list
-                if (was_full) {
-                    old_entity_pointer.page_list.prependAvailable(old_entity_pointer.index.page);
-                }
+                old_entity_pointer.page_list.removeEntity(old_entity_pointer.index, &self.slots);
             }
 
             // Initialize the new entity
@@ -727,7 +502,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
             // XXX: should it just return null from there or is that slower?
             const slot = self.slots[entity.index];
-            if (!slot.entity_pointer.index.page.archetype.isSet(@enumToInt(component))) {
+            if (!slot.entity_pointer.page_list.archetype.isSet(@enumToInt(component))) {
                 return null;
             }
             return slot.entity_pointer.page_list.getComponent(slot.entity_pointer.index, component);
@@ -855,7 +630,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                         // Get the next entity in this page list, if it exists
                         if (self.handle_iterator.next()) |handle| {
                             var item: Item = undefined;
-                            item.handle = handle;
+                            item.handle = handle.*;
                             inline for (@typeInfo(Components).Struct.fields) |field| {
                                 @field(item.comps, field.name) = @field(self.component_iterators, field.name).next().?;
                             }
@@ -897,6 +672,67 @@ test "zero-sized-component" {
     try std.testing.expect(entities.getComponent(b, .x) == null);
 }
 
+test "free list" {
+    var allocator = std.heap.page_allocator;
+    var entities = try Entities(.{}).init(allocator);
+    defer entities.deinit(allocator);
+
+    const entity_0_0 = entities.create(.{});
+    try std.testing.expectEqual(entity_0_0, EntityHandle{ .index = 0, .generation = 0 });
+    const entity_1_0 = entities.create(.{});
+    try std.testing.expectEqual(entity_1_0, EntityHandle{ .index = 1, .generation = 0 });
+    const entity_2_0 = entities.create(.{});
+    try std.testing.expectEqual(entity_2_0, EntityHandle{ .index = 2, .generation = 0 });
+    const entity_3_0 = entities.create(.{});
+    try std.testing.expectEqual(entity_3_0, EntityHandle{ .index = 3, .generation = 0 });
+
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index.index_in_page, 0);
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index.index_in_page, 2);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index.index_in_page, 3);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 0);
+
+    entities.remove(entity_1_0);
+
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index.index_in_page, 0);
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index.index_in_page, 2);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 0);
+
+    entities.remove(entity_3_0);
+
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index.index_in_page, 0);
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 1);
+
+    _ = entities.create(.{});
+    _ = entities.create(.{});
+    _ = entities.create(.{});
+
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index.index_in_page, 0);
+    try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index.index_in_page, 3);
+    try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index.index_in_page, 1);
+    try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index.index_in_page, 2);
+    try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 1);
+    try std.testing.expectEqual(entities.slots[4].entity_pointer.index.index_in_page, 4);
+    try std.testing.expectEqual(entities.slots[4].generation, 0);
+}
+
 test "limits" {
     // The max entity id should be considered invalid
     assert(max_entities < std.math.maxInt(SlotIndex));
@@ -922,23 +758,21 @@ test "limits" {
         try created.append(entity);
     }
     try std.testing.expectError(error.OutOfEntities, entities.createChecked(.{}));
-    const page_pool_size = entities.page_pool.items.len;
+    // XXX: ...
+    // const page_pool_size = entities.page_pool.items.len;
 
     // Remove all the entities
     while (created.popOrNull()) |entity| {
         entities.remove(entity);
     }
-    try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
+    // XXX: ...
+    // try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
     // Assert that all pages are empty
     {
         var page_lists = entities.page_lists.iterator();
         while (page_lists.next()) |page_list| {
-            var page: ?*@TypeOf(entities).PageHeader = page_list.value_ptr.all;
-            while (page) |p| {
-                try std.testing.expect(p.len == 0);
-                page = p.next;
-            }
+            try std.testing.expect(page_list.value_ptr.len == 0);
         }
     }
 
@@ -950,7 +784,8 @@ test "limits" {
         );
     }
     try std.testing.expectError(error.OutOfEntities, entities.createChecked(.{}));
-    try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
+    // XXX: ...
+    // try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
     // Wrap a generation counter
     {
@@ -962,42 +797,6 @@ test "limits" {
             entities.create(.{}),
         );
     }
-}
-
-test "free list" {
-    var allocator = std.heap.page_allocator;
-    var entities = try Entities(.{}).init(allocator);
-    defer entities.deinit(allocator);
-
-    const entity_0_0 = entities.create(.{});
-    const entity_1_0 = entities.create(.{});
-    const entity_2_0 = entities.create(.{});
-    const entity_3_0 = entities.create(.{});
-
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index.index_in_page, 0);
-    try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
-    entities.remove(entity_1_0);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index.index_in_page, 3);
-    try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 0 }, entity_3_0);
-    entities.remove(entity_3_0);
-
-    const entity_3_1 = entities.create(.{});
-    const entity_1_1 = entities.create(.{});
-    const entity_4_0 = entities.create(.{});
-
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index.index_in_page, 0);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index.index_in_page, 2);
-    try std.testing.expectEqual(entities.slots[entity_3_1.index].entity_pointer.index.index_in_page, 1);
-    try std.testing.expectEqual(entities.slots[entity_1_1.index].entity_pointer.index.index_in_page, 3);
-    try std.testing.expectEqual(entities.slots[entity_4_0.index].entity_pointer.index.index_in_page, 4);
-
-    try std.testing.expectEqual(EntityHandle{ .index = 0, .generation = 0 }, entity_0_0);
-    try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 0 }, entity_1_0);
-    try std.testing.expectEqual(EntityHandle{ .index = 2, .generation = 0 }, entity_2_0);
-    try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 0 }, entity_3_0);
-    try std.testing.expectEqual(EntityHandle{ .index = 3, .generation = 1 }, entity_3_1);
-    try std.testing.expectEqual(EntityHandle{ .index = 1, .generation = 1 }, entity_1_1);
-    try std.testing.expectEqual(EntityHandle{ .index = 4, .generation = 0 }, entity_4_0);
 }
 
 test "safety" {
