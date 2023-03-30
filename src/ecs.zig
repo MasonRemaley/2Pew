@@ -332,10 +332,67 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             fn ComponentType(comptime componentField: Component) type {
-                return *std.meta.fieldInfo(Entity, componentField).type;
+                return std.meta.fieldInfo(Entity, componentField).type;
             }
 
-            fn getComponent(self: *@This(), index: EntityIndex, comptime componentField: Component) ComponentType(componentField) {
+            fn ComponentIterator(comptime componentField: Component) type {
+                const Item = ComponentType(componentField);
+                return struct {
+                    i: usize = 0,
+                    page: ?*PageHeader,
+                    fn next(self: *@This()) ?*Item {
+                        while (self.page != null) {
+                            while (self.i < self.page.?.capacity) : (self.i += 1) {
+                                if (self.page.?.handleArray()[self.i].index != invalid_entity_index) {
+                                    break;
+                                }
+                            } else {
+                                self.i = 0;
+                                self.page = self.page.?.next;
+                                continue;
+                            }
+
+                            const item = &self.page.?.componentArray(componentField)[self.i];
+                            self.i += 1;
+                            return item;
+                        }
+                        return null;
+                    }
+                };
+            }
+
+            fn componentIterator(self: *@This(), comptime componentField: Component) ComponentIterator(componentField) {
+                return .{ .page = self.all };
+            }
+
+            const HandleIterator = struct {
+                i: usize = 0,
+                page: ?*PageHeader,
+                fn next(self: *@This()) ?EntityHandle {
+                    while (self.page != null) {
+                        while (self.i < self.page.?.capacity) : (self.i += 1) {
+                            if (self.page.?.handleArray()[self.i].index != invalid_entity_index) {
+                                break;
+                            }
+                        } else {
+                            self.i = 0;
+                            self.page = self.page.?.next;
+                            continue;
+                        }
+
+                        const item = self.page.?.handleArray()[self.i];
+                        self.i += 1;
+                        return item;
+                    }
+                    return null;
+                }
+            };
+
+            fn handleIterator(self: *@This()) HandleIterator {
+                return .{ .page = self.all };
+            }
+
+            fn getComponent(self: *@This(), index: EntityIndex, comptime componentField: Component) *ComponentType(componentField) {
                 _ = self;
                 return &index.page.componentArray(componentField)[index.index_in_page];
             }
@@ -707,13 +764,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     });
                 };
 
-                const ComponentArrays = entity: {
+                const ComponentIterators = entity: {
                     var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
                     var i = 0;
                     for (components) |component| {
                         const entityFieldEnum: Component = component;
                         const entityField = std.meta.fieldInfo(Entity, entityFieldEnum);
-                        const FieldType = [*]entityField.type;
+                        const FieldType = PageList.ComponentIterator(entityFieldEnum);
                         fields[i] = Type.StructField{
                             .name = entityField.name,
                             .type = FieldType,
@@ -742,10 +799,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                 archetype: Archetype,
                 page_lists: AutoArrayHashMapUnmanaged(Archetype, PageList).Iterator,
-                page: ?*PageHeader,
-                index_in_page: u16,
-                component_arrays: ComponentArrays,
-                handle_array: [*]EntityHandle,
+                page_list: ?*PageList,
+                component_iterators: ComponentIterators,
+                handle_iterator: PageList.HandleIterator,
 
                 fn init(entities: *Entities(componentTypes)) @This() {
                     return .{
@@ -759,21 +815,20 @@ pub fn Entities(comptime componentTypes: anytype) type {
                             break :archetype archetype;
                         },
                         .page_lists = entities.page_lists.iterator(),
-                        .page = null,
-                        .index_in_page = 0,
-                        .component_arrays = undefined,
-                        .handle_array = undefined,
+                        .page_list = null,
+                        // XXX: ...
+                        .component_iterators = undefined,
+                        .handle_iterator = undefined,
                     };
                 }
 
-                fn setPage(self: *@This(), page: ?*PageHeader) void {
-                    self.page = page;
-                    self.index_in_page = 0;
-                    if (page) |pl| {
-                        self.handle_array = pl.handleArray();
-                        inline for (@typeInfo(ComponentArrays).Struct.fields) |field| {
+                fn setPageList(self: *@This(), page_list: ?*PageList) void {
+                    self.page_list = page_list;
+                    if (self.page_list) |pl| {
+                        self.handle_iterator = pl.handleArray();
+                        inline for (@typeInfo(ComponentIterators).Struct.fields) |field| {
                             const entity_field = @intToEnum(Component, std.meta.fieldIndex(Entity, field.name).?);
-                            @field(self.component_arrays, field.name) = pl.componentArray(entity_field);
+                            @field(self.component_iterators, field.name) = pl.componentIterator(entity_field);
                         }
                     }
                 }
@@ -782,35 +837,31 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     while (true) {
                         // If we don't have a page list, find the next compatible archetype's page
                         // list
-                        if (self.page == null) {
-                            const nextPageList = while (self.page_lists.next()) |page| {
+                        if (self.page_list == null) {
+                            self.page_list = while (self.page_lists.next()) |page| {
                                 if (page.key_ptr.supersetOf(self.archetype)) {
-                                    break page.value_ptr.all;
+                                    break page.value_ptr;
                                 }
                             } else return null;
-                            self.setPage(nextPageList);
-                        }
-
-                        // Find the next entity in this archetype page
-                        while (self.index_in_page < self.page.?.capacity) : (self.index_in_page += 1) {
-                            if (self.handle_array[self.index_in_page].index != invalid_entity_index) {
-                                break;
+                            self.handle_iterator = self.page_list.?.handleIterator();
+                            inline for (@typeInfo(ComponentIterators).Struct.fields) |field| {
+                                const entity_field = @intToEnum(Component, std.meta.fieldIndex(Entity, field.name).?);
+                                @field(self.component_iterators, field.name) = self.page_list.?.componentIterator(entity_field);
                             }
-                        } else {
-                            // If we didn't find anything, advance to the next page in this archetype
-                            // page list
-                            self.setPage(self.page.?.next);
-                            continue;
                         }
 
-                        // If it exists, return it
-                        var item: Item = undefined;
-                        item.handle = self.handle_array[self.index_in_page];
-                        inline for (@typeInfo(Components).Struct.fields) |field| {
-                            @field(item.comps, field.name) = &@field(self.component_arrays, field.name)[self.index_in_page];
+                        // Get the next entity in this page list, if it exists
+                        if (self.handle_iterator.next()) |handle| {
+                            var item: Item = undefined;
+                            item.handle = handle;
+                            inline for (@typeInfo(Components).Struct.fields) |field| {
+                                @field(item.comps, field.name) = @field(self.component_iterators, field.name).next().?;
+                            }
+                            return item;
                         }
-                        self.index_in_page += 1;
-                        return item;
+
+                        // XXX: can't we just ask for it here..?
+                        self.page_list = null;
                     }
                 }
             };
