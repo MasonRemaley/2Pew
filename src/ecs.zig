@@ -20,60 +20,42 @@ const page_size = 4096;
 
 const max_pages = max_entities / 32;
 const max_archetypes = 40000;
+const first_shelf_count = 8;
 
-pub fn Entities(comptime componentTypes: anytype) type {
+pub fn Entities(comptime registered_components: anytype) type {
     return struct {
-        const HandleSlotMap = SlotMap(EntityPointer, max_entities, EntityGeneration);
+        // Meta programming to get the component names and types
+        const ComponentName = std.meta.FieldEnum(@TypeOf(registered_components));
+
+        const component_types = field_values(registered_components);
+        const component_names = std.meta.fieldNames(@TypeOf(registered_components));
+
+        fn find_component_name(comptime name: []const u8) ?ComponentName {
+            const index = std.meta.fieldIndex(@TypeOf(registered_components), name);
+            return @intToEnum(ComponentName, index orelse return null);
+        }
+
+        // Public types used by the ECS
+        pub const Handle = HandleSlotMap.Handle;
+
+        // Internal types used by the ECS
         const EntityPointer = struct {
             archetype_list: *ArchetypeList,
-            index: u32,
+            index: u32, // TODO: how did we decide on u32 here?
         };
-
-        pub const Handle = HandleSlotMap.Handle;
-        pub const Component = FieldEnum(Entity);
-
-        // `Archetype` is a bit set with a bit for each component type.
-        const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
-
-        // XXX: why even declare this, just iterate over the stuff passed in?? we can probably make
-        // the errors for bad component names nicer too
-        // `Entity` has a field for every possible component type. This is for convenience, it is
-        // not used at runtime. Fields are sorted from greatest to least alignment, see `PageHeader` for
-        // rational.
-        const Entity = entity: {
-            const component_names = @typeInfo(@TypeOf(componentTypes)).Struct.fields;
-            var fields: [component_names.len]Type.StructField = undefined;
-            for (component_names, 0..) |component_name, i| {
-                fields[i] = Type.StructField{
-                    .name = component_name.name,
-                    .type = @field(componentTypes, component_name.name),
-                    .default_value = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(component_name.type),
-                };
-            }
-            break :entity @Type(Type{
-                .Struct = Type.Struct{
-                    .layout = .Auto,
-                    .backing_integer = null,
-                    .fields = &fields,
-                    .decls = &[_]Type.Declaration{},
-                    .is_tuple = false,
-                },
-            });
-        };
-
+        const HandleSlotMap = SlotMap(EntityPointer, max_entities, EntityGeneration);
+        const Archetype: type = std.bit_set.IntegerBitSet(component_names.len);
         // TODO: how many places do we generate a new type from entity? might wanna make a helper for this?
         pub const Prefab = prefab: {
-            const component_types = @typeInfo(Entity).Struct.fields;
-            var fields: [component_types.len]Type.StructField = undefined;
-            for (component_types, 0..) |field, i| {
+            var fields: [component_names.len]Type.StructField = undefined;
+            for (component_types, component_names, 0..) |comp_type, comp_name, i| {
+                const field_type = ?comp_type;
                 fields[i] = Type.StructField{
-                    .name = field.name,
-                    .type = ?field.type,
+                    .name = comp_name,
+                    .type = field_type,
                     .default_value = &null,
                     .is_comptime = false,
-                    .alignment = @alignOf(?field.type),
+                    .alignment = @alignOf(field_type),
                 };
             }
             break :prefab @Type(Type{
@@ -86,16 +68,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 },
             });
         };
-
-        // Stores component data and handles for entities of a given archetype.
         const ArchetypeList = struct {
-            const first_shelf_count = 8;
             const Components = components: {
-                var fields: [@typeInfo(Entity).Struct.fields.len]Type.StructField = undefined;
-                for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
-                    const FieldType = SegmentedListFirstShelfCount(field.type, first_shelf_count, false);
+                var fields: [component_names.len]Type.StructField = undefined;
+                for (component_names, component_types, 0..) |comp_name, comp_type, i| {
+                    const FieldType = SegmentedListFirstShelfCount(comp_type, first_shelf_count, false);
                     fields[i] = Type.StructField{
-                        .name = field.name,
+                        .name = comp_name,
                         // XXX: make the desired modifications to segmented list eventually?
                         .type = FieldType,
                         .default_value = &FieldType{},
@@ -114,23 +93,19 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 });
             };
 
-            // A segmented list for each component.
             handles: SegmentedListFirstShelfCount(Handle, first_shelf_count, false) = .{},
             comps: Components = .{},
             archetype: Archetype,
             // XXX: this as a type?
-            len: HandleSlotMap.Index,
+            // len: HandleSlotMap.Index,
 
             fn init(archetype: Archetype) !ArchetypeList {
-                return .{
-                    .archetype = archetype,
-                    .len = 0,
-                };
+                return .{ .archetype = archetype };
             }
 
             fn deinit(self: *@This(), allocator: Allocator) void {
-                inline for (@typeInfo(Entity).Struct.fields) |field| {
-                    @field(self.comps, field.name).deinit(allocator);
+                inline for (component_names) |comp_name| {
+                    @field(self.comps, comp_name).deinit(allocator);
                 }
                 self.handles.deinit(allocator);
             }
@@ -139,19 +114,15 @@ pub fn Entities(comptime componentTypes: anytype) type {
             fn append(self: *@This(), allocator: Allocator, handle: Handle) !u32 {
                 // XXX: could optimize this logic a little since all lists are gonna match eachother, also
                 // only really need one size, etc
-                // XXX: self.archetype vs making these nullable?
-                inline for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
+                inline for (component_names, 0..) |comp_name, i| {
                     if (self.archetype.isSet(i)) {
-                        // XXX: dup math cross components, here and iterator and remove
-                        _ = try @field(self.comps, field.name).addOne(allocator);
+                        _ = try @field(self.comps, comp_name).addOne(allocator);
                     }
                 }
-                // XXX: same notes here
+                const index = self.handles.len;
                 try self.handles.append(allocator, handle);
                 // XXX: can't overflow because fails earlier right?
-                const index = self.len;
-                self.len += 1;
-                return index;
+                return @intCast(u32, index);
             }
 
             // XXX: put in (debug mode?) protection to prevent doing this while iterating? same for creating?
@@ -160,12 +131,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
             fn swapRemove(self: *ArchetypeList, index: u32, slot_map: *HandleSlotMap) void {
                 // XXX: instead of separate len use handles len? or fold all into same thing eventually anyway..?
                 // XXX: only needed in debug mode right?
-                assert(index < self.len);
-                inline for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
+                assert(index < self.handles.len);
+                inline for (component_names, 0..) |comp_name, i| {
                     if (self.archetype.isSet(i)) {
                         // XXX: here and below, i think it's okay to pop assign as lon gas we do unchecked, since
                         // the memory is guarenteed to be there right? (the problem case is swap removing if size 1)
-                        var components = &@field(self.comps, field.name);
+                        var components = &@field(self.comps, comp_name);
                         components.uncheckedAt(index).* = components.pop().?;
                     }
                 }
@@ -180,19 +151,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     // XXX: don't need to check generation, always checked at public interface right? check in debug mode or no?
                     slot_map.getUnchecked(moved_handle).index = index;
                 }
-                self.len -= 1;
             }
 
-            fn ComponentType(comptime componentField: Component) type {
-                return std.meta.fieldInfo(Entity, componentField).type;
+            fn ComponentIterator(comptime component_name: ComponentName) type {
+                return SegmentedListFirstShelfCount(component_types[@enumToInt(component_name)], first_shelf_count, false).Iterator;
             }
 
-            fn ComponentIterator(comptime componentField: Component) type {
-                return SegmentedListFirstShelfCount(ComponentType(componentField), first_shelf_count, false).Iterator;
-            }
-
-            fn componentIterator(self: *@This(), comptime componentField: Component) ComponentIterator(componentField) {
-                return @field(self.comps, std.meta.fieldInfo(Entity, componentField).name).iterator(0);
+            fn componentIterator(self: *@This(), comptime component_name: ComponentName) ComponentIterator(component_name) {
+                return @field(self.comps, component_names[@enumToInt(component_name)]).iterator(0);
             }
 
             const HandleIterator = SegmentedListFirstShelfCount(Handle, first_shelf_count, false).Iterator;
@@ -201,9 +167,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return self.handles.iterator(0);
             }
 
-            fn getComponent(self: *@This(), index: u32, comptime componentField: Component) *ComponentType(componentField) {
+            fn getComponent(self: *@This(), index: u32, comptime component_name: ComponentName) *component_types[@enumToInt(component_name)] {
                 // XXX: unchecked is correct right? assert in debug mode or no?
-                return @field(self.comps, std.meta.fieldInfo(Entity, componentField).name).uncheckedAt(index);
+                return @field(self.comps, component_names[@enumToInt(component_name)]).uncheckedAt(index);
             }
 
             fn getHandle(self: *@This(), index: u32) Handle {
@@ -212,10 +178,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
         };
 
+        // Storage
         allocator: Allocator,
         slot_map: HandleSlotMap,
         archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList),
 
+        // The API
         // TODO: need errdefers here, and maybe elsewhere too, for the allocations
         pub fn init(allocator: Allocator) !@This() {
             return .{
@@ -246,13 +214,13 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         fn setComponents(pointer: *const EntityPointer, components: anytype) void {
             inline for (@typeInfo(@TypeOf(components.*)).Struct.fields) |f| {
-                const field = @intToEnum(Component, std.meta.fieldIndex(Entity, f.name).?);
+                const component_name = comptime find_component_name(f.name).?;
                 if (@TypeOf(components.*) == Prefab) {
                     if (@field(components.*, f.name)) |component| {
-                        pointer.archetype_list.getComponent(pointer.index, field).* = component;
+                        pointer.archetype_list.getComponent(pointer.index, component_name).* = component;
                     }
                 } else {
-                    pointer.archetype_list.getComponent(pointer.index, field).* = @field(components.*, f.name);
+                    pointer.archetype_list.getComponent(pointer.index, component_name).* = @field(components.*, f.name);
                 }
             }
         }
@@ -328,31 +296,31 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 var archetype = Archetype.initEmpty();
                 inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
                     if (@field(components, field.name) != null) {
-                        archetype.set(std.meta.fieldIndex(Entity, field.name).?);
+                        archetype.set(@enumToInt(find_component_name(field.name).?));
                     }
                 }
                 return archetype;
             } else if (@typeInfo(@TypeOf(components)).Struct.is_tuple) {
                 var archetype = Archetype.initEmpty();
                 inline for (components) |c| {
-                    const component: Component = c;
+                    const component: ComponentName = c;
                     archetype.set(@enumToInt(component));
                 }
                 return archetype;
             } else comptime {
                 var archetype = Archetype.initEmpty();
                 for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                    archetype.set(std.meta.fieldIndex(Entity, field.name).?);
+                    archetype.set(@enumToInt(find_component_name(field.name).?));
                 }
                 return archetype;
             }
         }
 
         fn copyComponents(to: *const EntityPointer, from: EntityPointer, which: Archetype) void {
-            inline for (0..@typeInfo(Entity).Struct.fields.len) |i| {
+            inline for (0..component_names.len) |i| {
                 if (which.isSet(i)) {
-                    const field = @intToEnum(Component, i);
-                    to.archetype_list.getComponent(to.index, field).* = from.archetype_list.getComponent(from.index, field).*;
+                    const component_name = @intToEnum(ComponentName, i);
+                    to.archetype_list.getComponent(to.index, component_name).* = from.archetype_list.getComponent(from.index, component_name).*;
                 }
             }
         }
@@ -397,7 +365,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         // TODO: check assertions
-        fn getComponentChecked(self: *@This(), entity: Handle, comptime component: Component) !?*std.meta.fieldInfo(Entity, component).type {
+        fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentName) !?*component_types[@enumToInt(component)] {
             // XXX: should it just return null from there or is that slower?
             const entity_pointer = try self.slot_map.get(entity);
             if (!entity_pointer.archetype_list.archetype.isSet(@enumToInt(component))) {
@@ -406,7 +374,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
 
-        pub fn getComponent(self: *@This(), entity: Handle, comptime component: Component) ?*std.meta.fieldInfo(Entity, component).type {
+        pub fn getComponent(self: *@This(), entity: Handle, comptime component: ComponentName) ?*component_types[@enumToInt(component)] {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
@@ -416,11 +384,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
                     var i = 0;
                     for (components) |component| {
-                        const entityFieldEnum: Component = component;
-                        const entityField = std.meta.fieldInfo(Entity, entityFieldEnum);
-                        const FieldType = *entityField.type;
+                        const entity_name: ComponentName = component;
+                        const FieldType = *component_types[@enumToInt(entity_name)];
                         fields[i] = Type.StructField{
-                            .name = entityField.name,
+                            .name = component_names[@enumToInt(entity_name)],
                             .type = FieldType,
                             .default_value = null,
                             .is_comptime = false,
@@ -450,14 +417,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 archetype_list: ?*ArchetypeList,
                 handle_iterator: ArchetypeList.HandleIterator,
 
-                fn init(entities: *Entities(componentTypes)) @This() {
+                fn init(entities: *Entities(registered_components)) @This() {
                     return .{
                         // TODO: replace with getter if possible
                         .archetype = comptime archetype: {
                             var archetype = Archetype.initEmpty();
                             for (components) |field| {
-                                const entityField: Component = field;
-                                archetype.set(@enumToInt(entityField));
+                                const component_name: ComponentName = field;
+                                archetype.set(@enumToInt(component_name));
                             }
                             break :archetype archetype;
                         },
@@ -507,13 +474,28 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         // XXX: ...
-        pub fn deleteAll(self: *@This(), comptime component: Component) void {
+        pub fn deleteAll(self: *@This(), comptime component: ComponentName) void {
             var it = self.iterator(.{component});
             while (it.next()) |entity| {
                 self.remove(entity.handle);
             }
         }
     };
+}
+
+fn FieldValuesType(comptime T: type) type {
+    const fields = @typeInfo(T).Struct.fields;
+    if (fields.len == 0) return [0]void;
+    return [fields.len]fields[0].type;
+}
+
+fn field_values(s: anytype) FieldValuesType(@TypeOf(s)) {
+    const fields = @typeInfo(@TypeOf(s)).Struct.fields;
+    var values: FieldValuesType(@TypeOf(s)) = undefined;
+    for (fields, 0..) |field, i| {
+        values[i] = @field(s, field.name);
+    }
+    return values;
 }
 
 // XXX: use testing allocator--i think i'm leaking memory right now. that's FINE since like we're gonna use
@@ -631,7 +613,7 @@ test "limits" {
     {
         var archetype_lists = entities.archetype_lists.iterator();
         while (archetype_lists.next()) |archetype_list| {
-            try std.testing.expect(archetype_list.value_ptr.len == 0);
+            try std.testing.expect(archetype_list.value_ptr.handles.len == 0);
         }
     }
 
