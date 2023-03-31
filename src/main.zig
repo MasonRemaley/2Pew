@@ -2488,7 +2488,8 @@ fn remap_clamped(
 }
 
 test {
-    _ = ecs;
+    _ = @import("slot_map.zig");
     _ = @import("minimum_alignment_allocator.zig");
+    _ = ecs;
     _ = @import("segmented_list.zig");
 }

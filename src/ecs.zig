@@ -239,6 +239,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         free_slot_indices: []SlotIndex,
         archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList),
 
+        // TODO: need errdefers here, and maybe elsewhere too, for the allocations
         pub fn init(allocator: Allocator) !@This() {
             return .{
                 .allocator = allocator,
