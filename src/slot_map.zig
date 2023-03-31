@@ -48,7 +48,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
         }
 
         // Adds a new slot, leaving its item undefined.
-        fn addSlot(self: *@This()) ?Index {
+        fn addSlot(self: *@This()) !Index {
             if (self.free_list.len > 0) {
                 self.free_list.len -= 1;
                 return self.free_list.ptr[self.free_list.len];
@@ -59,17 +59,11 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
                 self.slots[index].generation = 0;
                 return @intCast(Index, index);
             }
-            return null;
+            return error.AtCapacity;
         }
 
-        pub fn create(self: *@This(), item: Item) Handle {
-            return self.createChecked(item) catch |err|
-                std.debug.panic("create failed: {}", .{err});
-        }
-
-        pub fn createChecked(self: *@This(), item: Item) !Handle {
-            const index = self.addSlot() orelse
-                return error.AtCapacity;
+        pub fn create(self: *@This(), item: Item) !Handle {
+            const index = try self.addSlot();
             const slot = &self.slots[index];
             slot.item = item;
             return .{
@@ -78,12 +72,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             };
         }
 
-        pub fn remove(self: *@This(), handle: Handle) Item {
-            return self.removeChecked(handle) catch |err|
-                std.debug.panic("remove failed: {}", .{err});
-        }
-
-        pub fn removeChecked(self: *@This(), handle: Handle) error{ DoubleFree, OutOfBounds }!Item {
+        pub fn remove(self: *@This(), handle: Handle) error{ DoubleFree, OutOfBounds }!Item {
             // TODO: do we have to check this? may already be handled!
             if (handle.index >= self.slots.len) {
                 return error.OutOfBounds;
@@ -111,13 +100,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             return self.slots.ptr[handle.index].item;
         }
 
-        // TODO: do we need an unchecked at or no?
-        pub fn get(self: *const @This(), handle: Handle) *Item {
-            return self.getChecked(handle) catch |err|
-                std.debug.panic("get failed: {}", .{err});
-        }
-
-        pub fn getChecked(self: *const @This(), handle: Handle) error{ UseAfterFree, OutOfBounds }!*Item {
+        pub fn get(self: *const @This(), handle: Handle) error{ UseAfterFree, OutOfBounds }!*Item {
             if (handle.index >= self.slots.len) {
                 return error.OutOfBounds;
             }
@@ -126,6 +109,10 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
                 return error.UseAfterFree;
             }
 
+            return self.getUnchecked(handle);
+        }
+
+        pub fn getUnchecked(self: *const @This(), handle: Handle) *Item {
             return &self.slots[handle.index].item;
         }
     };
@@ -137,53 +124,53 @@ test "slot map" {
 
     const H = @TypeOf(sm).Handle;
 
-    try testing.expect(sm.getChecked(H{ .index = 0, .generation = 0 }) == error.OutOfBounds);
+    try testing.expect(sm.get(H{ .index = 0, .generation = 0 }) == error.OutOfBounds);
 
-    const a = sm.create('a');
-    const b = sm.create('b');
-    try testing.expect(sm.getChecked(H{ .index = 4, .generation = 0 }) == error.OutOfBounds);
-    const c = sm.create('c');
-    const d = sm.create('d');
-    const e = sm.create('e');
+    const a = try sm.create('a');
+    const b = try sm.create('b');
+    try testing.expect(sm.get(H{ .index = 4, .generation = 0 }) == error.OutOfBounds);
+    const c = try sm.create('c');
+    const d = try sm.create('d');
+    const e = try sm.create('e');
 
-    try testing.expect(sm.get(a).* == 'a');
-    try testing.expect(sm.get(b).* == 'b');
-    try testing.expect(sm.get(c).* == 'c');
-    try testing.expect(sm.get(d).* == 'd');
-    try testing.expect(sm.get(e).* == 'e');
+    try testing.expect((try sm.get(a)).* == 'a');
+    try testing.expect((try sm.get(b)).* == 'b');
+    try testing.expect((try sm.get(c)).* == 'c');
+    try testing.expect((try sm.get(d)).* == 'd');
+    try testing.expect((try sm.get(e)).* == 'e');
 
-    try testing.expect(sm.createChecked('f') == error.AtCapacity);
+    try testing.expect(sm.create('f') == error.AtCapacity);
 
-    try testing.expect(sm.remove(c) == 'c');
-    try testing.expect(sm.remove(d) == 'd');
+    try testing.expect(try sm.remove(c) == 'c');
+    try testing.expect(try sm.remove(d) == 'd');
 
-    try testing.expect(sm.removeChecked(c) == error.DoubleFree);
-    try testing.expect(sm.removeChecked(d) == error.DoubleFree);
+    try testing.expect(sm.remove(c) == error.DoubleFree);
+    try testing.expect(sm.remove(d) == error.DoubleFree);
 
-    try testing.expect(sm.get(a).* == 'a');
-    try testing.expect(sm.get(b).* == 'b');
-    try testing.expect(sm.getChecked(c) == error.UseAfterFree);
-    try testing.expect(sm.getChecked(d) == error.UseAfterFree);
-    try testing.expect(sm.get(e).* == 'e');
+    try testing.expect((try sm.get(a)).* == 'a');
+    try testing.expect((try sm.get(b)).* == 'b');
+    try testing.expect(sm.get(c) == error.UseAfterFree);
+    try testing.expect(sm.get(d) == error.UseAfterFree);
+    try testing.expect((try sm.get(e)).* == 'e');
 
-    const f = sm.create('f');
+    const f = try sm.create('f');
 
-    try testing.expect(sm.get(a).* == 'a');
-    try testing.expect(sm.get(b).* == 'b');
-    try testing.expect(sm.getChecked(c) == error.UseAfterFree);
-    try testing.expect(sm.getChecked(d) == error.UseAfterFree);
-    try testing.expect(sm.get(e).* == 'e');
-    try testing.expect(sm.get(f).* == 'f');
+    try testing.expect((try sm.get(a)).* == 'a');
+    try testing.expect((try sm.get(b)).* == 'b');
+    try testing.expect(sm.get(c) == error.UseAfterFree);
+    try testing.expect(sm.get(d) == error.UseAfterFree);
+    try testing.expect((try sm.get(e)).* == 'e');
+    try testing.expect((try sm.get(f)).* == 'f');
 
-    const g = sm.create('g');
+    const g = try sm.create('g');
 
-    try testing.expect(sm.get(a).* == 'a');
-    try testing.expect(sm.get(b).* == 'b');
-    try testing.expect(sm.getChecked(c) == error.UseAfterFree);
-    try testing.expect(sm.getChecked(d) == error.UseAfterFree);
-    try testing.expect(sm.get(e).* == 'e');
-    try testing.expect(sm.get(f).* == 'f');
-    try testing.expect(sm.get(g).* == 'g');
+    try testing.expect((try sm.get(a)).* == 'a');
+    try testing.expect((try sm.get(b)).* == 'b');
+    try testing.expect(sm.get(c) == error.UseAfterFree);
+    try testing.expect(sm.get(d) == error.UseAfterFree);
+    try testing.expect((try sm.get(e)).* == 'e');
+    try testing.expect((try sm.get(f)).* == 'f');
+    try testing.expect((try sm.get(g)).* == 'g');
 
     try testing.expectEqual(H{ .index = 0, .generation = 0 }, a);
     try testing.expectEqual(H{ .index = 1, .generation = 0 }, b);
@@ -195,10 +182,10 @@ test "slot map" {
 
     var temp = g;
     for (0..255) |_| {
-        try testing.expect(sm.remove(temp) == 'g');
-        temp = sm.create('g');
+        try testing.expect(try sm.remove(temp) == 'g');
+        temp = try sm.create('g');
     }
     try testing.expectEqual(H{ .index = g.index, .generation = 0 }, temp);
 
-    try testing.expect(sm.createChecked('h') == error.AtCapacity);
+    try testing.expect(sm.create('h') == error.AtCapacity);
 }

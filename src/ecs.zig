@@ -8,8 +8,6 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const FieldEnum = std.meta.FieldEnum;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
-const ArrayListAlignedUnmanaged = std.ArrayListAlignedUnmanaged;
 const Type = std.builtin.Type;
 
 const EntityGeneration = switch (builtin.mode) {
@@ -25,13 +23,17 @@ const max_archetypes = 40000;
 
 pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
+        const HandleSlotMap = SlotMap(EntityPointer, max_entities, EntityGeneration);
+        const EntityPointer = struct {
+            archetype_list: *ArchetypeList,
+            index: u32,
+        };
+
+        pub const EntityHandle = HandleSlotMap.Handle;
         pub const Component = FieldEnum(Entity);
 
         // `Archetype` is a bit set with a bit for each component type.
         const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
-
-        const HandleSlotMap = SlotMap(EntityPointer, max_entities, EntityGeneration);
-        pub const EntityHandle = HandleSlotMap.Handle;
 
         // XXX: sorting based on size no longer matters for these!
         // `Entity` has a field for every possible component type. This is for convenience, it is
@@ -89,16 +91,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
             });
         };
 
-        // XXX: naming?
-        const EntityPointer = struct {
-            archetype_list: *ArchetypeList,
-            index: u32,
-        };
-
-        const first_shelf_count = 8;
-
         // Stores component data and handles for entities of a given archetype.
         const ArchetypeList = struct {
+            const first_shelf_count = 8;
             const Components = components: {
                 var fields: [@typeInfo(Entity).Struct.fields.len]Type.StructField = undefined;
                 for (@typeInfo(Entity).Struct.fields, 0..) |field, i| {
@@ -187,7 +182,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 // be used outside to avoid probme based on order, etc
                 if (index != self.handles.len) {
                     // XXX: don't need to check generation, always checked at public interface right? check in debug mode or no?
-                    slot_map.slots[moved_handle.index].item.index = index;
+                    slot_map.getUnchecked(moved_handle).index = index;
                 }
                 self.len -= 1;
             }
@@ -223,7 +218,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
         };
 
-        // XXX: any easy way to encapsulate this? i guess into the slot map pattern or what?
         allocator: Allocator,
         slot_map: HandleSlotMap,
         archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList),
@@ -256,10 +250,29 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 std.debug.panic("failed to create entity: {}", .{err});
         }
 
+        fn setComponents(pointer: *const EntityPointer, components: anytype) void {
+            inline for (@typeInfo(@TypeOf(components.*)).Struct.fields) |f| {
+                const field = @intToEnum(Component, std.meta.fieldIndex(Entity, f.name).?);
+                if (@TypeOf(components.*) == Prefab) {
+                    if (@field(components.*, f.name)) |component| {
+                        pointer.archetype_list.getComponent(pointer.index, field).* = component;
+                    }
+                } else {
+                    pointer.archetype_list.getComponent(pointer.index, field).* = @field(components.*, f.name);
+                }
+            }
+        }
+
         pub fn createChecked(self: *@This(), components: anytype) !EntityHandle {
-            const handle = try self.slot_map.createChecked(undefined);
-            const entity_pointer = &self.slot_map.slots[handle.index].item;
-            try self.setArchetype(handle, entity_pointer, components, .{}, true);
+            const archetype = componentsArchetype(components);
+            const archetype_list = try self.getOrPutArchetypeList(archetype);
+            const handle = try self.slot_map.create(undefined);
+            const pointer = self.slot_map.getUnchecked(handle);
+            pointer.* = EntityPointer{
+                .archetype_list = archetype_list,
+                .index = try archetype_list.createEntity(self.allocator, handle),
+            };
+            setComponents(pointer, &components);
             return handle;
         }
 
@@ -269,7 +282,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         fn removeChecked(self: *@This(), entity: EntityHandle) !void {
-            const entity_pointer = try self.slot_map.removeChecked(entity);
+            const entity_pointer = try self.slot_map.remove(entity);
             entity_pointer.archetype_list.removeEntity(entity_pointer.index, &self.slot_map);
         }
 
@@ -280,8 +293,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         // TODO: test errors
         fn addComponentsChecked(self: *@This(), handle: EntityHandle, components: anytype) !void {
-            const entity_pointer = try self.slot_map.getChecked(handle);
-            try self.setArchetype(handle, entity_pointer, components, .{}, false);
+            try self.changeArchetype(handle, components, .{});
         }
 
         // TODO: return a bool indicating if it was present or no? also we could have a faster
@@ -293,11 +305,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         // TODO: test errors
         fn removeComponentsChecked(self: *@This(), handle: EntityHandle, components: anytype) !void {
-            const entity_pointer = try self.slot_map.getChecked(handle);
-            try self.setArchetype(handle, entity_pointer, .{}, components, false);
+            try self.changeArchetype(handle, .{}, components);
         }
 
-        fn getOrPutPageListEnsureAvailable(self: *@This(), archetype: Archetype) !*ArchetypeList {
+        fn getOrPutArchetypeList(self: *@This(), archetype: Archetype) !*ArchetypeList {
             comptime assert(max_archetypes > 0);
 
             const entry = self.archetype_lists.getOrPutAssumeCapacity(archetype);
@@ -316,6 +327,42 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return entry.value_ptr;
         }
 
+        // Turns a prefab, a struct of components, or a tuple of enum component names into an archetype
+        // bitset.
+        fn componentsArchetype(components: anytype) Archetype {
+            if (@TypeOf(components) == Prefab) {
+                var archetype = Archetype.initEmpty();
+                inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                    if (@field(components, field.name) != null) {
+                        archetype.set(std.meta.fieldIndex(Entity, field.name).?);
+                    }
+                }
+                return archetype;
+            } else if (@typeInfo(@TypeOf(components)).Struct.is_tuple) {
+                var archetype = Archetype.initEmpty();
+                inline for (components) |c| {
+                    const component: Component = c;
+                    archetype.set(@enumToInt(component));
+                }
+                return archetype;
+            } else comptime {
+                var archetype = Archetype.initEmpty();
+                for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                    archetype.set(std.meta.fieldIndex(Entity, field.name).?);
+                }
+                return archetype;
+            }
+        }
+
+        fn copyComponents(to: *const EntityPointer, from: EntityPointer, which: Archetype) void {
+            inline for (0..@typeInfo(Entity).Struct.fields.len) |i| {
+                if (which.isSet(i)) {
+                    const field = @intToEnum(Component, i);
+                    to.archetype_list.getComponent(to.index, field).* = from.archetype_list.getComponent(from.index, field).*;
+                }
+            }
+        }
+
         // TODO: a little weird that it takes handle and pointer. the idea is that it isn't safety checking
         // the handle so that forces you to do it outside, and prevents needlessly looking it up more than once.
         // we could just document that it doesn't safety check it though, or name it unchecekd or something idk unless
@@ -323,92 +370,42 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // TODO: test the failure conditions here?
         // TODO: early out if no change?
         // TODO: make remove_components comptime?
-        fn setArchetype(
+        fn changeArchetype(
             self: *@This(),
-            entity_handle: EntityHandle,
-            entity_pointer: *EntityPointer,
+            handle: EntityHandle,
             add_components: anytype,
             remove_components: anytype,
-            comptime create_entity: bool,
         ) !void {
-            if (create_entity and remove_components.len > 0) {
-                @compileError("cannot remove components if the entity does not yet exist");
-            }
-
-            const previous_archetype = if (create_entity)
-                Archetype.initEmpty()
-            else
-                entity_pointer.archetype_list.archetype;
-
-            const components_added = components_added: {
-                if (@TypeOf(add_components) == Prefab) {
-                    var components_added = Archetype.initEmpty();
-                    inline for (comptime @typeInfo(@TypeOf(add_components)).Struct.fields) |field| {
-                        if (@field(add_components, field.name) != null) {
-                            components_added.set(std.meta.fieldIndex(Entity, field.name).?);
-                        }
-                    }
-                    break :components_added components_added;
-                } else comptime {
-                    var components_added = Archetype.initEmpty();
-                    for (@typeInfo(@TypeOf(add_components)).Struct.fields) |field| {
-                        components_added.set(std.meta.fieldIndex(Entity, field.name).?);
-                    }
-                    break :components_added components_added;
-                }
-            };
-
-            const components_removed = components_removed: {
-                var components_removed = Archetype.initEmpty();
-                inline for (remove_components) |removed| {
-                    const fieldEnum: Component = removed;
-                    components_removed.set(@enumToInt(fieldEnum));
-                }
-                break :components_removed components_removed;
-            };
-
+            // Determine our archetype bitsets
+            const pointer = try self.slot_map.get(handle);
+            const previous_archetype = pointer.archetype_list.archetype;
+            const components_added = componentsArchetype(add_components);
+            const components_removed = componentsArchetype(remove_components);
             const archetype = previous_archetype.unionWith(components_added)
                 .differenceWith(components_removed);
+            const components_copied = previous_archetype.intersectWith(archetype)
+                .differenceWith(components_added);
 
-            // Create the new entity
-            const old_entity_pointer: EntityPointer = entity_pointer.*;
-            const archetype_list = try self.getOrPutPageListEnsureAvailable(archetype);
-            entity_pointer.archetype_list = archetype_list;
-            entity_pointer.index = try archetype_list.createEntity(self.allocator, entity_handle);
+            // Create the new entity location
+            const old_pointer: EntityPointer = pointer.*;
+            const archetype_list = try self.getOrPutArchetypeList(archetype);
+            pointer.* = .{
+                .archetype_list = archetype_list,
+                .index = try archetype_list.createEntity(self.allocator, handle),
+            };
 
-            // If this entity data is replacing an existing one, copy the original components over
-            if (!create_entity) {
-                // Copy the old components
-                const copy = previous_archetype.intersectWith(archetype)
-                    .differenceWith(components_added);
-                inline for (0..@typeInfo(Entity).Struct.fields.len) |i| {
-                    if (copy.isSet(i)) {
-                        const field = @intToEnum(Component, i);
-                        entity_pointer.archetype_list.getComponent(entity_pointer.index, field).* = old_entity_pointer.archetype_list.getComponent(old_entity_pointer.index, field).*;
-                    }
-                }
+            // Set the component data at the new location
+            copyComponents(pointer, old_pointer, components_copied);
+            setComponents(pointer, &add_components);
 
-                // Delete the old entity
-                old_entity_pointer.archetype_list.removeEntity(old_entity_pointer.index, &self.slot_map);
-            }
-
-            // Initialize the new entity
-            inline for (@typeInfo(@TypeOf(add_components)).Struct.fields) |f| {
-                const field = @intToEnum(Component, std.meta.fieldIndex(Entity, f.name).?);
-                if (@TypeOf(add_components) == Prefab) {
-                    if (@field(add_components, f.name)) |component| {
-                        entity_pointer.archetype_list.getComponent(entity_pointer.index, field).* = component;
-                    }
-                } else {
-                    entity_pointer.archetype_list.getComponent(entity_pointer.index, field).* = @field(add_components, f.name);
-                }
-            }
+            // Delete the old data
+            old_pointer.archetype_list.removeEntity(old_pointer.index, &self.slot_map);
         }
 
         // TODO: check assertions
         fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: Component) !?*std.meta.fieldInfo(Entity, component).type {
             // XXX: should it just return null from there or is that slower?
-            const entity_pointer = try self.slot_map.getChecked(entity);
+            const entity_pointer = try self.slot_map.get(entity);
             if (!entity_pointer.archetype_list.archetype.isSet(@enumToInt(component))) {
                 return null;
             }
