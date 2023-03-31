@@ -176,6 +176,13 @@ pub fn Entities(comptime registered_components: anytype) type {
                 // XXX: unchecked is correct right? assert in debug mode or no?
                 return self.handles.uncheckedAt(index);
             }
+
+            fn clearRetainingCapacity(self: *@This()) void {
+                self.handles.clearRetainingCapacity();
+                inline for (component_names) |comp_name| {
+                    @field(self.comps, comp_name).clearRetainingCapacity();
+                }
+            }
         };
 
         // Storage
@@ -486,12 +493,13 @@ pub fn Entities(comptime registered_components: anytype) type {
             return Iterator(components).init(self);
         }
 
-        // XXX: ...
-        pub fn deleteAll(self: *@This(), comptime component: ComponentName) void {
-            var it = self.iterator(.{component});
-            while (it.next()) |entity| {
-                self.remove(entity.handle);
+        pub fn clearRetainingCapacity(self: *@This()) void {
+            // This empties the archetype lists, but keeps them in place. A more clever
+            // implementation could also allow repurposing them for a different set of archetypes.
+            for (self.archetype_lists.values()) |*archetype_list| {
+                archetype_list.clearRetainingCapacity();
             }
+            self.slot_map.clearRetainingCapacity();
         }
     };
 }
@@ -738,6 +746,84 @@ test "iter remove" {
     // XXX: use in game!
 }
 
+test "clear retaining capacity" {
+    var allocator = std.heap.page_allocator;
+
+    // Remove from the beginning
+    {
+        var entities = try Entities(.{ .x = u32, .y = u32 }).init(allocator);
+        defer entities.deinit();
+
+        const e0 = entities.create(.{});
+        const e1 = entities.create(.{});
+        const x0 = entities.create(.{ .x = 10 });
+        const x1 = entities.create(.{ .x = 20 });
+        const y0 = entities.create(.{ .y = 30 });
+        const y1 = entities.create(.{ .y = 40 });
+        const xy0 = entities.create(.{ .x = 50, .y = 60 });
+        const xy1 = entities.create(.{ .x = 70, .y = 80 });
+        const first_batch = [_]@TypeOf(entities).Handle{ e0, e1, x0, x1, y0, y1, xy0, xy1 };
+
+        entities.clearRetainingCapacity();
+
+        for (first_batch) |e| {
+            try std.testing.expect(entities.getComponentChecked(e, .x) == error.UseAfterFree);
+            try std.testing.expect(entities.getComponentChecked(e, .y) == error.UseAfterFree);
+        }
+
+        const e0_new = entities.create(.{});
+        const e1_new = entities.create(.{});
+        const x0_new = entities.create(.{ .x = 11 });
+        const x1_new = entities.create(.{ .x = 12 });
+        const y0_new = entities.create(.{ .y = 13 });
+        const y1_new = entities.create(.{ .y = 14 });
+        const xy0_new = entities.create(.{ .x = 15, .y = 16 });
+        const xy1_new = entities.create(.{ .x = 17, .y = 18 });
+        const second_batch = [_]@TypeOf(entities).Handle{ e0_new, e1_new, x0_new, x1_new, y0_new, y1_new, xy0_new, xy1_new };
+
+        for (first_batch) |e| {
+            try std.testing.expect(entities.getComponentChecked(e, .x) == error.UseAfterFree);
+            try std.testing.expect(entities.getComponentChecked(e, .y) == error.UseAfterFree);
+        }
+
+        // XXX: test iters, test getcomponent on these
+        // try std.testing.expectEqual(
+
+        for (first_batch, second_batch) |first, second| {
+            var expected = first;
+            expected.generation += 1;
+            try std.testing.expectEqual(expected, second);
+        }
+
+        try std.testing.expect(entities.getComponent(e0_new, .x) == null);
+        try std.testing.expect(entities.getComponent(e0_new, .y) == null);
+        try std.testing.expect(entities.getComponent(e1_new, .x) == null);
+        try std.testing.expect(entities.getComponent(e1_new, .y) == null);
+        try std.testing.expect(entities.getComponent(x0_new, .x).?.* == 11);
+        try std.testing.expect(entities.getComponent(x0_new, .y) == null);
+        try std.testing.expect(entities.getComponent(x1_new, .x).?.* == 12);
+        try std.testing.expect(entities.getComponent(x1_new, .y) == null);
+        try std.testing.expect(entities.getComponent(y0_new, .x) == null);
+        try std.testing.expect(entities.getComponent(y0_new, .y).?.* == 13);
+        try std.testing.expect(entities.getComponent(y1_new, .x) == null);
+        try std.testing.expect(entities.getComponent(y1_new, .y).?.* == 14);
+        try std.testing.expect(entities.getComponent(xy0_new, .x).?.* == 15);
+        try std.testing.expect(entities.getComponent(xy0_new, .y).?.* == 16);
+        try std.testing.expect(entities.getComponent(xy1_new, .x).?.* == 17);
+        try std.testing.expect(entities.getComponent(xy1_new, .y).?.* == 18);
+
+        var expected = std.AutoHashMap(@TypeOf(entities).Handle, void).init(std.heap.page_allocator);
+        for (second_batch) |e| {
+            try expected.put(e, {});
+        }
+        var it = entities.iterator(.{});
+        while (it.next()) |n| {
+            try std.testing.expect(expected.remove(n.handle));
+        }
+        try std.testing.expect(expected.count() == 0);
+    }
+}
+
 // XXX: use testing allocator--i think i'm leaking memory right now. that's FINE since like we're gonna use
 // a fixed buffer, but wanna get it right anyway.
 // Could use a more exhaustive test, this at least makes sure it compiles which was a problem
@@ -889,12 +975,13 @@ test "safety" {
     const entity = entities.create(.{});
     entities.swapRemove(entity);
     try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(entity));
-    try std.testing.expectError(error.OutOfBounds, entities.swapRemoveChecked(@TypeOf(entities).Handle{
+    try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(@TypeOf(entities).Handle{
         .index = 1,
         .generation = 0,
     }));
 }
 
+// TODO: speed up this test by replacing the allocator?
 // TODO: test 0 sized components? (used in game seemingly correctly!)
 test "random data" {
     const E = Entities(.{ .x = u32, .y = u8, .z = u16 });

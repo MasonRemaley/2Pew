@@ -96,9 +96,10 @@ fn benchEcs() !void {
     }
     std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
+    // XXX: profile removing from iterator too or instead?
     // Remove all entities
     for (all.items) |entity| {
-        entities.remove(entity);
+        entities.swapRemove(entity);
     }
     std.debug.print("\tremove(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 }

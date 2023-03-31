@@ -2017,19 +2017,7 @@ const Game = struct {
     };
 
     fn setupScenario(game: *Game, entities: *Entities, scenario: Scenario) void {
-        entities.deleteAll(.ship);
-        entities.deleteAll(.rb);
-        entities.deleteAll(.damage);
-        entities.deleteAll(.input);
-        entities.deleteAll(.lifetime);
-        entities.deleteAll(.sprite);
-        entities.deleteAll(.animation);
-        entities.deleteAll(.collider);
-        entities.deleteAll(.turrets);
-        entities.deleteAll(.grapple_gun);
-        entities.deleteAll(.health);
-        entities.deleteAll(.spring);
-        entities.deleteAll(.hook);
+        entities.clearRetainingCapacity();
 
         switch (scenario) {
             .deathmatch_2v2,

@@ -30,6 +30,13 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
         pub fn init(allocator: Allocator) Allocator.Error!@This() {
             var slots = try allocator.alloc(Slot, capacity);
             errdefer allocator.free(slots.ptr[0..capacity]);
+            // TODO: if this makes startup slower we can compare to just zeroing the whole thing
+            for (slots) |*slot| {
+                slot.* = .{
+                    .item = undefined,
+                    .generation = 0,
+                };
+            }
             slots.len = 0;
 
             var free_list = try allocator.alloc(Index, capacity);
@@ -48,7 +55,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
         }
 
         // Adds a new slot, leaving its item undefined.
-        fn addSlot(self: *@This()) !Index {
+        fn addOne(self: *@This()) !Index {
             if (self.free_list.len > 0) {
                 self.free_list.len -= 1;
                 return self.free_list.ptr[self.free_list.len];
@@ -56,14 +63,13 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             if (self.slots.len < capacity) {
                 const index = self.slots.len;
                 self.slots.len += 1;
-                self.slots[index].generation = 0;
                 return @intCast(Index, index);
             }
             return error.AtCapacity;
         }
 
         pub fn create(self: *@This(), item: Item) !Handle {
-            const index = try self.addSlot();
+            const index = try self.addOne();
             const slot = &self.slots[index];
             slot.item = item;
             return .{
@@ -72,10 +78,18 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             };
         }
 
-        pub fn remove(self: *@This(), handle: Handle) error{ DoubleFree, OutOfBounds }!Item {
+        fn incrementGeneration(self: *@This(), index: Index) void {
+            if (Generation != u0) {
+                // TODO: support throwing it out when it wraps as well
+                self.slots[index].generation +%= 1;
+            }
+        }
+
+        pub fn remove(self: *@This(), handle: Handle) error{DoubleFree}!Item {
             // TODO: do we have to check this? may already be handled!
             if (handle.index >= self.slots.len) {
-                return error.OutOfBounds;
+                // This can occur if we cleared the slot map previously.
+                return error.DoubleFree;
             }
 
             if (self.slots[handle.index].generation != handle.generation) {
@@ -88,10 +102,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
                 return error.DoubleFree;
             }
 
-            if (Generation != u0) {
-                // TODO: support throwing it out when it wraps as well
-                self.slots[handle.index].generation +%= 1;
-            }
+            self.incrementGeneration(handle.index);
 
             // TODO: does .ptr do what I think it does?
             self.free_list.ptr[self.free_list.len] = handle.index;
@@ -100,9 +111,10 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             return self.slots.ptr[handle.index].item;
         }
 
-        pub fn get(self: *const @This(), handle: Handle) error{ UseAfterFree, OutOfBounds }!*Item {
+        pub fn get(self: *const @This(), handle: Handle) error{UseAfterFree}!*Item {
             if (handle.index >= self.slots.len) {
-                return error.OutOfBounds;
+                // This can occur if we cleared the slot map previously.
+                return error.UseAfterFree;
             }
 
             if (self.slots[handle.index].generation != handle.generation) {
@@ -115,6 +127,14 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
         pub fn getUnchecked(self: *const @This(), handle: Handle) *Item {
             return &self.slots[handle.index].item;
         }
+
+        pub fn clearRetainingCapacity(self: *@This()) void {
+            for (0..self.slots.len) |i| {
+                self.incrementGeneration(@intCast(Index, i));
+            }
+            self.free_list.len = 0;
+            self.slots.len = 0;
+        }
     };
 }
 
@@ -124,11 +144,11 @@ test "slot map" {
 
     const H = @TypeOf(sm).Handle;
 
-    try testing.expect(sm.get(H{ .index = 0, .generation = 0 }) == error.OutOfBounds);
+    try testing.expect(sm.get(H{ .index = 0, .generation = 0 }) == error.UseAfterFree);
 
     const a = try sm.create('a');
     const b = try sm.create('b');
-    try testing.expect(sm.get(H{ .index = 4, .generation = 0 }) == error.OutOfBounds);
+    try testing.expect(sm.get(H{ .index = 4, .generation = 0 }) == error.UseAfterFree);
     const c = try sm.create('c');
     const d = try sm.create('d');
     const e = try sm.create('e');
@@ -188,4 +208,41 @@ test "slot map" {
     try testing.expectEqual(H{ .index = g.index, .generation = 0 }, temp);
 
     try testing.expect(sm.create('h') == error.AtCapacity);
+
+    sm.clearRetainingCapacity();
+
+    try testing.expect(sm.get(a) == error.UseAfterFree);
+    try testing.expect(sm.get(b) == error.UseAfterFree);
+    try testing.expect(sm.get(c) == error.UseAfterFree);
+    try testing.expect(sm.get(d) == error.UseAfterFree);
+    try testing.expect(sm.get(e) == error.UseAfterFree);
+    try testing.expect(sm.get(f) == error.UseAfterFree);
+    try testing.expect(sm.get(g) == error.UseAfterFree);
+    try testing.expect(sm.get(temp) == error.UseAfterFree);
+
+    const h = try sm.create('h');
+    const i = try sm.create('i');
+    const j = try sm.create('j');
+    const k = try sm.create('k');
+    const l = try sm.create('l');
+
+    try testing.expectEqual(H{ .index = 0, .generation = 1 }, h);
+    try testing.expectEqual(H{ .index = 1, .generation = 1 }, i);
+    try testing.expectEqual(H{ .index = 2, .generation = 1 }, j);
+    try testing.expectEqual(H{ .index = 3, .generation = 2 }, k);
+    try testing.expectEqual(H{ .index = 4, .generation = 1 }, l);
+
+    try testing.expect(sm.get(a) == error.UseAfterFree);
+    try testing.expect(sm.get(b) == error.UseAfterFree);
+    try testing.expect(sm.get(c) == error.UseAfterFree);
+    try testing.expect(sm.get(d) == error.UseAfterFree);
+    try testing.expect(sm.get(e) == error.UseAfterFree);
+    try testing.expect(sm.get(f) == error.UseAfterFree);
+    try testing.expect((try sm.get(g)).* == 'j'); // generation collision
+    try testing.expect(sm.get(temp) == error.UseAfterFree);
+    try testing.expect((try sm.get(h)).* == 'h');
+    try testing.expect((try sm.get(i)).* == 'i');
+    try testing.expect((try sm.get(j)).* == 'j');
+    try testing.expect((try sm.get(k)).* == 'k');
+    try testing.expect((try sm.get(l)).* == 'l');
 }
