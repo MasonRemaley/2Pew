@@ -412,13 +412,16 @@ pub fn Entities(comptime registered_components: anytype) type {
                     comps: Components,
                 };
 
+                entities: *Entities(registered_components),
                 archetype: Archetype,
+                // TODO: just store index into archetype list instead of iterator now that we're storing entities too?
                 archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList).Iterator,
                 archetype_list: ?*ArchetypeList,
                 handle_iterator: ArchetypeList.HandleIterator,
 
                 fn init(entities: *Entities(registered_components)) @This() {
                     return .{
+                        .entities = entities,
                         // TODO: replace with getter if possible
                         .archetype = comptime archetype: {
                             var archetype = Archetype.initEmpty();
@@ -466,6 +469,16 @@ pub fn Entities(comptime registered_components: anytype) type {
                         self.archetype_list = null;
                     }
                 }
+
+                fn swapRemoveChecked(self: *@This()) !void {
+                    if (self.archetype_list == null) return error.NothingToRemove;
+                    _ = self.handle_iterator.prev();
+                    self.entities.removeChecked(self.handle_iterator.peek().?.*) catch unreachable;
+                }
+
+                pub fn swapRemove(self: *@This()) void {
+                    self.swapRemoveChecked() catch unreachable;
+                }
             };
         }
 
@@ -496,6 +509,233 @@ fn field_values(s: anytype) FieldValuesType(@TypeOf(s)) {
         values[i] = @field(s, field.name);
     }
     return values;
+}
+
+test "iter remove" {
+    var allocator = std.heap.page_allocator;
+
+    // Remove from the beginning
+    {
+        var entities = try Entities(.{ .x = u32 }).init(allocator);
+        defer entities.deinit();
+
+        const e0 = entities.create(.{ .x = 0 });
+        const e1 = entities.create(.{ .x = 10 });
+        const e2 = entities.create(.{ .x = 20 });
+        const e3 = entities.create(.{ .x = 30 });
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            iter.swapRemove();
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next() == null);
+        }
+
+        try std.testing.expect(entities.getComponentChecked(e0, .x) == error.UseAfterFree);
+        try std.testing.expect(entities.getComponent(e1, .x).?.* == 10);
+        try std.testing.expect(entities.getComponent(e2, .x).?.* == 20);
+        try std.testing.expect(entities.getComponent(e3, .x).?.* == 30);
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next() == null);
+        }
+    }
+
+    // Remove from the middle
+    {
+        var entities = try Entities(.{ .x = u32 }).init(allocator);
+        defer entities.deinit();
+
+        const e0 = entities.create(.{ .x = 0 });
+        const e1 = entities.create(.{ .x = 10 });
+        const e2 = entities.create(.{ .x = 20 });
+        const e3 = entities.create(.{ .x = 30 });
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            iter.swapRemove();
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next() == null);
+        }
+
+        try std.testing.expect(entities.getComponent(e0, .x).?.* == 0);
+        try std.testing.expect(entities.getComponentChecked(e1, .x) == error.UseAfterFree);
+        try std.testing.expect(entities.getComponent(e2, .x).?.* == 20);
+        try std.testing.expect(entities.getComponent(e3, .x).?.* == 30);
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next() == null);
+        }
+    }
+
+    // Remove from the end
+    {
+        var entities = try Entities(.{ .x = u32 }).init(allocator);
+        defer entities.deinit();
+
+        const e0 = entities.create(.{ .x = 0 });
+        const e1 = entities.create(.{ .x = 10 });
+        const e2 = entities.create(.{ .x = 20 });
+        const e3 = entities.create(.{ .x = 30 });
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            iter.swapRemove();
+            try std.testing.expect(iter.next() == null);
+        }
+
+        try std.testing.expect(entities.getComponent(e0, .x).?.* == 0);
+        try std.testing.expect(entities.getComponent(e1, .x).?.* == 10);
+        try std.testing.expect(entities.getComponent(e2, .x).?.* == 20);
+        try std.testing.expect(entities.getComponentChecked(e3, .x) == error.UseAfterFree);
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next() == null);
+        }
+    }
+
+    // Removing everything!
+    {
+        var entities = try Entities(.{ .x = u32 }).init(allocator);
+        defer entities.deinit();
+
+        const e0 = entities.create(.{ .x = 0 });
+        const e1 = entities.create(.{ .x = 10 });
+        const e2 = entities.create(.{ .x = 20 });
+        const e3 = entities.create(.{ .x = 30 });
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            iter.swapRemove();
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            iter.swapRemove();
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            iter.swapRemove();
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            iter.swapRemove();
+            try std.testing.expect(iter.next() == null);
+        }
+
+        try std.testing.expect(entities.getComponentChecked(e0, .x) == error.UseAfterFree);
+        try std.testing.expect(entities.getComponentChecked(e1, .x) == error.UseAfterFree);
+        try std.testing.expect(entities.getComponentChecked(e2, .x) == error.UseAfterFree);
+        try std.testing.expect(entities.getComponentChecked(e3, .x) == error.UseAfterFree);
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next() == null);
+        }
+    }
+
+    // Removing before starting or after finishing
+    {
+        var entities = try Entities(.{ .x = u32 }).init(allocator);
+        defer entities.deinit();
+
+        _ = entities.create(.{ .x = 0 });
+        _ = entities.create(.{ .x = 10 });
+        _ = entities.create(.{ .x = 20 });
+        _ = entities.create(.{ .x = 30 });
+
+        var iter = entities.iterator(.{.x});
+        try std.testing.expect(iter.swapRemoveChecked() == error.NothingToRemove);
+        for (0..5) |_| {
+            _ = iter.next();
+        }
+        try std.testing.expect(iter.swapRemoveChecked() == error.NothingToRemove);
+    }
+
+    // Removing last of first archetype
+    {
+        var entities = try Entities(.{ .x = u32, .y = void }).init(allocator);
+        defer entities.deinit();
+
+        const e0 = entities.create(.{ .x = 0 });
+        const e1 = entities.create(.{ .x = 10 });
+        const e2 = entities.create(.{ .x = 20, .y = {} });
+        const e3 = entities.create(.{ .x = 30, .y = {} });
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            iter.swapRemove();
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+        }
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next() == null);
+        }
+
+        try std.testing.expect(entities.getComponent(e0, .x).?.* == 0);
+        try std.testing.expect(entities.getComponentChecked(e1, .x) == error.UseAfterFree);
+        try std.testing.expect(entities.getComponent(e2, .x).?.* == 20);
+        try std.testing.expect(entities.getComponent(e3, .x).?.* == 30);
+    }
+
+    // Removing first of last archetype
+    {
+        var entities = try Entities(.{ .x = u32, .y = void }).init(allocator);
+        defer entities.deinit();
+
+        const e0 = entities.create(.{ .x = 0 });
+        const e1 = entities.create(.{ .x = 10 });
+        const e2 = entities.create(.{ .x = 20, .y = {} });
+        const e3 = entities.create(.{ .x = 30, .y = {} });
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            iter.swapRemove();
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+        }
+
+        {
+            var iter = entities.iterator(.{.x});
+            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next() == null);
+        }
+
+        try std.testing.expect(entities.getComponent(e0, .x).?.* == 0);
+        try std.testing.expect(entities.getComponent(e1, .x).?.* == 10);
+        try std.testing.expect(entities.getComponentChecked(e2, .x) == error.UseAfterFree);
+        try std.testing.expect(entities.getComponent(e3, .x).?.* == 30);
+    }
+
+    // XXX: what if we're in between archetype lists? does it work right there? i THINK so? but should test it...
+    // XXX: use in game!
 }
 
 // XXX: use testing allocator--i think i'm leaking memory right now. that's FINE since like we're gonna use
