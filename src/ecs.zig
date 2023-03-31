@@ -238,12 +238,12 @@ pub fn Entities(comptime registered_components: anytype) type {
             return handle;
         }
 
-        pub fn remove(self: *@This(), entity: Handle) void {
-            return self.removeChecked(entity) catch |err|
+        pub fn swapRemove(self: *@This(), entity: Handle) void {
+            return self.swapRemoveChecked(entity) catch |err|
                 std.debug.panic("failed to remove entity {}: {}", .{ entity, err });
         }
 
-        fn removeChecked(self: *@This(), entity: Handle) !void {
+        fn swapRemoveChecked(self: *@This(), entity: Handle) !void {
             const entity_pointer = try self.slot_map.remove(entity);
             entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.slot_map);
         }
@@ -473,7 +473,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 fn swapRemoveChecked(self: *@This()) !void {
                     if (self.archetype_list == null) return error.NothingToRemove;
                     _ = self.handle_iterator.prev();
-                    self.entities.removeChecked(self.handle_iterator.peek().?.*) catch unreachable;
+                    self.entities.swapRemoveChecked(self.handle_iterator.peek().?.*) catch unreachable;
                 }
 
                 pub fn swapRemove(self: *@This()) void {
@@ -778,7 +778,7 @@ test "zero-sized-component" {
 //     try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 3);
 //     try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 0);
 
-//     entities.remove(entity_1_0);
+//     entities.swapRemove(entity_1_0);
 
 //     try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
 //     try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
@@ -789,7 +789,7 @@ test "zero-sized-component" {
 //     try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 1);
 //     try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 0);
 
-//     entities.remove(entity_3_0);
+//     entities.swapRemove(entity_3_0);
 
 //     try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
 //     try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
@@ -844,7 +844,7 @@ test "limits" {
 
     // Remove all the entities
     while (created.popOrNull()) |entity| {
-        entities.remove(entity);
+        entities.swapRemove(entity);
     }
     // XXX: ...
     // try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
@@ -873,7 +873,7 @@ test "limits" {
     // {
     //     const entity = Handle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
     //     entities.slots[entity.index].generation = entity.generation;
-    //     entities.remove(entity);
+    //     entities.swapRemove(entity);
     //     try std.testing.expectEqual(
     //         Handle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
     //         entities.create(.{}),
@@ -887,9 +887,9 @@ test "safety" {
     defer entities.deinit();
 
     const entity = entities.create(.{});
-    entities.remove(entity);
-    try std.testing.expectError(error.DoubleFree, entities.removeChecked(entity));
-    try std.testing.expectError(error.OutOfBounds, entities.removeChecked(@TypeOf(entities).Handle{
+    entities.swapRemove(entity);
+    try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(entity));
+    try std.testing.expectError(error.OutOfBounds, entities.swapRemoveChecked(@TypeOf(entities).Handle{
         .index = 1,
         .generation = 0,
     }));
@@ -1098,7 +1098,7 @@ test "random data" {
                     if (truth.items.len > 0) {
                         const index = rnd.random().uintLessThan(usize, truth.items.len);
                         const removed = truth.orderedRemove(index);
-                        entities.remove(removed.handle);
+                        entities.swapRemove(removed.handle);
                     }
                 }
             },

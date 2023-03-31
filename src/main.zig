@@ -646,12 +646,12 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // XXX: increase cooldown_s?
                 if (gg.live) |live| {
                     for (live.joints) |piece| {
-                        entities.remove(piece);
+                        entities.swapRemove(piece);
                     }
                     for (live.springs) |piece| {
-                        entities.remove(piece);
+                        entities.swapRemove(piece);
                     }
-                    entities.remove(live.hook);
+                    entities.swapRemove(live.hook);
                     gg.live = null;
                 } else {
                     // XXX: behave sensibly if the ship that fired it dies...right now crashes cause
