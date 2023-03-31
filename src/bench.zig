@@ -1,8 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const ecs = @import("ecs.zig");
+const ecs = @import("ecs/index.zig");
 const MinimumAlignmentAllocator = @import("minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
-const Entities = ecs.Entities;
+const Entities = ecs.entities.Entities;
 
 pub fn main() !void {
     std.debug.print("ECS:\n", .{});
@@ -24,7 +24,7 @@ pub fn main() !void {
 
 fn benchEcs() !void {
     var pa = std.heap.page_allocator;
-    var buffer = try pa.alloc(u8, ecs.max_entities * 1024);
+    var buffer = try pa.alloc(u8, ecs.entities.max_entities * 1024);
     defer pa.free(buffer);
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
@@ -39,7 +39,7 @@ fn benchEcs() !void {
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Create entities
-    for (0..(ecs.max_entities - 1)) |_| {
+    for (0..(ecs.entities.max_entities - 1)) |_| {
         _ = entities.create(.{ .x = 24, .y = 12 });
     }
     _ = entities.create(.{ .x = 24, .y = 12, .z = 13 });
@@ -115,13 +115,13 @@ pub fn perfArrayList() !void {
     };
 
     var timer = try std.time.Timer.start();
-    var array = try std.ArrayList(Entity).initCapacity(allocator, ecs.max_entities);
+    var array = try std.ArrayList(Entity).initCapacity(allocator, ecs.entities.max_entities);
     defer array.deinit();
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Create entities
     _ = timer.lap();
-    for (0..(ecs.max_entities - 1)) |_| {
+    for (0..(ecs.entities.max_entities - 1)) |_| {
         array.appendAssumeCapacity(.{ .x = 24, .y = 12 });
     }
     array.appendAssumeCapacity(.{ .x = 24, .y = 12, .z = 13 });
@@ -186,13 +186,13 @@ pub fn benchMultiArrayList() !void {
 
     var timer = try std.time.Timer.start();
     var array = std.MultiArrayList(Entity){};
-    try array.setCapacity(allocator, ecs.max_entities);
+    try array.setCapacity(allocator, ecs.entities.max_entities);
     defer array.deinit(allocator);
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
 
     // Create entities
     _ = timer.lap();
-    for (0..(ecs.max_entities - 1)) |_| {
+    for (0..(ecs.entities.max_entities - 1)) |_| {
         array.appendAssumeCapacity(.{ .x = 24, .y = 12 });
     }
     array.appendAssumeCapacity(.{ .x = 24, .y = 12, .z = 13 });

@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const SegmentedListFirstShelfCount = @import("segmented_list.zig").SegmentedListFirstShelfCount;
-const SlotMap = @import("slot_map.zig").SlotMap;
+const SegmentedListFirstShelfCount = @import("../segmented_list.zig").SegmentedListFirstShelfCount;
+const SlotMap = @import("../slot_map.zig").SlotMap;
 
 const assert = std.debug.assert;
 

@@ -16,8 +16,8 @@ const display_center: V = .{
 };
 const display_radius = display_height / 2.0;
 
-const ecs = @import("ecs.zig");
-const Entities = ecs.Entities(.{
+const ecs = @import("ecs/index.zig");
+const Entities = ecs.entities.Entities(.{
     .damage = Damage,
     .ship = Ship,
     .rb = RigidBody,
@@ -88,7 +88,7 @@ pub fn main() !void {
 
     // Create initial entities
     var pa = std.heap.page_allocator;
-    var buffer = try pa.alloc(u8, ecs.max_entities * 1024);
+    var buffer = try pa.alloc(u8, ecs.entities.max_entities * 1024);
     defer pa.free(buffer);
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
