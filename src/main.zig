@@ -396,13 +396,13 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             // checking if an entity is valid or not a feature if there's not a bette way to handle this?
             var start = entities.getComponent(spring.start, .rb) orelse {
                 std.log.err("spring connections require rb, destroying spring entity", .{});
-                entities.remove(entity.handle);
+                it.swapRemove();
                 continue;
             };
 
             var end = entities.getComponent(spring.end, .rb) orelse {
                 std.log.err("spring connections require rb, destroying spring entity", .{});
-                entities.remove(entity.handle);
+                it.swapRemove();
                 continue;
             };
 
@@ -437,7 +437,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
 
             {
                 var ship_it = entities.iterator(.{ .health, .rb });
-                while (ship_it.next()) |damageable_entity| {
+                const destroy = while (ship_it.next()) |damageable_entity| {
                     const health = damageable_entity.comps.health;
                     const ship_rb = damageable_entity.comps.rb;
                     if (ship_rb.pos.distanceSqrd(rb.pos) <
@@ -469,10 +469,14 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                                 },
                             });
 
-                            entities.remove(damage_entity.handle);
-                            break;
+                            break true;
                         }
                     }
+                } else false;
+
+                if (destroy) {
+                    damage_it.swapRemove();
+                    continue;
                 }
             }
 
@@ -536,7 +540,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 }
 
                 // Destroy the entity
-                entities.remove(entity.handle);
+                it.swapRemove();
                 continue;
             }
 
@@ -741,7 +745,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
         while (it.next()) |entity| {
             const animation = entity.comps.animation;
             if (animation.destroys_entity and entity.comps.animation.index == .none) {
-                entities.remove(entity.handle);
+                it.swapRemove();
                 continue;
             }
         }
@@ -754,7 +758,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             const lifetime = entity.comps.lifetime;
             lifetime.seconds -= delta_s;
             if (lifetime.seconds <= 0) {
-                entities.remove(entity.handle);
+                it.swapRemove();
                 continue;
             }
         }
