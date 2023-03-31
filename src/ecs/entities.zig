@@ -111,7 +111,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
 
             // XXX: better api that returns pointers so don't have to recalculate them?
-            fn append(self: *@This(), allocator: Allocator, handle: Handle) !u32 {
+            fn append(self: *@This(), allocator: Allocator, handle: Handle) Allocator.Error!u32 {
                 // XXX: could optimize this logic a little since all lists are gonna match eachother, also
                 // only really need one size, etc
                 inline for (component_names, 0..) |comp_name, i| {
@@ -191,7 +191,8 @@ pub fn Entities(comptime registered_components: anytype) type {
         archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList),
 
         // The API
-        // TODO: need errdefers here, and maybe elsewhere too, for the allocations
+        // TODO: need errdefers here, and maybe elsewhere too, for the allocations. also make
+        // clear when failure changes state and when it doesn't (or just don't have it do that.)
         pub fn init(allocator: Allocator) Allocator.Error!@This() {
             return .{
                 .allocator = allocator,
@@ -232,7 +233,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
         }
 
-        pub fn createChecked(self: *@This(), components: anytype) !Handle {
+        pub fn createChecked(self: *@This(), components: anytype) Allocator.Error!Handle {
             const archetype = componentsArchetype(components);
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             const handle = try self.slot_map.create(undefined);
@@ -261,7 +262,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         // TODO: test errors
-        pub fn addComponentsChecked(self: *@This(), handle: Handle, components: anytype) !void {
+        pub fn addComponentsChecked(self: *@This(), handle: Handle, components: anytype) error{ UseAfterFree, OutOfMemory }!void {
             try self.changeArchetype(handle, components, .{});
         }
 
@@ -273,22 +274,21 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         // TODO: test errors
-        pub fn removeComponentsChecked(self: *@This(), handle: Handle, components: anytype) !void {
+        pub fn removeComponentsChecked(self: *@This(), handle: Handle, components: anytype) error{ UseAfterFree, OutOfMemory }!void {
             try self.changeArchetype(handle, .{}, components);
         }
 
-        fn getOrPutArchetypeList(self: *@This(), archetype: Archetype) !*ArchetypeList {
+        fn getOrPutArchetypeList(self: *@This(), archetype: Archetype) Allocator.Error!*ArchetypeList {
             comptime assert(max_archetypes > 0);
 
             const entry = self.archetype_lists.getOrPutAssumeCapacity(archetype);
 
             if (!entry.found_existing) {
-                // XXX: just do this with the allocator now? check once at the end of every frame for the halfway
-                // mark or whatever
+                // TODO: clean up?
+                // We actually have max + 1 avaialble to make it possible to check even after creation
+                // may have occurred via get or put.
                 if (self.archetype_lists.count() >= max_archetypes) {
-                    return error.OutOfArchetypes;
-                } else if (self.archetype_lists.count() == max_archetypes / 2) {
-                    std.log.warn("archetype map halfway depleted", .{});
+                    return error.OutOfMemory;
                 }
                 entry.value_ptr.* = ArchetypeList.init(archetype);
             }
@@ -344,7 +344,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             handle: Handle,
             add_components: anytype,
             remove_components: anytype,
-        ) !void {
+        ) error{ UseAfterFree, OutOfMemory }!void {
             // Determine our archetype bitsets
             const pointer = try self.slot_map.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
@@ -377,7 +377,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         // TODO: check assertions
-        pub fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentName) !?*component_types[@enumToInt(component)] {
+        pub fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentName) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
             // XXX: should it just return null from there or is that slower?
             const entity_pointer = try self.slot_map.get(entity);
             if (!entity_pointer.archetype_list.archetype.isSet(@enumToInt(component))) {
@@ -482,7 +482,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                     }
                 }
 
-                fn swapRemoveChecked(self: *@This()) !void {
+                fn swapRemoveChecked(self: *@This()) error{NothingToRemove}!void {
                     if (self.archetype_list == null) return error.NothingToRemove;
                     _ = self.handle_iterator.prev();
                     self.entities.swapRemoveChecked(self.handle_iterator.peek().?.*) catch unreachable;
@@ -929,7 +929,7 @@ test "limits" {
         try std.testing.expectEqual(Handle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 0 }, entity);
         try created.append(entity);
     }
-    try std.testing.expectError(error.AtCapacity, entities.createChecked(.{}));
+    try std.testing.expectError(error.OutOfMemory, entities.createChecked(.{}));
     // XXX: ...
     // const page_pool_size = entities.page_pool.items.len;
 
@@ -955,7 +955,7 @@ test "limits" {
             entities.create(.{}),
         );
     }
-    try std.testing.expectError(error.AtCapacity, entities.createChecked(.{}));
+    try std.testing.expectError(error.OutOfMemory, entities.createChecked(.{}));
     // XXX: ...
     // try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 

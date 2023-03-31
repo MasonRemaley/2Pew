@@ -55,7 +55,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
         }
 
         // Adds a new slot, leaving its item undefined.
-        fn addOne(self: *@This()) !Index {
+        fn addOne(self: *@This()) Allocator.Error!Index {
             if (self.free_list.len > 0) {
                 self.free_list.len -= 1;
                 return self.free_list.ptr[self.free_list.len];
@@ -65,7 +65,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
                 self.slots.len += 1;
                 return @intCast(Index, index);
             }
-            return error.AtCapacity;
+            return error.OutOfMemory;
         }
 
         pub fn create(self: *@This(), item: Item) !Handle {
@@ -156,7 +156,7 @@ test "slot map" {
     try testing.expect((try sm.get(d)).* == 'd');
     try testing.expect((try sm.get(e)).* == 'e');
 
-    try testing.expect(sm.create('f') == error.AtCapacity);
+    try testing.expect(sm.create('f') == error.OutOfMemory);
 
     try testing.expect(try sm.remove(c) == 'c');
     try testing.expect(try sm.remove(d) == 'd');
@@ -204,7 +204,7 @@ test "slot map" {
     }
     try testing.expectEqual(H{ .index = g.index, .generation = 0 }, temp);
 
-    try testing.expect(sm.create('h') == error.AtCapacity);
+    try testing.expect(sm.create('h') == error.OutOfMemory);
 
     sm.clearRetainingCapacity();
 

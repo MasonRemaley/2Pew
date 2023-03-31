@@ -3,8 +3,6 @@ const ecs = @import("index.zig");
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
-// XXX: test this or is it simple enough that it doesn't need it?
-// XXX: taking entities vs registered components?
 pub fn CommandBuffer(comptime Entities: anytype) type {
     const Prefab = Entities.Prefab;
     const Handle = Entities.Handle;
@@ -54,9 +52,9 @@ pub fn CommandBuffer(comptime Entities: anytype) type {
                 std.debug.panic("appendCreate failed: {}", .{err});
         }
 
-        pub fn appendCreateChecked(self: *@This(), prefab: Prefab) error{AtCapacity}!void {
+        pub fn appendCreateChecked(self: *@This(), prefab: Prefab) Allocator.Error!void {
             if (self.create.items.len >= self.create.capacity) {
-                return error.AtCapacity;
+                return error.OutOfMemory;
             }
             self.create.appendAssumeCapacity(prefab);
         }
@@ -66,25 +64,21 @@ pub fn CommandBuffer(comptime Entities: anytype) type {
                 std.debug.panic("appendRemove failed: {}", .{err});
         }
 
-        pub fn appendRemoveChecked(self: *@This(), handle: Handle) error{ AtCapacity, DoubleFree }!void {
+        pub fn appendRemoveChecked(self: *@This(), handle: Handle) error{ DoubleFree, OutOfMemory }!void {
             if (!self.entities.exists(handle)) {
                 return error.DoubleFree;
             }
             if (self.remove.items.len >= self.remove.capacity) {
-                return error.AtCapacity;
+                return error.OutOfMemory;
             }
             self.remove.appendAssumeCapacity(handle);
         }
 
-        // XXX: errors should be checked on add not on execute! on execute other stuff could've happened
-        // e.g. if multi threaded and wanna let it siletnly work out since it'll be the same either way
-        // XXX: annotate which errors?
-        pub fn executeChecked(self: *@This()) !void {
+        pub fn executeChecked(self: *@This()) Allocator.Error!void {
             for (self.remove.items) |handle| {
                 self.entities.swapRemoveChecked(handle) catch |err| switch (err) {
                     // We already checked for this error when the command was added, so we ignore it
                     // here since another thread could have queued up a delete before execution.
-                    // XXX: required even if not annoated right?
                     error.DoubleFree => {},
                 };
             }
