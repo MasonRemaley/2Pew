@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const math = std.math;
 const V = @import("Vec2d.zig");
 const FieldEnum = std.meta.FieldEnum;
+const MinimumAlignmentAllocator = @import("minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
 
 const display_width = 1920;
 const display_height = 1080;
@@ -32,7 +33,7 @@ const Entities = ecs.Entities(.{
     .hook = Hook,
     .front_shield = struct {},
 });
-const EntityHandle = ecs.EntityHandle;
+const EntityHandle = Entities.Handle;
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
 // screen including this, the number of live entities, etc. We also want warnings/errors to show up
@@ -86,8 +87,13 @@ pub fn main() !void {
     var game = try Game.init(&assets);
 
     // Create initial entities
-    var entities = try Entities.init(gpa);
-    defer entities.deinit(gpa);
+    var pa = std.heap.page_allocator;
+    var buffer = try pa.alloc(u8, ecs.max_entities * 1024);
+    defer pa.free(buffer);
+    var fba = std.heap.FixedBufferAllocator.init(buffer);
+    var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
+    var entities = try Entities.init(maa.allocator());
+    defer entities.deinit();
 
     game.setupScenario(&entities, .deathmatch_2v2);
 
@@ -101,6 +107,7 @@ pub fn main() !void {
     // less digits after the decimal and still loop seemlessly when we reset back to zero.
     var fx_loop_s: f32 = 0.0;
     const max_fx_loop_s: f32 = 1000.0;
+    var warned_memory_usage = false;
 
     while (true) {
         if (poll(&entities, &game)) return;
@@ -116,7 +123,16 @@ pub fn main() !void {
         var last_delta_s = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
         delta_s = lerp(delta_s, std.math.min(last_delta_s, max_frame_time), delta_rwa_bias);
         fx_loop_s = @mod(fx_loop_s + delta_s, max_fx_loop_s);
-        if (profile) std.debug.print("{d}ms\n", .{last_delta_s * 1000.0});
+        if (profile) {
+            std.debug.print("frame time: {d}ms ", .{last_delta_s * 1000.0});
+            std.debug.print("entity memory: {}/{}mb ", .{ fba.end_index / (1024 * 1024), fba.buffer.len / (1024 * 1024) });
+            std.debug.print("\n", .{});
+        }
+
+        if (fba.end_index >= fba.buffer.len / 4 and !warned_memory_usage) {
+            std.log.warn(">= 25% of entity memory has been used, consider increasing the size of the fixed buffer allocator", .{});
+            warned_memory_usage = true;
+        }
     }
 }
 

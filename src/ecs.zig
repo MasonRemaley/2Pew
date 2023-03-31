@@ -29,17 +29,18 @@ pub fn Entities(comptime componentTypes: anytype) type {
             index: u32,
         };
 
-        pub const EntityHandle = HandleSlotMap.Handle;
+        pub const Handle = HandleSlotMap.Handle;
         pub const Component = FieldEnum(Entity);
 
         // `Archetype` is a bit set with a bit for each component type.
         const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
 
-        // XXX: sorting based on size no longer matters for these!
+        // XXX: why even declare this, just iterate over the stuff passed in?? we can probably make
+        // the errors for bad component names nicer too
         // `Entity` has a field for every possible component type. This is for convenience, it is
         // not used at runtime. Fields are sorted from greatest to least alignment, see `PageHeader` for
         // rational.
-        pub const Entity = entity: {
+        const Entity = entity: {
             const component_names = @typeInfo(@TypeOf(componentTypes)).Struct.fields;
             var fields: [component_names.len]Type.StructField = undefined;
             for (component_names, 0..) |component_name, i| {
@@ -51,12 +52,6 @@ pub fn Entities(comptime componentTypes: anytype) type {
                     .alignment = @alignOf(component_name.type),
                 };
             }
-            const AlignmentDescending = struct {
-                fn lessThan(_: void, comptime lhs: Type.StructField, comptime rhs: Type.StructField) bool {
-                    return @alignOf(rhs.type) < @alignOf(lhs.type);
-                }
-            };
-            std.sort.sort(Type.StructField, &fields, {}, AlignmentDescending.lessThan);
             break :entity @Type(Type{
                 .Struct = Type.Struct{
                     .layout = .Auto,
@@ -68,6 +63,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             });
         };
 
+        // TODO: how many places do we generate a new type from entity? might wanna make a helper for this?
         pub const Prefab = prefab: {
             const component_types = @typeInfo(Entity).Struct.fields;
             var fields: [component_types.len]Type.StructField = undefined;
@@ -119,7 +115,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             };
 
             // A segmented list for each component.
-            handles: SegmentedListFirstShelfCount(EntityHandle, first_shelf_count, false) = .{},
+            handles: SegmentedListFirstShelfCount(Handle, first_shelf_count, false) = .{},
             comps: Components = .{},
             archetype: Archetype,
             // XXX: this as a type?
@@ -140,7 +136,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
 
             // XXX: better api that returns pointers so don't have to recalculate them?
-            fn createEntity(self: *@This(), allocator: Allocator, handle: EntityHandle) !u32 {
+            fn append(self: *@This(), allocator: Allocator, handle: Handle) !u32 {
                 // XXX: could optimize this logic a little since all lists are gonna match eachother, also
                 // only really need one size, etc
                 // XXX: self.archetype vs making these nullable?
@@ -161,7 +157,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // XXX: put in (debug mode?) protection to prevent doing this while iterating? same for creating?
             // XXX: document that the ecs moves structures (so e.g. internal pointers will get invalidated). this
             // was already true but only happened when changing shape before which is less commonly done.
-            fn removeEntity(self: *ArchetypeList, index: u32, slot_map: *HandleSlotMap) void {
+            fn swapRemove(self: *ArchetypeList, index: u32, slot_map: *HandleSlotMap) void {
                 // XXX: instead of separate len use handles len? or fold all into same thing eventually anyway..?
                 // XXX: only needed in debug mode right?
                 assert(index < self.len);
@@ -199,9 +195,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return @field(self.comps, std.meta.fieldInfo(Entity, componentField).name).iterator(0);
             }
 
-            // XXX: do we still need invalid handles or no? (if so do it the better way where zig's type system
-            // knows about it...)
-            const HandleIterator = SegmentedListFirstShelfCount(EntityHandle, first_shelf_count, false).Iterator;
+            const HandleIterator = SegmentedListFirstShelfCount(Handle, first_shelf_count, false).Iterator;
 
             fn handleIterator(self: *@This()) HandleIterator {
                 return self.handles.iterator(0);
@@ -212,7 +206,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 return @field(self.comps, std.meta.fieldInfo(Entity, componentField).name).uncheckedAt(index);
             }
 
-            fn getHandle(self: *@This(), index: u32) EntityHandle {
+            fn getHandle(self: *@This(), index: u32) Handle {
                 // XXX: unchecked is correct right? assert in debug mode or no?
                 return self.handles.uncheckedAt(index);
             }
@@ -245,7 +239,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             self.archetype_lists.deinit(self.allocator);
         }
 
-        pub fn create(self: *@This(), entity: anytype) EntityHandle {
+        pub fn create(self: *@This(), entity: anytype) Handle {
             return self.createChecked(entity) catch |err|
                 std.debug.panic("failed to create entity: {}", .{err});
         }
@@ -263,48 +257,48 @@ pub fn Entities(comptime componentTypes: anytype) type {
             }
         }
 
-        pub fn createChecked(self: *@This(), components: anytype) !EntityHandle {
+        pub fn createChecked(self: *@This(), components: anytype) !Handle {
             const archetype = componentsArchetype(components);
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             const handle = try self.slot_map.create(undefined);
             const pointer = self.slot_map.getUnchecked(handle);
             pointer.* = EntityPointer{
                 .archetype_list = archetype_list,
-                .index = try archetype_list.createEntity(self.allocator, handle),
+                .index = try archetype_list.append(self.allocator, handle),
             };
             setComponents(pointer, &components);
             return handle;
         }
 
-        pub fn remove(self: *@This(), entity: EntityHandle) void {
+        pub fn remove(self: *@This(), entity: Handle) void {
             return self.removeChecked(entity) catch |err|
                 std.debug.panic("failed to remove entity {}: {}", .{ entity, err });
         }
 
-        fn removeChecked(self: *@This(), entity: EntityHandle) !void {
+        fn removeChecked(self: *@This(), entity: Handle) !void {
             const entity_pointer = try self.slot_map.remove(entity);
-            entity_pointer.archetype_list.removeEntity(entity_pointer.index, &self.slot_map);
+            entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.slot_map);
         }
 
-        pub fn addComponents(self: *@This(), entity: EntityHandle, components: anytype) void {
+        pub fn addComponents(self: *@This(), entity: Handle, components: anytype) void {
             self.addComponentsChecked(entity, components) catch |err|
                 std.debug.panic("failed to add components: {}", .{err});
         }
 
         // TODO: test errors
-        fn addComponentsChecked(self: *@This(), handle: EntityHandle, components: anytype) !void {
+        fn addComponentsChecked(self: *@This(), handle: Handle, components: anytype) !void {
             try self.changeArchetype(handle, components, .{});
         }
 
         // TODO: return a bool indicating if it was present or no? also we could have a faster
         // hasComponents check for when you don't need the actual data?
-        pub fn removeComponents(self: *@This(), entity: EntityHandle, components: anytype) void {
+        pub fn removeComponents(self: *@This(), entity: Handle, components: anytype) void {
             self.removeComponentsChecked(entity, components) catch |err|
                 std.debug.panic("failed to remove components: {}", .{err});
         }
 
         // TODO: test errors
-        fn removeComponentsChecked(self: *@This(), handle: EntityHandle, components: anytype) !void {
+        fn removeComponentsChecked(self: *@This(), handle: Handle, components: anytype) !void {
             try self.changeArchetype(handle, .{}, components);
         }
 
@@ -372,7 +366,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         // TODO: make remove_components comptime?
         fn changeArchetype(
             self: *@This(),
-            handle: EntityHandle,
+            handle: Handle,
             add_components: anytype,
             remove_components: anytype,
         ) !void {
@@ -391,7 +385,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             pointer.* = .{
                 .archetype_list = archetype_list,
-                .index = try archetype_list.createEntity(self.allocator, handle),
+                .index = try archetype_list.append(self.allocator, handle),
             };
 
             // Set the component data at the new location
@@ -399,11 +393,11 @@ pub fn Entities(comptime componentTypes: anytype) type {
             setComponents(pointer, &add_components);
 
             // Delete the old data
-            old_pointer.archetype_list.removeEntity(old_pointer.index, &self.slot_map);
+            old_pointer.archetype_list.swapRemove(old_pointer.index, &self.slot_map);
         }
 
         // TODO: check assertions
-        fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: Component) !?*std.meta.fieldInfo(Entity, component).type {
+        fn getComponentChecked(self: *@This(), entity: Handle, comptime component: Component) !?*std.meta.fieldInfo(Entity, component).type {
             // XXX: should it just return null from there or is that slower?
             const entity_pointer = try self.slot_map.get(entity);
             if (!entity_pointer.archetype_list.archetype.isSet(@enumToInt(component))) {
@@ -412,7 +406,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
 
-        pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: Component) ?*std.meta.fieldInfo(Entity, component).type {
+        pub fn getComponent(self: *@This(), entity: Handle, comptime component: Component) ?*std.meta.fieldInfo(Entity, component).type {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
@@ -447,7 +441,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
                 // TODO: maybe have a getter on the iterator for the handle since that's less often used instead of returning it here?
                 const Item = struct {
-                    handle: EntityHandle,
+                    handle: Handle,
                     comps: Components,
                 };
 
@@ -545,13 +539,13 @@ test "zero-sized-component" {
 //     defer entities.deinit();
 
 //     const entity_0_0 = entities.create(.{});
-//     try std.testing.expectEqual(entity_0_0, EntityHandle{ .index = 0, .generation = 0 });
+//     try std.testing.expectEqual(entity_0_0, Handle{ .index = 0, .generation = 0 });
 //     const entity_1_0 = entities.create(.{});
-//     try std.testing.expectEqual(entity_1_0, EntityHandle{ .index = 1, .generation = 0 });
+//     try std.testing.expectEqual(entity_1_0, Handle{ .index = 1, .generation = 0 });
 //     const entity_2_0 = entities.create(.{});
-//     try std.testing.expectEqual(entity_2_0, EntityHandle{ .index = 2, .generation = 0 });
+//     try std.testing.expectEqual(entity_2_0, Handle{ .index = 2, .generation = 0 });
 //     const entity_3_0 = entities.create(.{});
-//     try std.testing.expectEqual(entity_3_0, EntityHandle{ .index = 3, .generation = 0 });
+//     try std.testing.expectEqual(entity_3_0, Handle{ .index = 3, .generation = 0 });
 
 //     try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
 //     try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
@@ -611,15 +605,15 @@ test "limits" {
 
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{}).init(allocator);
-    const EntityHandle = @TypeOf(entities).EntityHandle;
+    const Handle = @TypeOf(entities).Handle;
     defer entities.deinit();
-    var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
+    var created = std.ArrayList(Handle).init(std.testing.allocator);
     defer created.deinit();
 
     // Add the max number of entities
     for (0..max_entities) |i| {
         const entity = entities.create(.{});
-        try std.testing.expectEqual(EntityHandle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 0 }, entity);
+        try std.testing.expectEqual(Handle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 0 }, entity);
         try created.append(entity);
     }
     try std.testing.expectError(error.AtCapacity, entities.createChecked(.{}));
@@ -644,7 +638,7 @@ test "limits" {
     // Create a bunch of entities again
     for (0..max_entities) |i| {
         try std.testing.expectEqual(
-            EntityHandle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 1 },
+            Handle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 1 },
             entities.create(.{}),
         );
     }
@@ -655,11 +649,11 @@ test "limits" {
     // XXX: update this test or no since we have it externally?
     // // Wrap a generation counter
     // {
-    //     const entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
+    //     const entity = Handle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
     //     entities.slots[entity.index].generation = entity.generation;
     //     entities.remove(entity);
     //     try std.testing.expectEqual(
-    //         EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
+    //         Handle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
     //         entities.create(.{}),
     //     );
     // }
@@ -673,7 +667,7 @@ test "safety" {
     const entity = entities.create(.{});
     entities.remove(entity);
     try std.testing.expectError(error.DoubleFree, entities.removeChecked(entity));
-    try std.testing.expectError(error.OutOfBounds, entities.removeChecked(@TypeOf(entities).EntityHandle{
+    try std.testing.expectError(error.OutOfBounds, entities.removeChecked(@TypeOf(entities).Handle{
         .index = 1,
         .generation = 0,
     }));
@@ -693,7 +687,7 @@ test "random data" {
     };
     const Created = struct {
         data: Data,
-        handle: E.EntityHandle,
+        handle: E.Handle,
     };
 
     var rnd = std.rand.DefaultPrng.init(0);
@@ -909,13 +903,13 @@ test "random data" {
 
         // Test that iterators are working properly
         {
-            var truth_xyz = std.AutoArrayHashMap(E.EntityHandle, Data).init(std.testing.allocator);
+            var truth_xyz = std.AutoArrayHashMap(E.Handle, Data).init(std.testing.allocator);
             defer truth_xyz.deinit();
-            var truth_xz = std.AutoArrayHashMap(E.EntityHandle, Data).init(std.testing.allocator);
+            var truth_xz = std.AutoArrayHashMap(E.Handle, Data).init(std.testing.allocator);
             defer truth_xz.deinit();
-            var truth_y = std.AutoArrayHashMap(E.EntityHandle, Data).init(std.testing.allocator);
+            var truth_y = std.AutoArrayHashMap(E.Handle, Data).init(std.testing.allocator);
             defer truth_y.deinit();
-            var truth_all = std.AutoArrayHashMap(E.EntityHandle, Data).init(std.testing.allocator);
+            var truth_all = std.AutoArrayHashMap(E.Handle, Data).init(std.testing.allocator);
             defer truth_all.deinit();
 
             for (truth.items) |entity| {

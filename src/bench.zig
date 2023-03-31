@@ -33,7 +33,7 @@ fn benchEcs() !void {
     // Init
     var timer = try std.time.Timer.start();
     var entities = try Entities(.{ .x = u128, .y = u256, .z = u128 }).init(allocator);
-    const EntityHandle = @TypeOf(entities).EntityHandle;
+    const EntityHandle = @TypeOf(entities).Handle;
 
     defer entities.deinit();
     std.debug.print("\tinit: {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
