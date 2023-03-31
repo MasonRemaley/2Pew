@@ -86,38 +86,35 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
         }
 
         pub fn remove(self: *@This(), handle: Handle) error{DoubleFree}!Item {
-            // TODO: do we have to check this? may already be handled!
-            if (handle.index >= self.slots.len) {
-                // This can occur if we cleared the slot map previously.
+            if (!self.exists(handle)) {
                 return error.DoubleFree;
             }
 
-            if (self.slots[handle.index].generation != handle.generation) {
-                return error.DoubleFree;
-            }
-
+            // TODO: does .ptr do what I think it does?
             if (self.free_list.len >= capacity) {
                 // This could happen if the generation counter fails to prevent a double free due to
                 // being wrapped (most likely if we've turned off that safety by setting it to a u0.)
                 return error.DoubleFree;
             }
-
-            self.incrementGeneration(handle.index);
-
-            // TODO: does .ptr do what I think it does?
             self.free_list.ptr[self.free_list.len] = handle.index;
             self.free_list.len += 1;
+
+            self.incrementGeneration(handle.index);
 
             return self.slots.ptr[handle.index].item;
         }
 
-        pub fn get(self: *const @This(), handle: Handle) error{UseAfterFree}!*Item {
+        pub fn exists(self: *const @This(), handle: Handle) bool {
             if (handle.index >= self.slots.len) {
                 // This can occur if we cleared the slot map previously.
-                return error.UseAfterFree;
+                return false;
             }
 
-            if (self.slots[handle.index].generation != handle.generation) {
+            return self.slots[handle.index].generation == handle.generation;
+        }
+
+        pub fn get(self: *const @This(), handle: Handle) error{UseAfterFree}!*Item {
+            if (!self.exists(handle)) {
                 return error.UseAfterFree;
             }
 

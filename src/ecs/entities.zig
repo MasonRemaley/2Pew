@@ -99,7 +99,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             // XXX: this as a type?
             // len: HandleSlotMap.Index,
 
-            fn init(archetype: Archetype) !ArchetypeList {
+            fn init(archetype: Archetype) ArchetypeList {
                 return .{ .archetype = archetype };
             }
 
@@ -192,7 +192,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         // The API
         // TODO: need errdefers here, and maybe elsewhere too, for the allocations
-        pub fn init(allocator: Allocator) !@This() {
+        pub fn init(allocator: Allocator) Allocator.Error!@This() {
             return .{
                 .allocator = allocator,
                 .slot_map = try HandleSlotMap.init(allocator),
@@ -250,7 +250,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 std.debug.panic("failed to remove entity {}: {}", .{ entity, err });
         }
 
-        fn swapRemoveChecked(self: *@This(), entity: Handle) !void {
+        pub fn swapRemoveChecked(self: *@This(), entity: Handle) error{DoubleFree}!void {
             const entity_pointer = try self.slot_map.remove(entity);
             entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.slot_map);
         }
@@ -261,7 +261,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         // TODO: test errors
-        fn addComponentsChecked(self: *@This(), handle: Handle, components: anytype) !void {
+        pub fn addComponentsChecked(self: *@This(), handle: Handle, components: anytype) !void {
             try self.changeArchetype(handle, components, .{});
         }
 
@@ -273,7 +273,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         // TODO: test errors
-        fn removeComponentsChecked(self: *@This(), handle: Handle, components: anytype) !void {
+        pub fn removeComponentsChecked(self: *@This(), handle: Handle, components: anytype) !void {
             try self.changeArchetype(handle, .{}, components);
         }
 
@@ -290,7 +290,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 } else if (self.archetype_lists.count() == max_archetypes / 2) {
                     std.log.warn("archetype map halfway depleted", .{});
                 }
-                entry.value_ptr.* = try ArchetypeList.init(archetype);
+                entry.value_ptr.* = ArchetypeList.init(archetype);
             }
 
             return entry.value_ptr;
@@ -371,8 +371,13 @@ pub fn Entities(comptime registered_components: anytype) type {
             old_pointer.archetype_list.swapRemove(old_pointer.index, &self.slot_map);
         }
 
+        // XXX: make api clearer wrt generations, test?
+        pub fn exists(self: *@This(), handle: Handle) bool {
+            return self.slot_map.exists(handle);
+        }
+
         // TODO: check assertions
-        fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentName) !?*component_types[@enumToInt(component)] {
+        pub fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentName) !?*component_types[@enumToInt(component)] {
             // XXX: should it just return null from there or is that slower?
             const entity_pointer = try self.slot_map.get(entity);
             if (!entity_pointer.archetype_list.archetype.isSet(@enumToInt(component))) {

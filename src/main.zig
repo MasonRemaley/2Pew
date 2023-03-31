@@ -34,6 +34,7 @@ const Entities = ecs.entities.Entities(.{
     .front_shield = struct {},
 });
 const EntityHandle = Entities.Handle;
+const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
 // screen including this, the number of live entities, etc. We also want warnings/errors to show up
@@ -92,8 +93,15 @@ pub fn main() !void {
     defer pa.free(buffer);
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
-    var entities = try Entities.init(maa.allocator());
+    const allocator = maa.allocator();
+    var entities = try Entities.init(allocator);
     defer entities.deinit();
+
+    var command_buffer = try CommandBuffer.init(allocator, &entities, .{
+        .create_capacity = 8192,
+        .remove_capacity = 8192,
+    });
+    defer command_buffer.deinit(allocator);
 
     game.setupScenario(&entities, .deathmatch_2v2);
 
@@ -111,7 +119,7 @@ pub fn main() !void {
 
     while (true) {
         if (poll(&entities, &game)) return;
-        update(&entities, &game, delta_s);
+        update(&entities, &command_buffer, &game, delta_s);
         render(assets, &entities, game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get supririsng floating point
@@ -169,7 +177,12 @@ fn poll(entities: *Entities, game: *Game) bool {
     return false;
 }
 
-fn update(entities: *Entities, game: *Game, delta_s: f32) void {
+fn update(
+    entities: *Entities,
+    command_buffer: *CommandBuffer,
+    game: *Game,
+    delta_s: f32,
+) void {
     // Update input
     {
         var it = entities.iterator(.{.input});
@@ -298,7 +311,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                     const base_vel = if (std.crypto.random.boolean()) rb.vel else other.rb.vel;
                     const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
-                    _ = entities.create(.{
+                    command_buffer.appendCreate(.{
                         .lifetime = .{
                             .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
                         },
@@ -450,7 +463,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                             ];
                             const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                                 .scaled(rb.vel.length() * 0.2);
-                            _ = entities.create(.{
+                            command_buffer.appendCreate(.{
                                 .lifetime = .{
                                     .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
                                 },
@@ -494,7 +507,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             if (health.hp <= 0) {
                 // spawn explosion here
                 if (entities.getComponent(entity.handle, .rb)) |rb| {
-                    _ = entities.create(.{
+                    command_buffer.appendCreate(.{
                         .lifetime = .{
                             .seconds = 100,
                         },
@@ -603,7 +616,7 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                         vel = V.zero;
                         sprite = game.bullet_shiny;
                     }
-                    _ = entities.create(.{
+                    command_buffer.appendCreate(.{
                         .damage = .{
                             .hp = turret.projectile_damage,
                         },
@@ -646,12 +659,12 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
                 // XXX: increase cooldown_s?
                 if (gg.live) |live| {
                     for (live.joints) |piece| {
-                        entities.swapRemove(piece);
+                        command_buffer.appendRemove(piece);
                     }
                     for (live.springs) |piece| {
-                        entities.swapRemove(piece);
+                        command_buffer.appendRemove(piece);
                     }
-                    entities.swapRemove(live.hook);
+                    command_buffer.appendRemove(live.hook);
                     gg.live = null;
                 } else {
                     // XXX: behave sensibly if the ship that fired it dies...right now crashes cause
@@ -763,6 +776,9 @@ fn update(entities: *Entities, game: *Game, delta_s: f32) void {
             }
         }
     }
+
+    command_buffer.execute();
+    command_buffer.clearRetainingCapacity();
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
