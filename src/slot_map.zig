@@ -63,12 +63,13 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
         }
 
         pub fn create(self: *@This(), item: Item) Handle {
-            return self.createChecked(item) orelse
-                std.debug.panic("create failed: slot map full", .{});
+            return self.createChecked(item) catch |err|
+                std.debug.panic("create failed: {}", .{err});
         }
 
-        pub fn createChecked(self: *@This(), item: Item) ?Handle {
-            const index = self.addSlot() orelse return null;
+        pub fn createChecked(self: *@This(), item: Item) !Handle {
+            const index = self.addSlot() orelse
+                return error.AtCapacity;
             const slot = &self.slots[index];
             slot.item = item;
             return .{
@@ -77,12 +78,12 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             };
         }
 
-        pub fn remove(self: *@This(), handle: Handle) void {
-            self.removeChecked(handle) catch |err|
+        pub fn remove(self: *@This(), handle: Handle) Item {
+            return self.removeChecked(handle) catch |err|
                 std.debug.panic("remove failed: {}", .{err});
         }
 
-        pub fn removeChecked(self: *@This(), handle: Handle) error{ DoubleFree, OutOfBounds }!void {
+        pub fn removeChecked(self: *@This(), handle: Handle) error{ DoubleFree, OutOfBounds }!Item {
             // TODO: do we have to check this? may already be handled!
             if (handle.index >= self.slots.len) {
                 return error.OutOfBounds;
@@ -92,15 +93,22 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
                 return error.DoubleFree;
             }
 
+            if (self.free_list.len >= capacity) {
+                // This could happen if the generation counter fails to prevent a double free due to
+                // being wrapped (most likely if we've turned off that safety by setting it to a u0.)
+                return error.DoubleFree;
+            }
+
             if (Generation != u0) {
                 // TODO: support throwing it out when it wraps as well
                 self.slots[handle.index].generation +%= 1;
             }
 
-            assert(self.free_list.len < capacity);
             // TODO: does .ptr do what I think it does?
             self.free_list.ptr[self.free_list.len] = handle.index;
             self.free_list.len += 1;
+
+            return self.slots.ptr[handle.index].item;
         }
 
         // TODO: do we need an unchecked at or no?
@@ -144,10 +152,10 @@ test "slot map" {
     try testing.expect(sm.get(d).* == 'd');
     try testing.expect(sm.get(e).* == 'e');
 
-    try testing.expect(sm.createChecked('f') == null);
+    try testing.expect(sm.createChecked('f') == error.AtCapacity);
 
-    sm.remove(c);
-    sm.remove(d);
+    try testing.expect(sm.remove(c) == 'c');
+    try testing.expect(sm.remove(d) == 'd');
 
     try testing.expect(sm.removeChecked(c) == error.DoubleFree);
     try testing.expect(sm.removeChecked(d) == error.DoubleFree);
@@ -187,8 +195,10 @@ test "slot map" {
 
     var temp = g;
     for (0..255) |_| {
-        sm.remove(temp);
-        temp = sm.create('t');
+        try testing.expect(sm.remove(temp) == 'g');
+        temp = sm.create('g');
     }
     try testing.expectEqual(H{ .index = g.index, .generation = 0 }, temp);
+
+    try testing.expect(sm.createChecked('h') == error.AtCapacity);
 }

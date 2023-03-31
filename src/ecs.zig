@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const SegmentedListFirstShelfCount = @import("segmented_list.zig").SegmentedListFirstShelfCount;
+const SlotMap = @import("slot_map.zig").SlotMap;
 
 const assert = std.debug.assert;
 
@@ -11,23 +12,16 @@ const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const ArrayListAlignedUnmanaged = std.ArrayListAlignedUnmanaged;
 const Type = std.builtin.Type;
 
-const SlotIndex = u32;
 const EntityGeneration = switch (builtin.mode) {
     .Debug, .ReleaseSafe => u32,
     .ReleaseSmall, .ReleaseFast => u0,
 };
 
-pub const max_entities: SlotIndex = 1000000;
-const invalid_entity_index = std.math.maxInt(SlotIndex);
+pub const max_entities: u32 = 1000000;
 const page_size = 4096;
 
 const max_pages = max_entities / 32;
 const max_archetypes = 40000;
-
-pub const EntityHandle = struct {
-    index: SlotIndex,
-    generation: EntityGeneration,
-};
 
 pub fn Entities(comptime componentTypes: anytype) type {
     return struct {
@@ -35,6 +29,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         // `Archetype` is a bit set with a bit for each component type.
         const Archetype: type = std.bit_set.IntegerBitSet(@typeInfo(Entity).Struct.fields.len);
+
+        const HandleSlotMap = SlotMap(EntityPointer, max_entities, EntityGeneration);
+        pub const EntityHandle = HandleSlotMap.Handle;
 
         // XXX: sorting based on size no longer matters for these!
         // `Entity` has a field for every possible component type. This is for convenience, it is
@@ -92,17 +89,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
             });
         };
 
-        // XXX: temp for refactor
+        // XXX: naming?
         const EntityPointer = struct {
             archetype_list: *ArchetypeList,
             index: u32,
-        };
-
-        // Each entity handle points to a slot which in turn points to the actual entity data.
-        // This indirection allows the actual data to move without invalidating the handle.
-        const EntitySlot = struct {
-            generation: EntityGeneration,
-            entity_pointer: EntityPointer,
         };
 
         const first_shelf_count = 8;
@@ -138,7 +128,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             comps: Components = .{},
             archetype: Archetype,
             // XXX: this as a type?
-            len: SlotIndex,
+            len: HandleSlotMap.Index,
 
             fn init(archetype: Archetype) !ArchetypeList {
                 return .{
@@ -176,7 +166,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             // XXX: put in (debug mode?) protection to prevent doing this while iterating? same for creating?
             // XXX: document that the ecs moves structures (so e.g. internal pointers will get invalidated). this
             // was already true but only happened when changing shape before which is less commonly done.
-            fn removeEntity(self: *ArchetypeList, index: u32, slots: *[]EntitySlot) void {
+            fn removeEntity(self: *ArchetypeList, index: u32, slot_map: *HandleSlotMap) void {
                 // XXX: instead of separate len use handles len? or fold all into same thing eventually anyway..?
                 // XXX: only needed in debug mode right?
                 assert(index < self.len);
@@ -196,8 +186,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 // make this less error prone? maybe in general don't do logic when last one, or return stuff to
                 // be used outside to avoid probme based on order, etc
                 if (index != self.handles.len) {
-                    // XXX: don't need to check generation, always checked at public interface right?
-                    slots.*[moved_handle.index].entity_pointer.index = index;
+                    // XXX: don't need to check generation, always checked at public interface right? check in debug mode or no?
+                    slot_map.slots[moved_handle.index].item.index = index;
                 }
                 self.len -= 1;
             }
@@ -235,24 +225,14 @@ pub fn Entities(comptime componentTypes: anytype) type {
 
         // XXX: any easy way to encapsulate this? i guess into the slot map pattern or what?
         allocator: Allocator,
-        slots: []EntitySlot,
-        free_slot_indices: []SlotIndex,
+        slot_map: HandleSlotMap,
         archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList),
 
         // TODO: need errdefers here, and maybe elsewhere too, for the allocations
         pub fn init(allocator: Allocator) !@This() {
             return .{
                 .allocator = allocator,
-                .slots = entities: {
-                    var entities = try allocator.alloc(EntitySlot, max_entities);
-                    entities.len = 0;
-                    break :entities entities;
-                },
-                .free_slot_indices = free_slot_indices: {
-                    var free_slot_indices = try allocator.alloc(SlotIndex, max_entities);
-                    free_slot_indices.len = 0;
-                    break :free_slot_indices free_slot_indices;
-                },
+                .slot_map = try HandleSlotMap.init(allocator),
                 .archetype_lists = archetype_lists: {
                     var archetype_lists = AutoArrayHashMapUnmanaged(Archetype, ArchetypeList){};
                     // We leave room for one extra because we don't know whether or not getOrPut
@@ -264,8 +244,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         pub fn deinit(self: *@This()) void {
-            self.allocator.free(self.slots);
-            self.allocator.free(self.free_slot_indices);
+            self.slot_map.deinit(self.allocator);
             for (self.archetype_lists.values()) |*archetype_list| {
                 archetype_list.deinit(self.allocator);
             }
@@ -278,38 +257,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         pub fn createChecked(self: *@This(), components: anytype) !EntityHandle {
-            // Find a free index for the entity
-            const index = index: {
-                if (self.free_slot_indices.len > 0) {
-                    // Pop an id from the free list
-                    const top = self.free_slot_indices.len - 1;
-                    const index = self.free_slot_indices[top];
-                    self.free_slot_indices.len = top;
-                    break :index index;
-                } else if (self.slots.len < max_entities) {
-                    if (self.slots.len == max_entities / 2) {
-                        // XXX: why does this only show up in debug builds of bench?
-                        std.log.warn("entity slots halfway depleted", .{});
-                    }
-                    // Add a new entity to the end of the list
-                    const top = self.slots.len;
-                    self.slots.len += 1;
-                    self.slots[top] = .{
-                        .generation = 0,
-                        .entity_pointer = undefined,
-                    };
-                    break :index @intCast(SlotIndex, top);
-                } else {
-                    return error.OutOfEntities;
-                }
-            };
-
-            const entity = EntityHandle{
-                .index = index,
-                .generation = self.slots[index].generation,
-            };
-
-            return try self.setArchetype(entity, components, .{}, true);
+            const handle = try self.slot_map.createChecked(undefined);
+            const entity_pointer = &self.slot_map.slots[handle.index].item;
+            try self.setArchetype(handle, entity_pointer, components, .{}, true);
+            return handle;
         }
 
         pub fn remove(self: *@This(), entity: EntityHandle) void {
@@ -318,35 +269,8 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         fn removeChecked(self: *@This(), entity: EntityHandle) !void {
-            // Check that the entity is valid. These should be assertions, but I've made them error
-            // codes for easier unit testing.
-            if (entity.index >= self.slots.len) {
-                return error.BadIndex;
-            }
-            if (self.slots[entity.index].generation != entity.generation) {
-                return error.BadGeneration;
-            }
-
-            // Make sure our free list is not empty, this is only reachable with generation safety
-            // turned off (or if a counter wraps and our currently implementation doesn't check for
-            // that.)
-            if (self.free_slot_indices.len == max_entities) {
-                return error.DoubleFree;
-            }
-
-            // Unset the exists bit, and reorder the page
-            const slot = &self.slots[entity.index];
-            slot.entity_pointer.archetype_list.removeEntity(slot.entity_pointer.index, &self.slots);
-
-            // Increment this entity slot's generation so future uses will fail
-            if (EntityGeneration != u0) {
-                slot.generation +%= 1;
-            }
-
-            // Add the entity to the free list
-            const top = self.free_slot_indices.len;
-            self.free_slot_indices.len += 1;
-            self.free_slot_indices[top] = entity.index;
+            const entity_pointer = try self.slot_map.removeChecked(entity);
+            entity_pointer.archetype_list.removeEntity(entity_pointer.index, &self.slot_map);
         }
 
         pub fn addComponents(self: *@This(), entity: EntityHandle, components: anytype) void {
@@ -355,17 +279,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         // TODO: test errors
-        fn addComponentsChecked(self: *@This(), entity: EntityHandle, components: anytype) !void {
-            // Check that the entity is valid. These should be assertions, but I've made them error
-            // codes for easier unit testing.
-            if (entity.index >= self.slots.len) {
-                return error.BadIndex;
-            }
-            if (self.slots[entity.index].generation != entity.generation) {
-                return error.BadGeneration;
-            }
-
-            _ = try self.setArchetype(entity, components, .{}, false);
+        fn addComponentsChecked(self: *@This(), handle: EntityHandle, components: anytype) !void {
+            const entity_pointer = try self.slot_map.getChecked(handle);
+            try self.setArchetype(handle, entity_pointer, components, .{}, false);
         }
 
         // TODO: return a bool indicating if it was present or no? also we could have a faster
@@ -376,17 +292,9 @@ pub fn Entities(comptime componentTypes: anytype) type {
         }
 
         // TODO: test errors
-        fn removeComponentsChecked(self: *@This(), entity: EntityHandle, components: anytype) !void {
-            // Check that the entity is valid. These should be assertions, but I've made them error
-            // codes for easier unit testing.
-            if (entity.index >= self.slots.len) {
-                return error.BadIndex;
-            }
-            if (self.slots[entity.index].generation != entity.generation) {
-                return error.BadGeneration;
-            }
-
-            _ = try self.setArchetype(entity, .{}, components, false);
+        fn removeComponentsChecked(self: *@This(), handle: EntityHandle, components: anytype) !void {
+            const entity_pointer = try self.slot_map.getChecked(handle);
+            try self.setArchetype(handle, entity_pointer, .{}, components, false);
         }
 
         fn getOrPutPageListEnsureAvailable(self: *@This(), archetype: Archetype) !*ArchetypeList {
@@ -408,16 +316,21 @@ pub fn Entities(comptime componentTypes: anytype) type {
             return entry.value_ptr;
         }
 
+        // TODO: a little weird that it takes handle and pointer. the idea is that it isn't safety checking
+        // the handle so that forces you to do it outside, and prevents needlessly looking it up more than once.
+        // we could just document that it doesn't safety check it though, or name it unchecekd or something idk unless
+        // that makes the other errors confusing.
         // TODO: test the failure conditions here?
         // TODO: early out if no change?
         // TODO: make remove_components comptime?
         fn setArchetype(
             self: *@This(),
-            entity: EntityHandle,
+            entity_handle: EntityHandle,
+            entity_pointer: *EntityPointer,
             add_components: anytype,
             remove_components: anytype,
             comptime create_entity: bool,
-        ) !EntityHandle {
+        ) !void {
             if (create_entity and remove_components.len > 0) {
                 @compileError("cannot remove components if the entity does not yet exist");
             }
@@ -425,7 +338,7 @@ pub fn Entities(comptime componentTypes: anytype) type {
             const previous_archetype = if (create_entity)
                 Archetype.initEmpty()
             else
-                self.slots[entity.index].entity_pointer.archetype_list.archetype;
+                entity_pointer.archetype_list.archetype;
 
             const components_added = components_added: {
                 if (@TypeOf(add_components) == Prefab) {
@@ -458,11 +371,10 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 .differenceWith(components_removed);
 
             // Create the new entity
-            const slot = &self.slots[entity.index];
-            const old_entity_pointer = slot.entity_pointer;
+            const old_entity_pointer: EntityPointer = entity_pointer.*;
             const archetype_list = try self.getOrPutPageListEnsureAvailable(archetype);
-            slot.entity_pointer.archetype_list = archetype_list;
-            slot.entity_pointer.index = try archetype_list.createEntity(self.allocator, entity);
+            entity_pointer.archetype_list = archetype_list;
+            entity_pointer.index = try archetype_list.createEntity(self.allocator, entity_handle);
 
             // If this entity data is replacing an existing one, copy the original components over
             if (!create_entity) {
@@ -472,12 +384,12 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 inline for (0..@typeInfo(Entity).Struct.fields.len) |i| {
                     if (copy.isSet(i)) {
                         const field = @intToEnum(Component, i);
-                        slot.entity_pointer.archetype_list.getComponent(slot.entity_pointer.index, field).* = old_entity_pointer.archetype_list.getComponent(old_entity_pointer.index, field).*;
+                        entity_pointer.archetype_list.getComponent(entity_pointer.index, field).* = old_entity_pointer.archetype_list.getComponent(old_entity_pointer.index, field).*;
                     }
                 }
 
                 // Delete the old entity
-                old_entity_pointer.archetype_list.removeEntity(old_entity_pointer.index, &self.slots);
+                old_entity_pointer.archetype_list.removeEntity(old_entity_pointer.index, &self.slot_map);
             }
 
             // Initialize the new entity
@@ -485,35 +397,22 @@ pub fn Entities(comptime componentTypes: anytype) type {
                 const field = @intToEnum(Component, std.meta.fieldIndex(Entity, f.name).?);
                 if (@TypeOf(add_components) == Prefab) {
                     if (@field(add_components, f.name)) |component| {
-                        slot.entity_pointer.archetype_list.getComponent(slot.entity_pointer.index, field).* = component;
+                        entity_pointer.archetype_list.getComponent(entity_pointer.index, field).* = component;
                     }
                 } else {
-                    slot.entity_pointer.archetype_list.getComponent(slot.entity_pointer.index, field).* = @field(add_components, f.name);
+                    entity_pointer.archetype_list.getComponent(entity_pointer.index, field).* = @field(add_components, f.name);
                 }
             }
-
-            // Return the handle to the entity
-            return entity;
         }
 
         // TODO: check assertions
         fn getComponentChecked(self: *@This(), entity: EntityHandle, comptime component: Component) !?*std.meta.fieldInfo(Entity, component).type {
-            // TODO: dup code
-            // Check that the entity is valid. These should be assertions, but I've made them error
-            // codes for easier unit testing.
-            if (entity.index >= self.slots.len) {
-                return error.BadIndex;
-            }
-            if (self.slots[entity.index].generation != entity.generation) {
-                return error.BadGeneration;
-            }
-
             // XXX: should it just return null from there or is that slower?
-            const slot = self.slots[entity.index];
-            if (!slot.entity_pointer.archetype_list.archetype.isSet(@enumToInt(component))) {
+            const entity_pointer = try self.slot_map.getChecked(entity);
+            if (!entity_pointer.archetype_list.archetype.isSet(@enumToInt(component))) {
                 return null;
             }
-            return slot.entity_pointer.archetype_list.getComponent(slot.entity_pointer.index, component);
+            return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
 
         pub fn getComponent(self: *@This(), entity: EntityHandle, comptime component: Component) ?*std.meta.fieldInfo(Entity, component).type {
@@ -642,71 +541,69 @@ test "zero-sized-component" {
     try std.testing.expect(entities.getComponent(b, .x) == null);
 }
 
-test "free list" {
-    var allocator = std.heap.page_allocator;
-    var entities = try Entities(.{}).init(allocator);
-    defer entities.deinit();
+// XXX: update this test or no since we have it externally?
+// test "free list" {
+//     var allocator = std.heap.page_allocator;
+//     var entities = try Entities(.{}).init(allocator);
+//     defer entities.deinit();
 
-    const entity_0_0 = entities.create(.{});
-    try std.testing.expectEqual(entity_0_0, EntityHandle{ .index = 0, .generation = 0 });
-    const entity_1_0 = entities.create(.{});
-    try std.testing.expectEqual(entity_1_0, EntityHandle{ .index = 1, .generation = 0 });
-    const entity_2_0 = entities.create(.{});
-    try std.testing.expectEqual(entity_2_0, EntityHandle{ .index = 2, .generation = 0 });
-    const entity_3_0 = entities.create(.{});
-    try std.testing.expectEqual(entity_3_0, EntityHandle{ .index = 3, .generation = 0 });
+//     const entity_0_0 = entities.create(.{});
+//     try std.testing.expectEqual(entity_0_0, EntityHandle{ .index = 0, .generation = 0 });
+//     const entity_1_0 = entities.create(.{});
+//     try std.testing.expectEqual(entity_1_0, EntityHandle{ .index = 1, .generation = 0 });
+//     const entity_2_0 = entities.create(.{});
+//     try std.testing.expectEqual(entity_2_0, EntityHandle{ .index = 2, .generation = 0 });
+//     const entity_3_0 = entities.create(.{});
+//     try std.testing.expectEqual(entity_3_0, EntityHandle{ .index = 3, .generation = 0 });
 
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index, 1);
-    try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index, 2);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 3);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
+//     try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index, 1);
+//     try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index, 2);
+//     try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 3);
+//     try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 0);
 
-    entities.remove(entity_1_0);
+//     entities.remove(entity_1_0);
 
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index, 1);
-    try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index, 2);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 1);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
+//     try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index, 1);
+//     try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
+//     try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index, 2);
+//     try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 1);
+//     try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 0);
 
-    entities.remove(entity_3_0);
+//     entities.remove(entity_3_0);
 
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index, 1);
-    try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index, 1);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 1);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 1);
+//     try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
+//     try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index, 1);
+//     try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
+//     try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index, 1);
+//     try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 1);
+//     try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 1);
 
-    _ = entities.create(.{});
-    _ = entities.create(.{});
-    _ = entities.create(.{});
+//     _ = entities.create(.{});
+//     _ = entities.create(.{});
+//     _ = entities.create(.{});
 
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
-    try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index, 3);
-    try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index, 1);
-    try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 2);
-    try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 1);
-    try std.testing.expectEqual(entities.slots[4].entity_pointer.index, 4);
-    try std.testing.expectEqual(entities.slots[4].generation, 0);
-}
+//     try std.testing.expectEqual(entities.slots[entity_0_0.index].entity_pointer.index, 0);
+//     try std.testing.expectEqual(entities.slots[entity_0_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_1_0.index].entity_pointer.index, 3);
+//     try std.testing.expectEqual(entities.slots[entity_1_0.index].generation, 1);
+//     try std.testing.expectEqual(entities.slots[entity_2_0.index].entity_pointer.index, 1);
+//     try std.testing.expectEqual(entities.slots[entity_2_0.index].generation, 0);
+//     try std.testing.expectEqual(entities.slots[entity_3_0.index].entity_pointer.index, 2);
+//     try std.testing.expectEqual(entities.slots[entity_3_0.index].generation, 1);
+//     try std.testing.expectEqual(entities.slots[4].entity_pointer.index, 4);
+//     try std.testing.expectEqual(entities.slots[4].generation, 0);
+// }
 
 test "limits" {
-    // The max entity id should be considered invalid
-    assert(max_entities < std.math.maxInt(SlotIndex));
-
     // Make sure our page index type is big enough
     {
         // TODO: break this out into constant?
@@ -717,6 +614,7 @@ test "limits" {
 
     var allocator = std.heap.page_allocator;
     var entities = try Entities(.{}).init(allocator);
+    const EntityHandle = @TypeOf(entities).EntityHandle;
     defer entities.deinit();
     var created = std.ArrayList(EntityHandle).init(std.testing.allocator);
     defer created.deinit();
@@ -724,10 +622,10 @@ test "limits" {
     // Add the max number of entities
     for (0..max_entities) |i| {
         const entity = entities.create(.{});
-        try std.testing.expectEqual(EntityHandle{ .index = @intCast(SlotIndex, i), .generation = 0 }, entity);
+        try std.testing.expectEqual(EntityHandle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 0 }, entity);
         try created.append(entity);
     }
-    try std.testing.expectError(error.OutOfEntities, entities.createChecked(.{}));
+    try std.testing.expectError(error.AtCapacity, entities.createChecked(.{}));
     // XXX: ...
     // const page_pool_size = entities.page_pool.items.len;
 
@@ -749,24 +647,25 @@ test "limits" {
     // Create a bunch of entities again
     for (0..max_entities) |i| {
         try std.testing.expectEqual(
-            EntityHandle{ .index = @intCast(SlotIndex, i), .generation = 1 },
+            EntityHandle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 1 },
             entities.create(.{}),
         );
     }
-    try std.testing.expectError(error.OutOfEntities, entities.createChecked(.{}));
+    try std.testing.expectError(error.AtCapacity, entities.createChecked(.{}));
     // XXX: ...
     // try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
-    // Wrap a generation counter
-    {
-        const entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
-        entities.slots[entity.index].generation = entity.generation;
-        entities.remove(entity);
-        try std.testing.expectEqual(
-            EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
-            entities.create(.{}),
-        );
-    }
+    // XXX: update this test or no since we have it externally?
+    // // Wrap a generation counter
+    // {
+    //     const entity = EntityHandle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
+    //     entities.slots[entity.index].generation = entity.generation;
+    //     entities.remove(entity);
+    //     try std.testing.expectEqual(
+    //         EntityHandle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
+    //         entities.create(.{}),
+    //     );
+    // }
 }
 
 test "safety" {
@@ -776,8 +675,8 @@ test "safety" {
 
     const entity = entities.create(.{});
     entities.remove(entity);
-    try std.testing.expectError(error.BadGeneration, entities.removeChecked(entity));
-    try std.testing.expectError(error.BadIndex, entities.removeChecked(EntityHandle{
+    try std.testing.expectError(error.DoubleFree, entities.removeChecked(entity));
+    try std.testing.expectError(error.OutOfBounds, entities.removeChecked(@TypeOf(entities).EntityHandle{
         .index = 1,
         .generation = 0,
     }));
@@ -785,8 +684,9 @@ test "safety" {
 
 // TODO: test 0 sized components? (used in game seemingly correctly!)
 test "random data" {
+    const E = Entities(.{ .x = u32, .y = u8, .z = u16 });
     var allocator = std.heap.page_allocator;
-    var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
+    var entities = try E.init(allocator);
     defer entities.deinit();
 
     const Data = struct {
@@ -796,7 +696,7 @@ test "random data" {
     };
     const Created = struct {
         data: Data,
-        handle: EntityHandle,
+        handle: E.EntityHandle,
     };
 
     var rnd = std.rand.DefaultPrng.init(0);
@@ -1012,13 +912,13 @@ test "random data" {
 
         // Test that iterators are working properly
         {
-            var truth_xyz = std.AutoArrayHashMap(EntityHandle, Data).init(std.testing.allocator);
+            var truth_xyz = std.AutoArrayHashMap(E.EntityHandle, Data).init(std.testing.allocator);
             defer truth_xyz.deinit();
-            var truth_xz = std.AutoArrayHashMap(EntityHandle, Data).init(std.testing.allocator);
+            var truth_xz = std.AutoArrayHashMap(E.EntityHandle, Data).init(std.testing.allocator);
             defer truth_xz.deinit();
-            var truth_y = std.AutoArrayHashMap(EntityHandle, Data).init(std.testing.allocator);
+            var truth_y = std.AutoArrayHashMap(E.EntityHandle, Data).init(std.testing.allocator);
             defer truth_y.deinit();
-            var truth_all = std.AutoArrayHashMap(EntityHandle, Data).init(std.testing.allocator);
+            var truth_all = std.AutoArrayHashMap(E.EntityHandle, Data).init(std.testing.allocator);
             defer truth_all.deinit();
 
             for (truth.items) |entity| {
