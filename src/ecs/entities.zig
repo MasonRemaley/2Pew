@@ -38,13 +38,43 @@ pub fn Entities(comptime registered_components: anytype) type {
         // Public types used by the ECS
         pub const Handle = HandleSlotMap.Handle;
 
-        // Internal types used by the ECS
-        const EntityPointer = struct {
-            archetype_list: *ArchetypeList,
-            index: u32, // TODO: how did we decide on u32 here?
+        // XXX: consider renaming to component flags or such since it's not always used to represent
+        // an archetype
+        pub const Archetype = struct {
+            pub const Bits = std.bit_set.IntegerBitSet(component_names.len);
+            bits: Bits,
+
+            // Creates an archetype from a prefab, a struct of components, or a tuple of enum
+            // component names.
+            pub fn init(components: anytype) Archetype {
+                if (@TypeOf(components) == Prefab) {
+                    var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
+                    inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                        if (@field(components, field.name) != null) {
+                            archetype.bits.set(@enumToInt(find_component_name(field.name).?));
+                        }
+                    }
+                    return archetype;
+                } else if (@typeInfo(@TypeOf(components)).Struct.is_tuple) {
+                    var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
+                    inline for (components) |c| {
+                        const component: ComponentName = c;
+                        archetype.bits.set(@enumToInt(component));
+                    }
+                    return archetype;
+                } else comptime {
+                    var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
+                    for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                        archetype.bits.set(@enumToInt(find_component_name(field.name).?));
+                    }
+                    return archetype;
+                }
+            }
+
+            pub fn initBits(bits: Bits) @This() {
+                return .{ .bits = bits };
+            }
         };
-        const HandleSlotMap = SlotMap(EntityPointer, max_entities, EntityGeneration);
-        const Archetype: type = std.bit_set.IntegerBitSet(component_names.len);
         // TODO: how many places do we generate a new type from entity? might wanna make a helper for this?
         pub const Prefab = prefab: {
             var fields: [component_names.len]Type.StructField = undefined;
@@ -68,6 +98,19 @@ pub fn Entities(comptime registered_components: anytype) type {
                 },
             });
         };
+
+        pub const ArchetypeChange = struct {
+            add: Prefab,
+            remove: Archetype,
+        };
+
+        // Internal types used by the ECS
+        const EntityPointer = struct {
+            archetype_list: *ArchetypeList,
+            index: u32, // TODO: how did we decide on u32 here?
+        };
+        const HandleSlotMap = SlotMap(EntityPointer, max_entities, EntityGeneration);
+
         const ArchetypeList = struct {
             const Components = components: {
                 var fields: [component_names.len]Type.StructField = undefined;
@@ -115,7 +158,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 // XXX: could optimize this logic a little since all lists are gonna match eachother, also
                 // only really need one size, etc
                 inline for (component_names, 0..) |comp_name, i| {
-                    if (self.archetype.isSet(i)) {
+                    if (self.archetype.bits.isSet(i)) {
                         _ = try @field(self.comps, comp_name).addOne(allocator);
                     }
                 }
@@ -133,7 +176,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 // XXX: only needed in debug mode right?
                 assert(index < self.handles.len);
                 inline for (component_names, 0..) |comp_name, i| {
-                    if (self.archetype.isSet(i)) {
+                    if (self.archetype.bits.isSet(i)) {
                         // XXX: here and below, i think it's okay to pop assign as lon gas we do unchecked, since
                         // the memory is guarenteed to be there right? (the problem case is swap removing if size 1)
                         var components = &@field(self.comps, comp_name);
@@ -221,20 +264,20 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         fn setComponents(pointer: *const EntityPointer, components: anytype) void {
-            inline for (@typeInfo(@TypeOf(components.*)).Struct.fields) |f| {
+            inline for (@typeInfo(@TypeOf(components)).Struct.fields) |f| {
                 const component_name = comptime find_component_name(f.name).?;
-                if (@TypeOf(components.*) == Prefab) {
-                    if (@field(components.*, f.name)) |component| {
+                if (@TypeOf(components) == Prefab) {
+                    if (@field(components, f.name)) |component| {
                         pointer.archetype_list.getComponent(pointer.index, component_name).* = component;
                     }
                 } else {
-                    pointer.archetype_list.getComponent(pointer.index, component_name).* = @field(components.*, f.name);
+                    pointer.archetype_list.getComponent(pointer.index, component_name).* = @field(components, f.name);
                 }
             }
         }
 
         pub fn createChecked(self: *@This(), components: anytype) Allocator.Error!Handle {
-            const archetype = componentsArchetype(components);
+            const archetype = Archetype.init(components);
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             const handle = try self.slot_map.create(undefined);
             const pointer = self.slot_map.getUnchecked(handle);
@@ -242,7 +285,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 .archetype_list = archetype_list,
                 .index = try archetype_list.append(self.allocator, handle),
             };
-            setComponents(pointer, &components);
+            setComponents(pointer, components);
             return handle;
         }
 
@@ -256,26 +299,34 @@ pub fn Entities(comptime registered_components: anytype) type {
             entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.slot_map);
         }
 
-        pub fn addComponents(self: *@This(), entity: Handle, components: anytype) void {
-            self.addComponentsChecked(entity, components) catch |err|
+        pub fn addComponents(self: *@This(), entity: Handle, add: anytype) void {
+            self.addComponentsChecked(entity, add) catch |err|
                 std.debug.panic("failed to add components: {}", .{err});
         }
 
         // TODO: test errors
-        pub fn addComponentsChecked(self: *@This(), handle: Handle, components: anytype) error{ UseAfterFree, OutOfMemory }!void {
-            try self.changeArchetype(handle, components, .{});
+        pub fn addComponentsChecked(self: *@This(), handle: Handle, add: anytype) error{ UseAfterFree, OutOfMemory }!void {
+            try self.changeArchetypeChecked(handle, .{ .add = add, .remove = Archetype.initBits(Archetype.Bits.initEmpty()) });
         }
 
         // TODO: return a bool indicating if it was present or no? also we could have a faster
         // hasComponents check for when you don't need the actual data?
-        pub fn removeComponents(self: *@This(), entity: Handle, components: anytype) void {
-            self.removeComponentsChecked(entity, components) catch |err|
+        pub fn removeComponents(self: *@This(), entity: Handle, remove: anytype) void {
+            self.removeComponentsChecked(entity, remove) catch |err|
                 std.debug.panic("failed to remove components: {}", .{err});
         }
 
         // TODO: test errors
-        pub fn removeComponentsChecked(self: *@This(), handle: Handle, components: anytype) error{ UseAfterFree, OutOfMemory }!void {
-            try self.changeArchetype(handle, .{}, components);
+        // XXX: allow either bitset or tuple wherever we allow one or the other? or have the tuple
+        // here (convenient) and the bitset in change archetype (advanced).
+        pub fn removeComponentsChecked(self: *@This(), handle: Handle, remove: anytype) error{ UseAfterFree, OutOfMemory }!void {
+            try self.changeArchetypeChecked(
+                handle,
+                .{
+                    .add = .{},
+                    .remove = Archetype.init(remove),
+                },
+            );
         }
 
         fn getOrPutArchetypeList(self: *@This(), archetype: Archetype) Allocator.Error!*ArchetypeList {
@@ -296,64 +347,39 @@ pub fn Entities(comptime registered_components: anytype) type {
             return entry.value_ptr;
         }
 
-        // Turns a prefab, a struct of components, or a tuple of enum component names into an archetype
-        // bitset.
-        fn componentsArchetype(components: anytype) Archetype {
-            if (@TypeOf(components) == Prefab) {
-                var archetype = Archetype.initEmpty();
-                inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                    if (@field(components, field.name) != null) {
-                        archetype.set(@enumToInt(find_component_name(field.name).?));
-                    }
-                }
-                return archetype;
-            } else if (@typeInfo(@TypeOf(components)).Struct.is_tuple) {
-                var archetype = Archetype.initEmpty();
-                inline for (components) |c| {
-                    const component: ComponentName = c;
-                    archetype.set(@enumToInt(component));
-                }
-                return archetype;
-            } else comptime {
-                var archetype = Archetype.initEmpty();
-                for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                    archetype.set(@enumToInt(find_component_name(field.name).?));
-                }
-                return archetype;
-            }
-        }
-
         fn copyComponents(to: *const EntityPointer, from: EntityPointer, which: Archetype) void {
             inline for (0..component_names.len) |i| {
-                if (which.isSet(i)) {
+                if (which.bits.isSet(i)) {
                     const component_name = @intToEnum(ComponentName, i);
                     to.archetype_list.getComponent(to.index, component_name).* = from.archetype_list.getComponent(from.index, component_name).*;
                 }
             }
         }
 
-        // TODO: a little weird that it takes handle and pointer. the idea is that it isn't safety checking
-        // the handle so that forces you to do it outside, and prevents needlessly looking it up more than once.
-        // we could just document that it doesn't safety check it though, or name it unchecekd or something idk unless
-        // that makes the other errors confusing.
+        // XXX: use this in tests?
+        // XXX: need way to make a concrete type for remove. the obvious candidate is just using
+        // archetype, so we need a way to make an archetype from a tuple, which is generally useful
+        // anyway. we may also want a way to go back to the tuple, or just say no you create it
+        // before passing it in idk. i mean we are gonna do that in here anyway lol.
+        pub fn changeArchetype(self: *@This(), handle: Handle, changes: anytype) void {
+            self.changeArchetypeChecked(handle, changes) catch |err|
+                std.debug.panic("failed to change archetype: {}", .{err});
+        }
+
         // TODO: test the failure conditions here?
         // TODO: early out if no change?
-        // TODO: make remove_components comptime?
-        fn changeArchetype(
-            self: *@This(),
-            handle: Handle,
-            add_components: anytype,
-            remove_components: anytype,
-        ) error{ UseAfterFree, OutOfMemory }!void {
+        // Changes the components archetype. The logical equivalent of removing `changes.remove`,
+        // and then adding `changes.add`.
+        pub fn changeArchetypeChecked(self: *@This(), handle: Handle, changes: anytype) error{ UseAfterFree, OutOfMemory }!void {
             // Determine our archetype bitsets
             const pointer = try self.slot_map.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
-            const components_added = componentsArchetype(add_components);
-            const components_removed = componentsArchetype(remove_components);
-            const archetype = previous_archetype.unionWith(components_added)
-                .differenceWith(components_removed);
-            const components_copied = previous_archetype.intersectWith(archetype)
-                .differenceWith(components_added);
+            const components_added = Archetype.init(changes.add);
+            const components_removed = changes.remove; // XXX: don't need separate variable
+            const archetype = Archetype.initBits(previous_archetype.bits.unionWith(components_added.bits)
+                .differenceWith(components_removed.bits));
+            const components_copied = Archetype.initBits(previous_archetype.bits.intersectWith(archetype.bits)
+                .differenceWith(components_added.bits));
 
             // Create the new entity location
             const old_pointer: EntityPointer = pointer.*;
@@ -365,7 +391,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
             // Set the component data at the new location
             copyComponents(pointer, old_pointer, components_copied);
-            setComponents(pointer, &add_components);
+            setComponents(pointer, changes.add);
 
             // Delete the old data
             old_pointer.archetype_list.swapRemove(old_pointer.index, &self.slot_map);
@@ -380,7 +406,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         pub fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentName) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
             // XXX: should it just return null from there or is that slower?
             const entity_pointer = try self.slot_map.get(entity);
-            if (!entity_pointer.archetype_list.archetype.isSet(@enumToInt(component))) {
+            if (!entity_pointer.archetype_list.archetype.bits.isSet(@enumToInt(component))) {
                 return null;
             }
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
@@ -436,10 +462,10 @@ pub fn Entities(comptime registered_components: anytype) type {
                         .entities = entities,
                         // TODO: replace with getter if possible
                         .archetype = comptime archetype: {
-                            var archetype = Archetype.initEmpty();
+                            var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
                             for (components) |field| {
                                 const component_name: ComponentName = field;
-                                archetype.set(@enumToInt(component_name));
+                                archetype.bits.set(@enumToInt(component_name));
                             }
                             break :archetype archetype;
                         },
@@ -456,7 +482,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                         // list
                         if (self.archetype_list == null) {
                             self.archetype_list = while (self.archetype_lists.next()) |page| {
-                                if (page.key_ptr.supersetOf(self.archetype)) {
+                                if (page.key_ptr.bits.supersetOf(self.archetype.bits)) {
                                     break page.value_ptr;
                                 }
                             } else return null;

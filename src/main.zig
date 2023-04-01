@@ -100,6 +100,7 @@ pub fn main() !void {
     var command_buffer = try CommandBuffer.init(allocator, &entities, .{
         .create_capacity = 8192,
         .remove_capacity = 8192,
+        .arch_change_capacity = 8192,
     });
     defer command_buffer.deinit(allocator);
 
@@ -331,8 +332,6 @@ fn update(
                     });
                 }
 
-                // XXX: adding/removing components here reorders things and could cause this to be run again...
-                // could do before collision, just check hooks against rbs and start over every time or something
                 // XXX: why does it fly away when attached? well partly it's that i set the distance to 0 when
                 // the current distance is greater...fixing that
                 // XXX: don't always attach to the center? this is easy to do, but, it won't cause
@@ -344,25 +343,33 @@ fn update(
                         // XXX: make a public changeArchetype function so that we can do this in a single
                         // move, could also be named removeComponentsAddComponents or such, probably
                         // should work even if overlap?
-                        entities.removeComponents(entity.handle, .{.hook});
-                        entities.addComponents(entity.handle, .{ .spring = Spring{
-                            .start = entity.handle,
-                            .end = other_entity.handle,
-                            .k = hook.k,
-                            .length = rb.pos.distance(other.rb.pos),
-                            .damping = hook.damping,
-                        } });
+                        command_buffer.appendArchChange(entity.handle, .{
+                            .add = .{
+                                .spring = Spring{
+                                    .start = entity.handle,
+                                    .end = other_entity.handle,
+                                    .k = hook.k,
+                                    .length = rb.pos.distance(other.rb.pos),
+                                    .damping = hook.damping,
+                                },
+                            },
+                            .remove = Entities.Archetype.init(.{.hook}),
+                        });
                         hooked = true;
                     }
                     if (entities.getComponent(other_entity.handle, .hook)) |hook| {
-                        entities.removeComponents(other_entity.handle, .{.hook});
-                        entities.addComponents(other_entity.handle, .{ .spring = Spring{
-                            .start = entity.handle,
-                            .end = other_entity.handle,
-                            .k = hook.k,
-                            .length = rb.pos.distance(other.rb.pos),
-                            .damping = hook.damping,
-                        } });
+                        command_buffer.appendArchChange(other_entity.handle, .{
+                            .add = .{
+                                .spring = Spring{
+                                    .start = entity.handle,
+                                    .end = other_entity.handle,
+                                    .k = hook.k,
+                                    .length = rb.pos.distance(other.rb.pos),
+                                    .damping = hook.damping,
+                                },
+                            },
+                            .remove = Entities.Archetype.init(.{.hook}),
+                        });
                         hooked = true;
                     }
                     // XXX: continue afte first one..?
