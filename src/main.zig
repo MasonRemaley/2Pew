@@ -2109,8 +2109,7 @@ const Game = struct {
                     .negative = c.SDL_SCANCODE_LEFT,
                 },
                 .thrust_forward = .{
-                    .positive = c.SDL_SCANCODE_DOWN,
-                    .negative = c.SDL_SCANCODE_UP,
+                    .positive = c.SDL_SCANCODE_UP,
                 },
                 .thrust_x = .{
                     .positive = c.SDL_SCANCODE_RIGHT,
