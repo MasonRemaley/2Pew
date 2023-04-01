@@ -2,10 +2,6 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
-// TODO: we could make the capacity comptime instead if we wanted, since that's often how we use this
-// TODO: does .ptr do what I think it does?
-// TODO: another way to make this would be to just make it an actual array list but give it an always
-// failing allocator
 pub fn BoundedArrayList(comptime T: type) type {
     return struct {
         items: []T,
