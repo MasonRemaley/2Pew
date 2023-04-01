@@ -47,8 +47,8 @@ pub fn MinimumAlignmentAllocator(comptime min_alignment: u8) type {
 }
 
 test "minimum alignment allocator" {
-    var buffer = try std.heap.page_allocator.alloc(u8, 1024);
-    defer std.heap.page_allocator.free(buffer);
+    var buffer = try std.testing.allocator.alloc(u8, 1024);
+    defer std.testing.allocator.free(buffer);
 
     {
         var fba = std.heap.FixedBufferAllocator.init(buffer);

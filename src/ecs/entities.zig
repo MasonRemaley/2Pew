@@ -561,7 +561,7 @@ fn field_values(s: anytype) FieldValuesType(@TypeOf(s)) {
 }
 
 test "iter remove" {
-    var allocator = std.heap.page_allocator;
+    var allocator = std.testing.allocator;
 
     // Remove from the beginning
     {
@@ -788,7 +788,7 @@ test "iter remove" {
 }
 
 test "clear retaining capacity" {
-    var allocator = std.heap.page_allocator;
+    var allocator = std.testing.allocator;
 
     // Remove from the beginning
     {
@@ -870,7 +870,7 @@ test "clear retaining capacity" {
 // Could use a more exhaustive test, this at least makes sure it compiles which was a problem
 // at one point!
 test "zero-sized-component" {
-    var allocator = std.heap.page_allocator;
+    var allocator = std.testing.allocator;
     var entities = try Entities(.{ .x = struct {} }).init(allocator);
     defer entities.deinit();
 
@@ -883,7 +883,7 @@ test "zero-sized-component" {
 
 // XXX: update this test or no since we have it externally?
 // test "free list" {
-//     var allocator = std.heap.page_allocator;
+//     var allocator = std.testing.allocator;
 //     var entities = try Entities(.{}).init(allocator);
 //     defer entities.deinit();
 
@@ -952,11 +952,11 @@ test "limits" {
         assert(std.math.maxInt(IndexInPage) > page_size);
     }
 
-    var allocator = std.heap.page_allocator;
+    var allocator = std.testing.allocator;
     var entities = try Entities(.{}).init(allocator);
     const Handle = @TypeOf(entities).Handle;
     defer entities.deinit();
-    var created = std.ArrayList(Handle).init(std.testing.allocator);
+    var created = std.ArrayList(Handle).init(allocator);
     defer created.deinit();
 
     // Add the max number of entities
@@ -1009,7 +1009,7 @@ test "limits" {
 }
 
 test "safety" {
-    var allocator = std.heap.page_allocator;
+    var allocator = std.testing.allocator;
     var entities = try Entities(.{}).init(allocator);
     defer entities.deinit();
 
@@ -1026,7 +1026,7 @@ test "safety" {
 // TODO: test 0 sized components? (used in game seemingly correctly!)
 test "random data" {
     const E = Entities(.{ .x = u32, .y = u8, .z = u16 });
-    var allocator = std.heap.page_allocator;
+    var allocator = std.testing.allocator;
     var entities = try E.init(allocator);
     defer entities.deinit();
 
@@ -1041,7 +1041,7 @@ test "random data" {
     };
 
     var rnd = std.rand.DefaultPrng.init(0);
-    var truth = std.ArrayList(Created).init(std.testing.allocator);
+    var truth = std.ArrayList(Created).init(allocator);
     defer truth.deinit();
 
     for (0..4000) |_| {
@@ -1253,13 +1253,13 @@ test "random data" {
 
         // Test that iterators are working properly
         {
-            var truth_xyz = std.AutoArrayHashMap(E.Handle, Data).init(std.testing.allocator);
+            var truth_xyz = std.AutoArrayHashMap(E.Handle, Data).init(allocator);
             defer truth_xyz.deinit();
-            var truth_xz = std.AutoArrayHashMap(E.Handle, Data).init(std.testing.allocator);
+            var truth_xz = std.AutoArrayHashMap(E.Handle, Data).init(allocator);
             defer truth_xz.deinit();
-            var truth_y = std.AutoArrayHashMap(E.Handle, Data).init(std.testing.allocator);
+            var truth_y = std.AutoArrayHashMap(E.Handle, Data).init(allocator);
             defer truth_y.deinit();
-            var truth_all = std.AutoArrayHashMap(E.Handle, Data).init(std.testing.allocator);
+            var truth_all = std.AutoArrayHashMap(E.Handle, Data).init(allocator);
             defer truth_all.deinit();
 
             for (truth.items) |entity| {
@@ -1309,7 +1309,7 @@ test "random data" {
 }
 
 test "minimal iter test" {
-    var allocator = std.heap.page_allocator;
+    var allocator = std.testing.allocator;
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
     defer entities.deinit();
 
@@ -1375,7 +1375,7 @@ test "minimal iter test" {
 }
 
 test "prefabs" {
-    var allocator = std.heap.page_allocator;
+    var allocator = std.testing.allocator;
 
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
     defer entities.deinit();
