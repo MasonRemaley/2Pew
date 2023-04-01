@@ -1,7 +1,7 @@
 const std = @import("std");
 const ecs = @import("index.zig");
 const Allocator = std.mem.Allocator;
-const BoundedArrayList = @import("../bounded_array_list.zig");
+const BoundedArrayList = @import("../bounded_array_list.zig").BoundedArrayList;
 
 pub fn CommandBuffer(comptime Entities: anytype) type {
     const Handle = Entities.Handle;

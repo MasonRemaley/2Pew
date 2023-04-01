@@ -234,19 +234,24 @@ pub fn Entities(comptime registered_components: anytype) type {
         archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList),
 
         // The API
-        // TODO: need errdefers here, and maybe elsewhere too, for the allocations. also make
-        // clear when failure changes state and when it doesn't (or just don't have it do that.)
+        // Is designed to ensure compatibility with allocators that do not implement free.
         pub fn init(allocator: Allocator) Allocator.Error!@This() {
+            var slot_map = try HandleSlotMap.init(allocator);
+            errdefer slot_map.deinit(allocator);
+
+            var archetype_lists = archetype_lists: {
+                var archetype_lists = AutoArrayHashMapUnmanaged(Archetype, ArchetypeList){};
+                // We leave room for one extra because we don't know whether or not getOrPut
+                // will allocate until afte it's done.
+                try archetype_lists.ensureTotalCapacity(allocator, max_archetypes + 1);
+                break :archetype_lists archetype_lists;
+            };
+            errdefer archetype_lists.deinit(allocator);
+
             return .{
                 .allocator = allocator,
-                .slot_map = try HandleSlotMap.init(allocator),
-                .archetype_lists = archetype_lists: {
-                    var archetype_lists = AutoArrayHashMapUnmanaged(Archetype, ArchetypeList){};
-                    // We leave room for one extra because we don't know whether or not getOrPut
-                    // will allocate until afte it's done.
-                    try archetype_lists.ensureTotalCapacity(allocator, max_archetypes + 1);
-                    break :archetype_lists archetype_lists;
-                },
+                .slot_map = slot_map,
+                .archetype_lists = archetype_lists,
             };
         }
 
@@ -280,10 +285,13 @@ pub fn Entities(comptime registered_components: anytype) type {
             const archetype = Archetype.init(components);
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             const handle = try self.slot_map.create(undefined);
+            errdefer _ = self.slot_map.remove(handle) catch unreachable;
             const pointer = self.slot_map.getUnchecked(handle);
+            const index = try archetype_list.append(self.allocator, handle);
+            errdefer archetype_list.pop();
             pointer.* = EntityPointer{
                 .archetype_list = archetype_list,
-                .index = try archetype_list.append(self.allocator, handle),
+                .index = index,
             };
             setComponents(pointer, components);
             return handle;
@@ -384,9 +392,11 @@ pub fn Entities(comptime registered_components: anytype) type {
             // Create the new entity location
             const old_pointer: EntityPointer = pointer.*;
             const archetype_list = try self.getOrPutArchetypeList(archetype);
+            const index = try archetype_list.append(self.allocator, handle);
+            errdefer archetype_list.pop();
             pointer.* = .{
                 .archetype_list = archetype_list,
-                .index = try archetype_list.append(self.allocator, handle),
+                .index = index,
             };
 
             // Set the component data at the new location
