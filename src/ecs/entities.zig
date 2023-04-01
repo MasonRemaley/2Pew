@@ -24,227 +24,25 @@ const first_shelf_count = 8;
 
 pub fn Entities(comptime registered_components: anytype) type {
     return struct {
-        // Meta programming to get the component names and types
+        const Self = @This();
         const ComponentKind = std.meta.FieldEnum(@TypeOf(registered_components));
-
         const component_types = field_values(registered_components);
         const component_names = std.meta.fieldNames(@TypeOf(registered_components));
 
-        fn find_component_name(comptime name: []const u8) ComponentKind {
-            const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
-            if (maybe_index) |index| {
-                return @intToEnum(ComponentKind, index);
-            } else {
-                @compileError("no registered component named '" ++ name ++ "'");
-            }
-        }
-
-        // Public types used by the ECS
         pub const Handle = HandleSlotMap.Handle;
+        const HandleSlotMap = SlotMap(EntityPointer(Self), max_entities, EntityGeneration);
 
-        // XXX: consider renaming to component flags or such since it's not always used to represent
-        // an archetype
-        pub const Archetype = struct {
-            pub const Bits = std.bit_set.IntegerBitSet(component_names.len);
-            bits: Bits,
-
-            // Creates an archetype from a prefab, a struct of components, or a tuple of enum
-            // component names.
-            pub fn init(components: anytype) Archetype {
-                if (@TypeOf(components) == Prefab) {
-                    var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
-                    inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                        if (@field(components, field.name) != null) {
-                            archetype.bits.set(@enumToInt(find_component_name(field.name)));
-                        }
-                    }
-                    return archetype;
-                } else if (@typeInfo(@TypeOf(components)).Struct.is_tuple) {
-                    var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
-                    inline for (components) |c| {
-                        const component: ComponentKind = c;
-                        archetype.bits.set(@enumToInt(component));
-                    }
-                    return archetype;
-                } else comptime {
-                    var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
-                    for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                        archetype.bits.set(@enumToInt(find_component_name(field.name)));
-                    }
-                    return archetype;
-                }
-            }
-
-            pub fn initBits(bits: Bits) @This() {
-                return .{ .bits = bits };
-            }
-        };
-        // TODO: how many places do we generate a new type from entity? might wanna make a helper for this?
-        pub const Prefab = prefab: {
-            var fields: [component_names.len]Type.StructField = undefined;
-            for (component_types, component_names, 0..) |comp_type, comp_name, i| {
-                const field_type = ?comp_type;
-                fields[i] = Type.StructField{
-                    .name = comp_name,
-                    .type = field_type,
-                    .default_value = &null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(field_type),
-                };
-            }
-            break :prefab @Type(Type{
-                .Struct = Type.Struct{
-                    .layout = .Auto,
-                    .backing_integer = null,
-                    .fields = &fields,
-                    .decls = &[_]Type.Declaration{},
-                    .is_tuple = false,
-                },
-            });
-        };
-
-        pub const ArchetypeChange = struct {
-            add: Prefab,
-            remove: Archetype,
-        };
-
-        // Internal types used by the ECS
-        const EntityPointer = struct {
-            archetype_list: *ArchetypeList,
-            index: u32, // TODO: how did we decide on u32 here?
-        };
-        const HandleSlotMap = SlotMap(EntityPointer, max_entities, EntityGeneration);
-
-        const ArchetypeList = struct {
-            const Components = components: {
-                var fields: [component_names.len]Type.StructField = undefined;
-                for (component_names, component_types, 0..) |comp_name, comp_type, i| {
-                    const FieldType = SegmentedListFirstShelfCount(comp_type, first_shelf_count, false);
-                    fields[i] = Type.StructField{
-                        .name = comp_name,
-                        // XXX: make the desired modifications to segmented list eventually?
-                        .type = FieldType,
-                        .default_value = &FieldType{},
-                        .is_comptime = false,
-                        .alignment = @alignOf(FieldType),
-                    };
-                }
-                break :components @Type(Type{
-                    .Struct = Type.Struct{
-                        .layout = .Auto,
-                        .backing_integer = null,
-                        .fields = &fields,
-                        .decls = &[_]Type.Declaration{},
-                        .is_tuple = false,
-                    },
-                });
-            };
-
-            handles: SegmentedListFirstShelfCount(Handle, first_shelf_count, false) = .{},
-            comps: Components = .{},
-            archetype: Archetype,
-            // XXX: this as a type?
-            // len: HandleSlotMap.Index,
-
-            fn init(archetype: Archetype) ArchetypeList {
-                return .{ .archetype = archetype };
-            }
-
-            fn deinit(self: *@This(), allocator: Allocator) void {
-                inline for (component_names) |comp_name| {
-                    @field(self.comps, comp_name).deinit(allocator);
-                }
-                self.handles.deinit(allocator);
-            }
-
-            // XXX: better api that returns pointers so don't have to recalculate them?
-            fn append(self: *@This(), allocator: Allocator, handle: Handle) Allocator.Error!u32 {
-                // XXX: could optimize this logic a little since all lists are gonna match eachother, also
-                // only really need one size, etc
-                inline for (component_names, 0..) |comp_name, i| {
-                    if (self.archetype.bits.isSet(i)) {
-                        _ = try @field(self.comps, comp_name).addOne(allocator);
-                    }
-                }
-                const index = self.handles.len;
-                try self.handles.append(allocator, handle);
-                // XXX: can't overflow because fails earlier right?
-                return @intCast(u32, index);
-            }
-
-            // XXX: put in (debug mode?) protection to prevent doing this while iterating? same for creating?
-            // XXX: document that the ecs moves structures (so e.g. internal pointers will get invalidated). this
-            // was already true but only happened when changing shape before which is less commonly done.
-            fn swapRemove(self: *ArchetypeList, index: u32, slot_map: *HandleSlotMap) void {
-                // XXX: instead of separate len use handles len? or fold all into same thing eventually anyway..?
-                // XXX: only needed in debug mode right?
-                assert(index < self.handles.len);
-                inline for (component_names, 0..) |comp_name, i| {
-                    if (self.archetype.bits.isSet(i)) {
-                        // XXX: here and below, i think it's okay to pop assign as lon gas we do unchecked, since
-                        // the memory is guarenteed to be there right? (the problem case is swap removing if size 1)
-                        var components = &@field(self.comps, comp_name);
-                        components.uncheckedAt(index).* = components.pop().?;
-                    }
-                }
-                const moved_handle = self.handles.pop().?;
-                // XXX: only really need to update the generation here right?
-                self.handles.uncheckedAt(index).* = moved_handle;
-                // XXX: checking this in case we're deleting the last one in which case we don't wanna mess with
-                // slots...? we also maybe don't wanna do the above stuff but may not matter?? is there a way to
-                // make this less error prone? maybe in general don't do logic when last one, or return stuff to
-                // be used outside to avoid probme based on order, etc
-                if (index != self.handles.len) {
-                    // XXX: don't need to check generation, always checked at public interface right? check in debug mode or no?
-                    slot_map.getUnchecked(moved_handle).index = index;
-                }
-            }
-
-            fn ComponentIterator(comptime component_name: ComponentKind) type {
-                return SegmentedListFirstShelfCount(component_types[@enumToInt(component_name)], first_shelf_count, false).Iterator;
-            }
-
-            fn componentIterator(self: *@This(), comptime component_name: ComponentKind) ComponentIterator(component_name) {
-                return @field(self.comps, component_names[@enumToInt(component_name)]).iterator(0);
-            }
-
-            const HandleIterator = SegmentedListFirstShelfCount(Handle, first_shelf_count, false).Iterator;
-
-            fn handleIterator(self: *@This()) HandleIterator {
-                return self.handles.iterator(0);
-            }
-
-            fn getComponent(self: *@This(), index: u32, comptime component_name: ComponentKind) *component_types[@enumToInt(component_name)] {
-                // XXX: unchecked is correct right? assert in debug mode or no?
-                return @field(self.comps, component_names[@enumToInt(component_name)]).uncheckedAt(index);
-            }
-
-            fn getHandle(self: *@This(), index: u32) Handle {
-                // XXX: unchecked is correct right? assert in debug mode or no?
-                return self.handles.uncheckedAt(index);
-            }
-
-            fn clearRetainingCapacity(self: *@This()) void {
-                self.handles.clearRetainingCapacity();
-                inline for (component_names) |comp_name| {
-                    @field(self.comps, comp_name).clearRetainingCapacity();
-                }
-            }
-        };
-
-        // Storage
         allocator: Allocator,
         slot_map: HandleSlotMap,
-        archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList),
+        archetype_lists: AutoArrayHashMapUnmanaged(Archetype(Self), ArchetypeList(Self)),
 
-        // The API
         // Is designed to ensure compatibility with allocators that do not implement free.
-        pub fn init(allocator: Allocator) Allocator.Error!@This() {
+        pub fn init(allocator: Allocator) Allocator.Error!Self {
             var slot_map = try HandleSlotMap.init(allocator);
             errdefer slot_map.deinit(allocator);
 
             var archetype_lists = archetype_lists: {
-                var archetype_lists = AutoArrayHashMapUnmanaged(Archetype, ArchetypeList){};
+                var archetype_lists = AutoArrayHashMapUnmanaged(Archetype(Self), ArchetypeList(Self)){};
                 // We leave room for one extra because we don't know whether or not getOrPut
                 // will allocate until afte it's done.
                 try archetype_lists.ensureTotalCapacity(allocator, max_archetypes + 1);
@@ -259,7 +57,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             };
         }
 
-        pub fn deinit(self: *@This()) void {
+        pub fn deinit(self: *Self) void {
             self.slot_map.deinit(self.allocator);
             for (self.archetype_lists.values()) |*archetype_list| {
                 archetype_list.deinit(self.allocator);
@@ -267,33 +65,20 @@ pub fn Entities(comptime registered_components: anytype) type {
             self.archetype_lists.deinit(self.allocator);
         }
 
-        pub fn create(self: *@This(), entity: anytype) Handle {
+        pub fn create(self: *Self, entity: anytype) Handle {
             return self.createChecked(entity) catch |err|
                 std.debug.panic("failed to create entity: {}", .{err});
         }
 
-        fn setComponents(pointer: *const EntityPointer, components: anytype) void {
-            inline for (@typeInfo(@TypeOf(components)).Struct.fields) |f| {
-                const component_name = comptime find_component_name(f.name);
-                if (@TypeOf(components) == Prefab) {
-                    if (@field(components, f.name)) |component| {
-                        pointer.archetype_list.getComponent(pointer.index, component_name).* = component;
-                    }
-                } else {
-                    pointer.archetype_list.getComponent(pointer.index, component_name).* = @field(components, f.name);
-                }
-            }
-        }
-
-        pub fn createChecked(self: *@This(), components: anytype) Allocator.Error!Handle {
-            const archetype = Archetype.init(components);
+        pub fn createChecked(self: *Self, components: anytype) Allocator.Error!Handle {
+            const archetype = Archetype(Self).init(components);
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             const handle = try self.slot_map.create(undefined);
             errdefer _ = self.slot_map.remove(handle) catch unreachable;
             const pointer = self.slot_map.getUnchecked(handle);
             const index = try archetype_list.append(self.allocator, handle);
             errdefer archetype_list.pop();
-            pointer.* = EntityPointer{
+            pointer.* = .{
                 .archetype_list = archetype_list,
                 .index = index,
             };
@@ -301,29 +86,34 @@ pub fn Entities(comptime registered_components: anytype) type {
             return handle;
         }
 
-        pub fn swapRemove(self: *@This(), entity: Handle) void {
+        pub fn swapRemove(self: *Self, entity: Handle) void {
             return self.swapRemoveChecked(entity) catch |err|
                 std.debug.panic("failed to remove entity {}: {}", .{ entity, err });
         }
 
-        pub fn swapRemoveChecked(self: *@This(), entity: Handle) error{DoubleFree}!void {
+        pub fn swapRemoveChecked(self: *Self, entity: Handle) error{DoubleFree}!void {
             const entity_pointer = try self.slot_map.remove(entity);
             entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.slot_map);
         }
 
-        pub fn addComponents(self: *@This(), entity: Handle, add: anytype) void {
+        // XXX: make api clearer wrt generations, test?
+        pub fn exists(self: *Self, handle: Handle) bool {
+            return self.slot_map.exists(handle);
+        }
+
+        pub fn addComponents(self: *Self, entity: Handle, add: anytype) void {
             self.addComponentsChecked(entity, add) catch |err|
                 std.debug.panic("failed to add components: {}", .{err});
         }
 
         // TODO: test errors
-        pub fn addComponentsChecked(self: *@This(), handle: Handle, add: anytype) error{ UseAfterFree, OutOfMemory }!void {
-            try self.changeArchetypeChecked(handle, .{ .add = add, .remove = Archetype.initBits(Archetype.Bits.initEmpty()) });
+        pub fn addComponentsChecked(self: *Self, handle: Handle, add: anytype) error{ UseAfterFree, OutOfMemory }!void {
+            try self.changeArchetypeChecked(handle, .{ .add = add, .remove = Archetype(Self).initBits(Archetype(Self).Bits.initEmpty()) });
         }
 
         // TODO: return a bool indicating if it was present or no? also we could have a faster
         // hasComponents check for when you don't need the actual data?
-        pub fn removeComponents(self: *@This(), entity: Handle, remove: anytype) void {
+        pub fn removeComponents(self: *Self, entity: Handle, remove: anytype) void {
             self.removeComponentsChecked(entity, remove) catch |err|
                 std.debug.panic("failed to remove components: {}", .{err});
         }
@@ -331,41 +121,14 @@ pub fn Entities(comptime registered_components: anytype) type {
         // TODO: test errors
         // XXX: allow either bitset or tuple wherever we allow one or the other? or have the tuple
         // here (convenient) and the bitset in change archetype (advanced).
-        pub fn removeComponentsChecked(self: *@This(), handle: Handle, remove: anytype) error{ UseAfterFree, OutOfMemory }!void {
+        pub fn removeComponentsChecked(self: *Self, handle: Handle, remove: anytype) error{ UseAfterFree, OutOfMemory }!void {
             try self.changeArchetypeChecked(
                 handle,
                 .{
                     .add = .{},
-                    .remove = Archetype.init(remove),
+                    .remove = Archetype(Self).init(remove),
                 },
             );
-        }
-
-        fn getOrPutArchetypeList(self: *@This(), archetype: Archetype) Allocator.Error!*ArchetypeList {
-            comptime assert(max_archetypes > 0);
-
-            const entry = self.archetype_lists.getOrPutAssumeCapacity(archetype);
-
-            if (!entry.found_existing) {
-                // TODO: clean up?
-                // We actually have max + 1 avaialble to make it possible to check even after creation
-                // may have occurred via get or put.
-                if (self.archetype_lists.count() >= max_archetypes) {
-                    return error.OutOfMemory;
-                }
-                entry.value_ptr.* = ArchetypeList.init(archetype);
-            }
-
-            return entry.value_ptr;
-        }
-
-        fn copyComponents(to: *const EntityPointer, from: EntityPointer, which: Archetype) void {
-            inline for (0..component_names.len) |i| {
-                if (which.bits.isSet(i)) {
-                    const component_name = @intToEnum(ComponentKind, i);
-                    to.archetype_list.getComponent(to.index, component_name).* = from.archetype_list.getComponent(from.index, component_name).*;
-                }
-            }
         }
 
         // XXX: use this in tests?
@@ -373,7 +136,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         // archetype, so we need a way to make an archetype from a tuple, which is generally useful
         // anyway. we may also want a way to go back to the tuple, or just say no you create it
         // before passing it in idk. i mean we are gonna do that in here anyway lol.
-        pub fn changeArchetype(self: *@This(), handle: Handle, changes: anytype) void {
+        pub fn changeArchetype(self: *Self, handle: Handle, changes: anytype) void {
             self.changeArchetypeChecked(handle, changes) catch |err|
                 std.debug.panic("failed to change archetype: {}", .{err});
         }
@@ -382,19 +145,19 @@ pub fn Entities(comptime registered_components: anytype) type {
         // TODO: early out if no change?
         // Changes the components archetype. The logical equivalent of removing `changes.remove`,
         // and then adding `changes.add`.
-        pub fn changeArchetypeChecked(self: *@This(), handle: Handle, changes: anytype) error{ UseAfterFree, OutOfMemory }!void {
+        pub fn changeArchetypeChecked(self: *Self, handle: Handle, changes: anytype) error{ UseAfterFree, OutOfMemory }!void {
             // Determine our archetype bitsets
             const pointer = try self.slot_map.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
-            const components_added = Archetype.init(changes.add);
+            const components_added = Archetype(Self).init(changes.add);
             const components_removed = changes.remove; // XXX: don't need separate variable
-            const archetype = Archetype.initBits(previous_archetype.bits.unionWith(components_added.bits)
+            const archetype = Archetype(Self).initBits(previous_archetype.bits.unionWith(components_added.bits)
                 .differenceWith(components_removed.bits));
-            const components_copied = Archetype.initBits(previous_archetype.bits.intersectWith(archetype.bits)
+            const components_copied = Archetype(Self).initBits(previous_archetype.bits.intersectWith(archetype.bits)
                 .differenceWith(components_added.bits));
 
             // Create the new entity location
-            const old_pointer: EntityPointer = pointer.*;
+            const old_pointer: EntityPointer(Self) = pointer.*;
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             const index = try archetype_list.append(self.allocator, handle);
             errdefer archetype_list.pop();
@@ -411,13 +174,12 @@ pub fn Entities(comptime registered_components: anytype) type {
             old_pointer.archetype_list.swapRemove(old_pointer.index, &self.slot_map);
         }
 
-        // XXX: make api clearer wrt generations, test?
-        pub fn exists(self: *@This(), handle: Handle) bool {
-            return self.slot_map.exists(handle);
+        pub fn getComponent(self: *Self, entity: Handle, comptime component: ComponentKind) ?*component_types[@enumToInt(component)] {
+            return self.getComponentChecked(entity, component) catch unreachable;
         }
 
         // TODO: check assertions
-        pub fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentKind) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
+        pub fn getComponentChecked(self: *Self, entity: Handle, comptime component: ComponentKind) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
             // XXX: should it just return null from there or is that slower?
             const entity_pointer = try self.slot_map.get(entity);
             if (!entity_pointer.archetype_list.archetype.bits.isSet(@enumToInt(component))) {
@@ -426,119 +188,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
 
-        pub fn getComponent(self: *@This(), entity: Handle, comptime component: ComponentKind) ?*component_types[@enumToInt(component)] {
-            return self.getComponentChecked(entity, component) catch unreachable;
-        }
-
-        pub fn Iterator(comptime components: anytype) type {
-            return struct {
-                const Components = entity: {
-                    var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
-                    var i = 0;
-                    for (components) |component| {
-                        const entity_name: ComponentKind = component;
-                        const FieldType = *component_types[@enumToInt(entity_name)];
-                        fields[i] = Type.StructField{
-                            .name = component_names[@enumToInt(entity_name)],
-                            .type = FieldType,
-                            .default_value = null,
-                            .is_comptime = false,
-                            .alignment = @alignOf(FieldType),
-                        };
-                        i += 1;
-                    }
-                    break :entity @Type(Type{
-                        .Struct = Type.Struct{
-                            .layout = .Auto,
-                            .backing_integer = null,
-                            .fields = &fields,
-                            .decls = &[_]Type.Declaration{},
-                            .is_tuple = false,
-                        },
-                    });
-                };
-
-                // TODO: maybe have a getter on the iterator for the handle since that's less often used instead of returning it here?
-                const Item = struct {
-                    handle: Handle,
-                    comps: Components,
-                };
-
-                entities: *Entities(registered_components),
-                archetype: Archetype,
-                // TODO: just store index into archetype list instead of iterator now that we're storing entities too?
-                archetype_lists: AutoArrayHashMapUnmanaged(Archetype, ArchetypeList).Iterator,
-                archetype_list: ?*ArchetypeList,
-                handle_iterator: ArchetypeList.HandleIterator,
-
-                fn init(entities: *Entities(registered_components)) @This() {
-                    return .{
-                        .entities = entities,
-                        // TODO: replace with getter if possible
-                        .archetype = comptime archetype: {
-                            var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
-                            for (components) |field| {
-                                const component_name: ComponentKind = field;
-                                archetype.bits.set(@enumToInt(component_name));
-                            }
-                            break :archetype archetype;
-                        },
-                        .archetype_lists = entities.archetype_lists.iterator(),
-                        .archetype_list = null,
-                        // XXX: ...
-                        .handle_iterator = undefined,
-                    };
-                }
-
-                pub fn next(self: *@This()) ?Item {
-                    while (true) {
-                        // If we don't have a page list, find the next compatible archetype's page
-                        // list
-                        if (self.archetype_list == null) {
-                            self.archetype_list = while (self.archetype_lists.next()) |page| {
-                                if (page.key_ptr.bits.supersetOf(self.archetype.bits)) {
-                                    break page.value_ptr;
-                                }
-                            } else return null;
-                            self.handle_iterator = self.archetype_list.?.handleIterator();
-                        }
-
-                        // Get the next entity in this page list, if it exists
-                        if (self.handle_iterator.peek()) |handle| {
-                            var item: Item = undefined;
-                            item.handle = handle.*;
-                            comptime assert(@TypeOf(self.archetype_list.?.handles).prealloc_count == 0);
-                            inline for (@typeInfo(Components).Struct.fields) |field| {
-                                comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).prealloc_count == 0);
-                                comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);
-                                @field(item.comps, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
-                            }
-                            _ = self.handle_iterator.next();
-                            return item;
-                        }
-
-                        // XXX: can't we just ask for it here..?
-                        self.archetype_list = null;
-                    }
-                }
-
-                fn swapRemoveChecked(self: *@This()) error{NothingToRemove}!void {
-                    if (self.archetype_list == null) return error.NothingToRemove;
-                    _ = self.handle_iterator.prev();
-                    self.entities.swapRemoveChecked(self.handle_iterator.peek().?.*) catch unreachable;
-                }
-
-                pub fn swapRemove(self: *@This()) void {
-                    self.swapRemoveChecked() catch unreachable;
-                }
-            };
-        }
-
-        pub fn iterator(self: *@This(), components: anytype) Iterator(components) {
-            return Iterator(components).init(self);
-        }
-
-        pub fn clearRetainingCapacity(self: *@This()) void {
+        pub fn clearRetainingCapacity(self: *Self) void {
             // This empties the archetype lists, but keeps them in place. A more clever
             // implementation could also allow repurposing them for a different set of archetypes.
             for (self.archetype_lists.values()) |*archetype_list| {
@@ -546,6 +196,354 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
             self.slot_map.clearRetainingCapacity();
         }
+
+        pub fn iterator(self: *Self, components: anytype) Iterator(Self, components) {
+            return Iterator(Self, components).init(self);
+        }
+
+        fn find_component_name(comptime name: []const u8) ComponentKind {
+            const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
+            if (maybe_index) |index| {
+                return @intToEnum(ComponentKind, index);
+            } else {
+                @compileError("no registered component named '" ++ name ++ "'");
+            }
+        }
+
+        fn getOrPutArchetypeList(self: *Self, archetype: Archetype(Self)) Allocator.Error!*ArchetypeList(Self) {
+            comptime assert(max_archetypes > 0);
+
+            const entry = self.archetype_lists.getOrPutAssumeCapacity(archetype);
+
+            if (!entry.found_existing) {
+                // TODO: clean up?
+                // We actually have max + 1 avaialble to make it possible to check even after creation
+                // may have occurred via get or put.
+                if (self.archetype_lists.count() >= max_archetypes) {
+                    return error.OutOfMemory;
+                }
+                entry.value_ptr.* = ArchetypeList(Self).init(archetype);
+            }
+
+            return entry.value_ptr;
+        }
+
+        fn copyComponents(to: *const EntityPointer(Self), from: EntityPointer(Self), which: Archetype(Self)) void {
+            inline for (0..component_names.len) |i| {
+                if (which.bits.isSet(i)) {
+                    const component_name = @intToEnum(ComponentKind, i);
+                    to.archetype_list.getComponent(to.index, component_name).* = from.archetype_list.getComponent(from.index, component_name).*;
+                }
+            }
+        }
+
+        fn setComponents(pointer: *const EntityPointer(Self), components: anytype) void {
+            inline for (@typeInfo(@TypeOf(components)).Struct.fields) |f| {
+                const component_name = comptime find_component_name(f.name);
+                if (@TypeOf(components) == Prefab(Self)) {
+                    if (@field(components, f.name)) |component| {
+                        pointer.archetype_list.getComponent(pointer.index, component_name).* = component;
+                    }
+                } else {
+                    pointer.archetype_list.getComponent(pointer.index, component_name).* = @field(components, f.name);
+                }
+            }
+        }
+    };
+}
+
+fn ArchetypeList(comptime T: type) type {
+    const ComponentLists = components: {
+        var fields: [T.component_names.len]Type.StructField = undefined;
+        for (T.component_names, T.component_types, 0..) |comp_name, comp_type, i| {
+            const FieldType = SegmentedListFirstShelfCount(comp_type, first_shelf_count, false);
+            fields[i] = Type.StructField{
+                .name = comp_name,
+                .type = FieldType,
+                .default_value = &FieldType{},
+                .is_comptime = false,
+                .alignment = @alignOf(FieldType),
+            };
+        }
+        break :components @Type(Type{
+            .Struct = Type.Struct{
+                .layout = .Auto,
+                .backing_integer = null,
+                .fields = &fields,
+                .decls = &[_]Type.Declaration{},
+                .is_tuple = false,
+            },
+        });
+    };
+
+    return struct {
+        const Self = @This();
+
+        pub const HandleIterator = SegmentedListFirstShelfCount(T.Handle, first_shelf_count, false).Iterator;
+
+        archetype: Archetype(T),
+        handles: SegmentedListFirstShelfCount(T.Handle, first_shelf_count, false) = .{},
+        comps: ComponentLists = .{},
+
+        pub fn init(archetype: Archetype(T)) Self {
+            return .{ .archetype = archetype };
+        }
+
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            inline for (T.component_names) |comp_name| {
+                @field(self.comps, comp_name).deinit(allocator);
+            }
+            self.handles.deinit(allocator);
+        }
+
+        // XXX: better api that returns pointers so don't have to recalculate them?
+        pub fn append(self: *Self, allocator: Allocator, handle: T.Handle) Allocator.Error!u32 {
+            // XXX: could optimize this logic a little since all lists are gonna match eachother, also
+            // only really need one size, etc
+            inline for (T.component_names, 0..) |comp_name, i| {
+                if (self.archetype.bits.isSet(i)) {
+                    _ = try @field(self.comps, comp_name).addOne(allocator);
+                }
+            }
+            const index = self.handles.len;
+            try self.handles.append(allocator, handle);
+            // XXX: can't overflow because fails earlier right?
+            return @intCast(u32, index);
+        }
+
+        // XXX: put in (debug mode?) protection to prevent doing this while iterating? same for creating?
+        // XXX: document that the ecs moves structures (so e.g. internal pointers will get invalidated). this
+        // was already true but only happened when changing shape before which is less commonly done.
+        pub fn swapRemove(self: *Self, index: u32, slot_map: *T.HandleSlotMap) void {
+            // XXX: instead of separate len use handles len? or fold all into same thing eventually anyway..?
+            // XXX: only needed in debug mode right?
+            assert(index < self.handles.len);
+            inline for (T.component_names, 0..) |comp_name, i| {
+                if (self.archetype.bits.isSet(i)) {
+                    // XXX: here and below, i think it's okay to pop assign as lon gas we do unchecked, since
+                    // the memory is guarenteed to be there right? (the problem case is swap removing if size 1)
+                    var components = &@field(self.comps, comp_name);
+                    components.uncheckedAt(index).* = components.pop().?;
+                }
+            }
+            const moved_handle = self.handles.pop().?;
+            // XXX: only really need to update the generation here right?
+            self.handles.uncheckedAt(index).* = moved_handle;
+            // XXX: checking this in case we're deleting the last one in which case we don't wanna mess with
+            // slots...? we also maybe don't wanna do the above stuff but may not matter?? is there a way to
+            // make this less error prone? maybe in general don't do logic when last one, or return stuff to
+            // be used outside to avoid probme based on order, etc
+            if (index != self.handles.len) {
+                // XXX: don't need to check generation, always checked at public interface right? check in debug mode or no?
+                slot_map.getUnchecked(moved_handle).index = index;
+            }
+        }
+
+        pub fn handleIterator(self: *Self) HandleIterator {
+            return self.handles.iterator(0);
+        }
+
+        pub fn getComponent(self: *Self, index: u32, comptime component_name: T.ComponentKind) *T.component_types[@enumToInt(component_name)] {
+            // XXX: unchecked is correct right? assert in debug mode or no?
+            return @field(self.comps, T.component_names[@enumToInt(component_name)]).uncheckedAt(index);
+        }
+
+        pub fn getHandle(self: *Self, index: u32) T.Handle {
+            // XXX: unchecked is correct right? assert in debug mode or no?
+            return self.handles.uncheckedAt(index);
+        }
+
+        pub fn clearRetainingCapacity(self: *Self) void {
+            self.handles.clearRetainingCapacity();
+            inline for (T.component_names) |comp_name| {
+                @field(self.comps, comp_name).clearRetainingCapacity();
+            }
+        }
+    };
+}
+
+pub fn Iterator(comptime T: type, comptime components: anytype) type {
+    return struct {
+        const Components = entity: {
+            var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
+            var i = 0;
+            for (components) |component| {
+                const entity_name: T.ComponentKind = component;
+                const FieldType = *T.component_types[@enumToInt(entity_name)];
+                fields[i] = Type.StructField{
+                    .name = T.component_names[@enumToInt(entity_name)],
+                    .type = FieldType,
+                    .default_value = null,
+                    .is_comptime = false,
+                    .alignment = @alignOf(FieldType),
+                };
+                i += 1;
+            }
+            break :entity @Type(Type{
+                .Struct = Type.Struct{
+                    .layout = .Auto,
+                    .backing_integer = null,
+                    .fields = &fields,
+                    .decls = &[_]Type.Declaration{},
+                    .is_tuple = false,
+                },
+            });
+        };
+
+        // TODO: maybe have a getter on the iterator for the handle since that's less often used instead of returning it here?
+        const Item = struct {
+            handle: T.Handle,
+            comps: Components,
+        };
+
+        archetype: Archetype(T),
+        entities: *T,
+        // TODO: just store index into archetype list instead of iterator now that we're storing entities too?
+        archetype_lists: AutoArrayHashMapUnmanaged(Archetype(T), ArchetypeList(T)).Iterator,
+        archetype_list: ?*ArchetypeList(T),
+        handle_iterator: ArchetypeList(T).HandleIterator,
+
+        pub fn next(self: *@This()) ?Item {
+            while (true) {
+                // If we don't have a page list, find the next compatible archetype's page
+                // list
+                if (self.archetype_list == null) {
+                    self.archetype_list = while (self.archetype_lists.next()) |page| {
+                        if (page.key_ptr.bits.supersetOf(self.archetype.bits)) {
+                            break page.value_ptr;
+                        }
+                    } else return null;
+                    self.handle_iterator = self.archetype_list.?.handleIterator();
+                }
+
+                // Get the next entity in this page list, if it exists
+                if (self.handle_iterator.peek()) |handle| {
+                    var item: Item = undefined;
+                    item.handle = handle.*;
+                    comptime assert(@TypeOf(self.archetype_list.?.handles).prealloc_count == 0);
+                    inline for (@typeInfo(Components).Struct.fields) |field| {
+                        comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).prealloc_count == 0);
+                        comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);
+                        @field(item.comps, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
+                    }
+                    _ = self.handle_iterator.next();
+                    return item;
+                }
+
+                // XXX: can't we just ask for it here..?
+                self.archetype_list = null;
+            }
+        }
+
+        pub fn swapRemove(self: *@This()) void {
+            self.swapRemoveChecked() catch unreachable;
+        }
+
+        fn swapRemoveChecked(self: *@This()) error{NothingToRemove}!void {
+            if (self.archetype_list == null) return error.NothingToRemove;
+            _ = self.handle_iterator.prev();
+            self.entities.swapRemoveChecked(self.handle_iterator.peek().?.*) catch unreachable;
+        }
+
+        fn init(entities: *T) @This() {
+            return .{
+                .entities = entities,
+                // TODO: replace with getter if possible
+                .archetype = comptime archetype: {
+                    var archetype = Archetype(T).initBits(Archetype(T).Bits.initEmpty());
+                    for (components) |field| {
+                        const component_name: T.ComponentKind = field;
+                        archetype.bits.set(@enumToInt(component_name));
+                    }
+                    break :archetype archetype;
+                },
+                .archetype_lists = entities.archetype_lists.iterator(),
+                .archetype_list = null,
+                // XXX: ...
+                .handle_iterator = undefined,
+            };
+        }
+    };
+}
+
+// XXX: consider renaming to component flags or such since it's not always used to represent
+// an archetype
+pub fn Archetype(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        pub const Bits = std.bit_set.IntegerBitSet(T.component_names.len);
+
+        bits: Bits,
+
+        // Creates an archetype from a prefab, a struct of components, or a tuple of enum
+        // component names.
+        pub fn init(components: anytype) Self {
+            if (@TypeOf(components) == Prefab(T)) {
+                var archetype = initBits(Bits.initEmpty());
+                inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                    if (@field(components, field.name) != null) {
+                        archetype.bits.set(@enumToInt(T.find_component_name(field.name)));
+                    }
+                }
+                return archetype;
+            } else if (@typeInfo(@TypeOf(components)).Struct.is_tuple) {
+                var archetype = initBits(Bits.initEmpty());
+                inline for (components) |c| {
+                    const component: T.ComponentKind = c;
+                    archetype.bits.set(@enumToInt(component));
+                }
+                return archetype;
+            } else comptime {
+                var archetype = initBits(Bits.initEmpty());
+                for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                    archetype.bits.set(@enumToInt(T.find_component_name(field.name)));
+                }
+                return archetype;
+            }
+        }
+
+        pub fn initBits(bits: Bits) Self {
+            return .{ .bits = bits };
+        }
+    };
+}
+
+// TODO: how many places do we generate a new type from entity? might wanna make a helper for this?
+pub fn Prefab(comptime T: type) type {
+    var fields: [T.component_names.len]Type.StructField = undefined;
+    for (T.component_types, T.component_names, 0..) |comp_type, comp_name, i| {
+        const field_type = ?comp_type;
+        fields[i] = Type.StructField{
+            .name = comp_name,
+            .type = field_type,
+            .default_value = &null,
+            .is_comptime = false,
+            .alignment = @alignOf(field_type),
+        };
+    }
+    return @Type(Type{
+        .Struct = Type.Struct{
+            .layout = .Auto,
+            .backing_integer = null,
+            .fields = &fields,
+            .decls = &[_]Type.Declaration{},
+            .is_tuple = false,
+        },
+    });
+}
+
+pub fn ArchetypeChange(comptime T: type) type {
+    return struct {
+        add: Prefab(T),
+        remove: Archetype(T),
+    };
+}
+
+pub fn EntityPointer(comptime T: type) type {
+    return struct {
+        archetype_list: *ArchetypeList(T),
+        index: u32, // TODO: how did we decide on u32 here?
     };
 }
 
@@ -951,8 +949,7 @@ test "limits" {
     // Make sure our page index type is big enough
     {
         // TODO: break this out into constant?
-        const EntityPointer = Entities(.{}).EntityPointer;
-        const IndexInPage = std.meta.fields(EntityPointer)[std.meta.fieldIndex(EntityPointer, "index").?].type;
+        const IndexInPage = std.meta.fields(EntityPointer(Entities(.{})))[std.meta.fieldIndex(EntityPointer(Entities(.{})), "index").?].type;
         assert(std.math.maxInt(IndexInPage) > page_size);
     }
 
@@ -1384,14 +1381,14 @@ test "prefabs" {
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
     defer entities.deinit();
 
-    var prefab: @TypeOf(entities).Prefab = .{ .y = 10, .z = 20 };
+    var prefab: Prefab(@TypeOf(entities)) = .{ .y = 10, .z = 20 };
     var instance = entities.create(prefab);
 
     try std.testing.expect(entities.getComponent(instance, .x) == null);
     try std.testing.expect(entities.getComponent(instance, .y).?.* == 10);
     try std.testing.expect(entities.getComponent(instance, .z).?.* == 20);
 
-    entities.addComponents(instance, @TypeOf(entities).Prefab{ .x = 30 });
+    entities.addComponents(instance, Prefab(@TypeOf(entities)){ .x = 30 });
     try std.testing.expect(entities.getComponent(instance, .x).?.* == 30);
     try std.testing.expect(entities.getComponent(instance, .y).?.* == 10);
     try std.testing.expect(entities.getComponent(instance, .z).?.* == 20);

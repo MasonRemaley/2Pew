@@ -5,8 +5,8 @@ const BoundedArrayList = @import("../bounded_array_list.zig").BoundedArrayList;
 
 pub fn CommandBuffer(comptime Entities: anytype) type {
     const Handle = Entities.Handle;
-    const Prefab = Entities.Prefab;
-    const ArchetypeChange = Entities.ArchetypeChange;
+    const Prefab = ecs.entities.Prefab(Entities);
+    const ArchetypeChange = ecs.entities.ArchetypeChange(Entities);
     const ArchetypeChangeCommand = struct {
         handle: Handle,
         change: ArchetypeChange,
