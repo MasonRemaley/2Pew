@@ -25,14 +25,18 @@ const first_shelf_count = 8;
 pub fn Entities(comptime registered_components: anytype) type {
     return struct {
         // Meta programming to get the component names and types
-        const ComponentName = std.meta.FieldEnum(@TypeOf(registered_components));
+        const ComponentKind = std.meta.FieldEnum(@TypeOf(registered_components));
 
         const component_types = field_values(registered_components);
         const component_names = std.meta.fieldNames(@TypeOf(registered_components));
 
-        fn find_component_name(comptime name: []const u8) ?ComponentName {
-            const index = std.meta.fieldIndex(@TypeOf(registered_components), name);
-            return @intToEnum(ComponentName, index orelse return null);
+        fn find_component_name(comptime name: []const u8) ComponentKind {
+            const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
+            if (maybe_index) |index| {
+                return @intToEnum(ComponentKind, index);
+            } else {
+                @compileError("no registered component named '" ++ name ++ "'");
+            }
         }
 
         // Public types used by the ECS
@@ -51,21 +55,21 @@ pub fn Entities(comptime registered_components: anytype) type {
                     var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
                     inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
                         if (@field(components, field.name) != null) {
-                            archetype.bits.set(@enumToInt(find_component_name(field.name).?));
+                            archetype.bits.set(@enumToInt(find_component_name(field.name)));
                         }
                     }
                     return archetype;
                 } else if (@typeInfo(@TypeOf(components)).Struct.is_tuple) {
                     var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
                     inline for (components) |c| {
-                        const component: ComponentName = c;
+                        const component: ComponentKind = c;
                         archetype.bits.set(@enumToInt(component));
                     }
                     return archetype;
                 } else comptime {
                     var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
                     for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                        archetype.bits.set(@enumToInt(find_component_name(field.name).?));
+                        archetype.bits.set(@enumToInt(find_component_name(field.name)));
                     }
                     return archetype;
                 }
@@ -196,11 +200,11 @@ pub fn Entities(comptime registered_components: anytype) type {
                 }
             }
 
-            fn ComponentIterator(comptime component_name: ComponentName) type {
+            fn ComponentIterator(comptime component_name: ComponentKind) type {
                 return SegmentedListFirstShelfCount(component_types[@enumToInt(component_name)], first_shelf_count, false).Iterator;
             }
 
-            fn componentIterator(self: *@This(), comptime component_name: ComponentName) ComponentIterator(component_name) {
+            fn componentIterator(self: *@This(), comptime component_name: ComponentKind) ComponentIterator(component_name) {
                 return @field(self.comps, component_names[@enumToInt(component_name)]).iterator(0);
             }
 
@@ -210,7 +214,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 return self.handles.iterator(0);
             }
 
-            fn getComponent(self: *@This(), index: u32, comptime component_name: ComponentName) *component_types[@enumToInt(component_name)] {
+            fn getComponent(self: *@This(), index: u32, comptime component_name: ComponentKind) *component_types[@enumToInt(component_name)] {
                 // XXX: unchecked is correct right? assert in debug mode or no?
                 return @field(self.comps, component_names[@enumToInt(component_name)]).uncheckedAt(index);
             }
@@ -270,7 +274,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         fn setComponents(pointer: *const EntityPointer, components: anytype) void {
             inline for (@typeInfo(@TypeOf(components)).Struct.fields) |f| {
-                const component_name = comptime find_component_name(f.name).?;
+                const component_name = comptime find_component_name(f.name);
                 if (@TypeOf(components) == Prefab) {
                     if (@field(components, f.name)) |component| {
                         pointer.archetype_list.getComponent(pointer.index, component_name).* = component;
@@ -358,7 +362,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         fn copyComponents(to: *const EntityPointer, from: EntityPointer, which: Archetype) void {
             inline for (0..component_names.len) |i| {
                 if (which.bits.isSet(i)) {
-                    const component_name = @intToEnum(ComponentName, i);
+                    const component_name = @intToEnum(ComponentKind, i);
                     to.archetype_list.getComponent(to.index, component_name).* = from.archetype_list.getComponent(from.index, component_name).*;
                 }
             }
@@ -413,7 +417,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         // TODO: check assertions
-        pub fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentName) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
+        pub fn getComponentChecked(self: *@This(), entity: Handle, comptime component: ComponentKind) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
             // XXX: should it just return null from there or is that slower?
             const entity_pointer = try self.slot_map.get(entity);
             if (!entity_pointer.archetype_list.archetype.bits.isSet(@enumToInt(component))) {
@@ -422,7 +426,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
 
-        pub fn getComponent(self: *@This(), entity: Handle, comptime component: ComponentName) ?*component_types[@enumToInt(component)] {
+        pub fn getComponent(self: *@This(), entity: Handle, comptime component: ComponentKind) ?*component_types[@enumToInt(component)] {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
@@ -432,7 +436,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                     var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
                     var i = 0;
                     for (components) |component| {
-                        const entity_name: ComponentName = component;
+                        const entity_name: ComponentKind = component;
                         const FieldType = *component_types[@enumToInt(entity_name)];
                         fields[i] = Type.StructField{
                             .name = component_names[@enumToInt(entity_name)],
@@ -474,7 +478,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                         .archetype = comptime archetype: {
                             var archetype = Archetype.initBits(Archetype.Bits.initEmpty());
                             for (components) |field| {
-                                const component_name: ComponentName = field;
+                                const component_name: ComponentKind = field;
                                 archetype.bits.set(@enumToInt(component_name));
                             }
                             break :archetype archetype;
