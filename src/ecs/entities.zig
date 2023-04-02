@@ -96,7 +96,6 @@ pub fn Entities(comptime registered_components: anytype) type {
             entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.slot_map);
         }
 
-        // XXX: make api clearer wrt generations, test?
         pub fn exists(self: *Self, handle: Handle) bool {
             return self.slot_map.exists(handle);
         }
@@ -118,9 +117,6 @@ pub fn Entities(comptime registered_components: anytype) type {
                 std.debug.panic("failed to remove components: {}", .{err});
         }
 
-        // TODO: test errors
-        // XXX: allow either bitset or tuple wherever we allow one or the other? or have the tuple
-        // here (convenient) and the bitset in change archetype (advanced).
         pub fn removeComponentsChecked(self: *Self, handle: Handle, remove: anytype) error{ UseAfterFree, OutOfMemory }!void {
             try self.changeArchetypeChecked(
                 handle,
@@ -131,11 +127,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             );
         }
 
-        // XXX: use this in tests?
-        // XXX: need way to make a concrete type for remove. the obvious candidate is just using
-        // archetype, so we need a way to make an archetype from a tuple, which is generally useful
-        // anyway. we may also want a way to go back to the tuple, or just say no you create it
-        // before passing it in idk. i mean we are gonna do that in here anyway lol.
+        // TODO: use this in tests?
         pub fn changeArchetype(self: *Self, handle: Handle, changes: anytype) void {
             self.changeArchetypeChecked(handle, changes) catch |err|
                 std.debug.panic("failed to change archetype: {}", .{err});
@@ -150,9 +142,8 @@ pub fn Entities(comptime registered_components: anytype) type {
             const pointer = try self.slot_map.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
             const components_added = Archetype(Self).init(changes.add);
-            const components_removed = changes.remove; // XXX: don't need separate variable
             const archetype = Archetype(Self).initBits(previous_archetype.bits.unionWith(components_added.bits)
-                .differenceWith(components_removed.bits));
+                .differenceWith(changes.remove.bits));
             const components_copied = Archetype(Self).initBits(previous_archetype.bits.intersectWith(archetype.bits)
                 .differenceWith(components_added.bits));
 
@@ -178,13 +169,8 @@ pub fn Entities(comptime registered_components: anytype) type {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
-        // TODO: check assertions
         pub fn getComponentChecked(self: *Self, entity: Handle, comptime component: ComponentKind) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
-            // XXX: should it just return null from there or is that slower?
             const entity_pointer = try self.slot_map.get(entity);
-            if (!entity_pointer.archetype_list.archetype.bits.isSet(@enumToInt(component))) {
-                return null;
-            }
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
 
@@ -232,7 +218,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             inline for (0..component_names.len) |i| {
                 if (which.bits.isSet(i)) {
                     const component_name = @intToEnum(ComponentKind, i);
-                    to.archetype_list.getComponent(to.index, component_name).* = from.archetype_list.getComponent(from.index, component_name).*;
+                    to.archetype_list.getComponentUnchecked(to.index, component_name).* = from.archetype_list.getComponentUnchecked(from.index, component_name).*;
                 }
             }
         }
@@ -242,10 +228,10 @@ pub fn Entities(comptime registered_components: anytype) type {
                 const component_name = comptime find_component_name(f.name);
                 if (@TypeOf(components) == Prefab(Self)) {
                     if (@field(components, f.name)) |component| {
-                        pointer.archetype_list.getComponent(pointer.index, component_name).* = component;
+                        pointer.archetype_list.getComponentUnchecked(pointer.index, component_name).* = component;
                     }
                 } else {
-                    pointer.archetype_list.getComponent(pointer.index, component_name).* = @field(components, f.name);
+                    pointer.archetype_list.getComponentUnchecked(pointer.index, component_name).* = @field(components, f.name);
                 }
             }
         }
@@ -296,10 +282,9 @@ fn ArchetypeList(comptime T: type) type {
             self.handles.deinit(allocator);
         }
 
-        // XXX: better api that returns pointers so don't have to recalculate them?
+        // TODO: could return a set of optional pointers to avoid recalculating them, could
+        // have the append math between the lists be shared
         pub fn append(self: *Self, allocator: Allocator, handle: T.Handle) Allocator.Error!u32 {
-            // XXX: could optimize this logic a little since all lists are gonna match eachother, also
-            // only really need one size, etc
             inline for (T.component_names, 0..) |comp_name, i| {
                 if (self.archetype.bits.isSet(i)) {
                     _ = try @field(self.comps, comp_name).addOne(allocator);
@@ -307,34 +292,22 @@ fn ArchetypeList(comptime T: type) type {
             }
             const index = self.handles.len;
             try self.handles.append(allocator, handle);
-            // XXX: can't overflow because fails earlier right?
+            comptime assert(std.math.maxInt(u32) > max_entities);
             return @intCast(u32, index);
         }
 
-        // XXX: put in (debug mode?) protection to prevent doing this while iterating? same for creating?
-        // XXX: document that the ecs moves structures (so e.g. internal pointers will get invalidated). this
-        // was already true but only happened when changing shape before which is less commonly done.
         pub fn swapRemove(self: *Self, index: u32, slot_map: *T.HandleSlotMap) void {
-            // XXX: instead of separate len use handles len? or fold all into same thing eventually anyway..?
-            // XXX: only needed in debug mode right?
             assert(index < self.handles.len);
             inline for (T.component_names, 0..) |comp_name, i| {
                 if (self.archetype.bits.isSet(i)) {
-                    // XXX: here and below, i think it's okay to pop assign as lon gas we do unchecked, since
-                    // the memory is guarenteed to be there right? (the problem case is swap removing if size 1)
                     var components = &@field(self.comps, comp_name);
                     components.uncheckedAt(index).* = components.pop().?;
                 }
             }
             const moved_handle = self.handles.pop().?;
-            // XXX: only really need to update the generation here right?
             self.handles.uncheckedAt(index).* = moved_handle;
-            // XXX: checking this in case we're deleting the last one in which case we don't wanna mess with
-            // slots...? we also maybe don't wanna do the above stuff but may not matter?? is there a way to
-            // make this less error prone? maybe in general don't do logic when last one, or return stuff to
-            // be used outside to avoid probme based on order, etc
+            // TODO: why do i have to skip this if last?
             if (index != self.handles.len) {
-                // XXX: don't need to check generation, always checked at public interface right? check in debug mode or no?
                 slot_map.getUnchecked(moved_handle).index = index;
             }
         }
@@ -343,14 +316,15 @@ fn ArchetypeList(comptime T: type) type {
             return self.handles.iterator(0);
         }
 
-        pub fn getComponent(self: *Self, index: u32, comptime component_name: T.ComponentKind) *T.component_types[@enumToInt(component_name)] {
-            // XXX: unchecked is correct right? assert in debug mode or no?
-            return @field(self.comps, T.component_names[@enumToInt(component_name)]).uncheckedAt(index);
+        pub fn getComponent(self: *Self, index: u32, comptime component_name: T.ComponentKind) ?*T.component_types[@enumToInt(component_name)] {
+            if (!self.archetype.bits.isSet(@enumToInt(component_name))) {
+                return null;
+            }
+            return self.getComponentUnchecked(index, component_name);
         }
 
-        pub fn getHandle(self: *Self, index: u32) T.Handle {
-            // XXX: unchecked is correct right? assert in debug mode or no?
-            return self.handles.uncheckedAt(index);
+        pub fn getComponentUnchecked(self: *Self, index: u32, comptime component_name: T.ComponentKind) *T.component_types[@enumToInt(component_name)] {
+            return @field(self.comps, T.component_names[@enumToInt(component_name)]).uncheckedAt(index);
         }
 
         pub fn clearRetainingCapacity(self: *Self) void {
@@ -430,7 +404,7 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
                     return item;
                 }
 
-                // XXX: can't we just ask for it here..?
+                // TODO: can't we just ask for it here..?
                 self.archetype_list = null;
             }
         }
@@ -784,9 +758,6 @@ test "iter remove" {
         try std.testing.expect(entities.getComponentChecked(e2, .x) == error.UseAfterFree);
         try std.testing.expect(entities.getComponent(e3, .x).?.* == 30);
     }
-
-    // XXX: what if we're in between archetype lists? does it work right there? i THINK so? but should test it...
-    // XXX: use in game!
 }
 
 test "clear retaining capacity" {
@@ -830,7 +801,6 @@ test "clear retaining capacity" {
         }
 
         // XXX: test iters, test getcomponent on these
-        // try std.testing.expectEqual(
 
         for (first_batch, second_batch) |first, second| {
             var expected = first;
@@ -867,8 +837,6 @@ test "clear retaining capacity" {
     }
 }
 
-// XXX: use testing allocator--i think i'm leaking memory right now. that's FINE since like we're gonna use
-// a fixed buffer, but wanna get it right anyway.
 // Could use a more exhaustive test, this at least makes sure it compiles which was a problem
 // at one point!
 test "zero-sized-component" {
