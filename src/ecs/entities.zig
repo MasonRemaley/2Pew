@@ -239,28 +239,19 @@ pub fn Entities(comptime registered_components: anytype) type {
 }
 
 fn ArchetypeList(comptime T: type) type {
-    const ComponentLists = components: {
-        var fields: [T.component_names.len]Type.StructField = undefined;
-        for (T.component_names, T.component_types, 0..) |comp_name, comp_type, i| {
-            const FieldType = SegmentedListFirstShelfCount(comp_type, first_shelf_count, false);
-            fields[i] = Type.StructField{
-                .name = comp_name,
-                .type = FieldType,
-                .default_value = &FieldType{},
-                .is_comptime = false,
-                .alignment = @alignOf(FieldType),
-            };
+    const ComponentLists = ComponentMap(T, struct {
+        fn FieldType(comptime C: type) type {
+            return SegmentedListFirstShelfCount(C, first_shelf_count, false);
         }
-        break :components @Type(Type{
-            .Struct = Type.Struct{
-                .layout = .Auto,
-                .backing_integer = null,
-                .fields = &fields,
-                .decls = &[_]Type.Declaration{},
-                .is_tuple = false,
-            },
-        });
-    };
+
+        fn default_value(comptime C: type) ?*const anyopaque {
+            return &FieldType(C){};
+        }
+
+        fn skip(comptime _: T.ComponentKind) bool {
+            return false;
+        }
+    });
 
     return struct {
         const Self = @This();
@@ -338,31 +329,19 @@ fn ArchetypeList(comptime T: type) type {
 
 pub fn Iterator(comptime T: type, comptime components: anytype) type {
     return struct {
-        const Components = entity: {
-            var fields: [@typeInfo(@TypeOf(components)).Struct.fields.len]Type.StructField = undefined;
-            var i = 0;
-            for (components) |component| {
-                const entity_name: T.ComponentKind = component;
-                const FieldType = *T.component_types[@enumToInt(entity_name)];
-                fields[i] = Type.StructField{
-                    .name = T.component_names[@enumToInt(entity_name)],
-                    .type = FieldType,
-                    .default_value = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(FieldType),
-                };
-                i += 1;
+        const Components = ComponentMap(T, struct {
+            fn FieldType(comptime C: type) type {
+                return *C;
             }
-            break :entity @Type(Type{
-                .Struct = Type.Struct{
-                    .layout = .Auto,
-                    .backing_integer = null,
-                    .fields = &fields,
-                    .decls = &[_]Type.Declaration{},
-                    .is_tuple = false,
-                },
-            });
-        };
+
+            fn default_value(comptime _: type) ?*const anyopaque {
+                return &null;
+            }
+
+            fn skip(comptime kind: T.ComponentKind) bool {
+                return !ComponentFlags(T).init(components).bits.isSet(@enumToInt(kind));
+            }
+        });
 
         // TODO: maybe have a getter on the iterator for the handle since that's less often used instead of returning it here?
         const Item = struct {
@@ -473,27 +452,19 @@ pub fn ComponentFlags(comptime T: type) type {
     };
 }
 
-// TODO: how many places do we generate a new type from entity? might wanna make a helper for this?
 pub fn Prefab(comptime T: type) type {
-    var fields: [T.component_names.len]Type.StructField = undefined;
-    for (T.component_types, T.component_names, 0..) |comp_type, comp_name, i| {
-        const field_type = ?comp_type;
-        fields[i] = Type.StructField{
-            .name = comp_name,
-            .type = field_type,
-            .default_value = &null,
-            .is_comptime = false,
-            .alignment = @alignOf(field_type),
-        };
-    }
-    return @Type(Type{
-        .Struct = Type.Struct{
-            .layout = .Auto,
-            .backing_integer = null,
-            .fields = &fields,
-            .decls = &[_]Type.Declaration{},
-            .is_tuple = false,
-        },
+    return ComponentMap(T, struct {
+        fn FieldType(comptime C: type) type {
+            return ?C;
+        }
+
+        fn default_value(comptime _: type) ?*const anyopaque {
+            return &null;
+        }
+
+        fn skip(comptime _: T.ComponentKind) bool {
+            return false;
+        }
     });
 }
 
@@ -524,6 +495,33 @@ fn field_values(s: anytype) FieldValuesType(@TypeOf(s)) {
         values[i] = @field(s, field.name);
     }
     return values;
+}
+
+fn ComponentMap(comptime T: type, comptime Map: type) type {
+    var fields: [T.component_types.len]Type.StructField = undefined;
+    var len: usize = 0;
+    for (T.component_types, T.component_names, 0..) |comp_type, comp_name, i| {
+        if (!Map.skip(@intToEnum(T.ComponentKind, i))) {
+            const FieldType = Map.FieldType(comp_type);
+            fields[len] = Type.StructField{
+                .name = comp_name,
+                .type = FieldType,
+                .default_value = Map.default_value(comp_type),
+                .is_comptime = false,
+                .alignment = @alignOf(FieldType),
+            };
+            len += 1;
+        }
+    }
+    return @Type(Type{
+        .Struct = Type.Struct{
+            .layout = .Auto,
+            .backing_integer = null,
+            .fields = fields[0..len],
+            .decls = &[_]Type.Declaration{},
+            .is_tuple = false,
+        },
+    });
 }
 
 test "iter remove" {
