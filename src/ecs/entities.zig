@@ -346,7 +346,6 @@ pub fn IteratorDescriptor(comptime T: type) type {
 
 pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) type {
     return struct {
-        // XXX: respect mutability of descriptor!
         const all_components = ac: {
             comptime var flags = ComponentFlags(T).initBits(ComponentFlags(T).Bits.initEmpty());
             inline for (T.component_names, 0..) |comp_name, i| {
@@ -369,11 +368,21 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
         };
         const Item = ComponentMap(T, struct {
             fn FieldType(comptime kind: T.ComponentKind, comptime C: type) type {
-                if (!required_components.bits.isSet(@enumToInt(kind))) {
-                    return ?*C;
+                const name = T.component_names[@enumToInt(kind)];
+
+                var Result = C;
+
+                if (@field(descriptor, name).?.mutable) {
+                    Result = *Result;
                 } else {
-                    return *C;
+                    Result = *const Result;
                 }
+
+                if (@field(descriptor, name).?.optional) {
+                    Result = ?Result;
+                }
+
+                return Result;
             }
 
             fn default_value(comptime kind: T.ComponentKind, comptime _: type) ?*const anyopaque {
@@ -385,7 +394,7 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
             }
 
             fn skip(comptime kind: T.ComponentKind) bool {
-                return !all_components.bits.isSet(@enumToInt(kind));
+                return @field(descriptor, T.component_names[@enumToInt(kind)]) == null;
             }
         });
 
@@ -622,7 +631,7 @@ test "zero-sized-component" {
     }
 }
 
-test "optional iter" {
+test "iter desc" {
     var allocator = std.testing.allocator;
 
     var entities = try Entities(.{ .x = u32, .y = u8 }).init(allocator);
@@ -718,6 +727,66 @@ test "optional iter" {
             try std.testing.expect(expected.remove(iter.handle()));
         }
         try std.testing.expect(expected.count() == 0);
+    }
+
+    {
+        var iter = entities.iterator(.{ .x = .{ .mutable = true }, .y = .{} });
+        while (iter.next()) |entity| {
+            comptime assert(@TypeOf(entity.x) == *u32);
+            comptime assert(@TypeOf(entity.y) == *const u8);
+            entity.x.* += 1;
+        }
+
+        try std.testing.expect(entities.getComponent(e0, .x).?.* == 11);
+        try std.testing.expect(entities.getComponent(e1, .x).?.* == 21);
+        try std.testing.expect(entities.getComponent(e2, .x).?.* == 30);
+        try std.testing.expect(entities.getComponent(e3, .x).?.* == 40);
+    }
+
+    {
+        var iter = entities.iterator(.{ .x = .{ .mutable = true }, .y = .{ .optional = true } });
+        while (iter.next()) |entity| {
+            comptime assert(@TypeOf(entity.x) == *u32);
+            comptime assert(@TypeOf(entity.y) == ?*const u8);
+            entity.x.* += 1;
+        }
+
+        try std.testing.expect(entities.getComponent(e0, .x).?.* == 12);
+        try std.testing.expect(entities.getComponent(e1, .x).?.* == 22);
+        try std.testing.expect(entities.getComponent(e2, .x).?.* == 31);
+        try std.testing.expect(entities.getComponent(e3, .x).?.* == 41);
+    }
+
+    {
+        var iter = entities.iterator(.{ .x = .{ .mutable = true, .optional = true }, .y = .{ .optional = true } });
+        while (iter.next()) |entity| {
+            comptime assert(@TypeOf(entity.x) == ?*u32);
+            comptime assert(@TypeOf(entity.y) == ?*const u8);
+            if (entity.x) |x| {
+                x.* += 1;
+            }
+        }
+
+        try std.testing.expect(entities.getComponent(e0, .x).?.* == 13);
+        try std.testing.expect(entities.getComponent(e1, .x).?.* == 23);
+        try std.testing.expect(entities.getComponent(e2, .x).?.* == 32);
+        try std.testing.expect(entities.getComponent(e3, .x).?.* == 42);
+    }
+
+    {
+        var iter = entities.iterator(.{ .x = .{ .mutable = true, .optional = true }, .y = .{} });
+        while (iter.next()) |entity| {
+            comptime assert(@TypeOf(entity.x) == ?*u32);
+            comptime assert(@TypeOf(entity.y) == *const u8);
+            if (entity.x) |x| {
+                x.* += 1;
+            }
+        }
+
+        try std.testing.expect(entities.getComponent(e0, .x).?.* == 14);
+        try std.testing.expect(entities.getComponent(e1, .x).?.* == 24);
+        try std.testing.expect(entities.getComponent(e2, .x).?.* == 32);
+        try std.testing.expect(entities.getComponent(e3, .x).?.* == 42);
     }
 }
 
