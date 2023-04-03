@@ -34,7 +34,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         allocator: Allocator,
         slot_map: HandleSlotMap,
-        archetype_lists: AutoArrayHashMapUnmanaged(Archetype(Self), ArchetypeList(Self)),
+        archetype_lists: AutoArrayHashMapUnmanaged(ComponentFlags(Self), ArchetypeList(Self)),
 
         // Is designed to ensure compatibility with allocators that do not implement free.
         pub fn init(allocator: Allocator) Allocator.Error!Self {
@@ -42,7 +42,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             errdefer slot_map.deinit(allocator);
 
             var archetype_lists = archetype_lists: {
-                var archetype_lists = AutoArrayHashMapUnmanaged(Archetype(Self), ArchetypeList(Self)){};
+                var archetype_lists = AutoArrayHashMapUnmanaged(ComponentFlags(Self), ArchetypeList(Self)){};
                 // We leave room for one extra because we don't know whether or not getOrPut
                 // will allocate until afte it's done.
                 try archetype_lists.ensureTotalCapacity(allocator, max_archetypes + 1);
@@ -71,7 +71,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         pub fn createChecked(self: *Self, components: anytype) Allocator.Error!Handle {
-            const archetype = Archetype(Self).init(components);
+            const archetype = ComponentFlags(Self).init(components);
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             const handle = try self.slot_map.create(undefined);
             errdefer _ = self.slot_map.remove(handle) catch unreachable;
@@ -107,7 +107,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         // TODO: test errors
         pub fn addComponentsChecked(self: *Self, handle: Handle, add: anytype) error{ UseAfterFree, OutOfMemory }!void {
-            try self.changeArchetypeChecked(handle, .{ .add = add, .remove = Archetype(Self).initBits(Archetype(Self).Bits.initEmpty()) });
+            try self.changeArchetypeChecked(handle, .{ .add = add, .remove = ComponentFlags(Self).initBits(ComponentFlags(Self).Bits.initEmpty()) });
         }
 
         // TODO: return a bool indicating if it was present or no? also we could have a faster
@@ -122,7 +122,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 handle,
                 .{
                     .add = .{},
-                    .remove = Archetype(Self).init(remove),
+                    .remove = ComponentFlags(Self).init(remove),
                 },
             );
         }
@@ -141,10 +141,10 @@ pub fn Entities(comptime registered_components: anytype) type {
             // Determine our archetype bitsets
             const pointer = try self.slot_map.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
-            const components_added = Archetype(Self).init(changes.add);
-            const archetype = Archetype(Self).initBits(previous_archetype.bits.unionWith(components_added.bits)
+            const components_added = ComponentFlags(Self).init(changes.add);
+            const archetype = ComponentFlags(Self).initBits(previous_archetype.bits.unionWith(components_added.bits)
                 .differenceWith(changes.remove.bits));
-            const components_copied = Archetype(Self).initBits(previous_archetype.bits.intersectWith(archetype.bits)
+            const components_copied = ComponentFlags(Self).initBits(previous_archetype.bits.intersectWith(archetype.bits)
                 .differenceWith(components_added.bits));
 
             // Create the new entity location
@@ -196,7 +196,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
         }
 
-        fn getOrPutArchetypeList(self: *Self, archetype: Archetype(Self)) Allocator.Error!*ArchetypeList(Self) {
+        fn getOrPutArchetypeList(self: *Self, archetype: ComponentFlags(Self)) Allocator.Error!*ArchetypeList(Self) {
             comptime assert(max_archetypes > 0);
 
             const entry = self.archetype_lists.getOrPutAssumeCapacity(archetype);
@@ -214,7 +214,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             return entry.value_ptr;
         }
 
-        fn copyComponents(to: *const EntityPointer(Self), from: EntityPointer(Self), which: Archetype(Self)) void {
+        fn copyComponents(to: *const EntityPointer(Self), from: EntityPointer(Self), which: ComponentFlags(Self)) void {
             inline for (0..component_names.len) |i| {
                 if (which.bits.isSet(i)) {
                     const component_name = @intToEnum(ComponentKind, i);
@@ -267,11 +267,11 @@ fn ArchetypeList(comptime T: type) type {
 
         pub const HandleIterator = SegmentedListFirstShelfCount(T.Handle, first_shelf_count, false).Iterator;
 
-        archetype: Archetype(T),
+        archetype: ComponentFlags(T),
         handles: SegmentedListFirstShelfCount(T.Handle, first_shelf_count, false) = .{},
         comps: ComponentLists = .{},
 
-        pub fn init(archetype: Archetype(T)) Self {
+        pub fn init(archetype: ComponentFlags(T)) Self {
             return .{ .archetype = archetype };
         }
 
@@ -370,10 +370,12 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
             comps: Components,
         };
 
-        archetype: Archetype(T),
+        archetype: ComponentFlags(T),
         entities: *T,
-        // TODO: just store index into archetype list instead of iterator now that we're storing entities too?
-        archetype_lists: AutoArrayHashMapUnmanaged(Archetype(T), ArchetypeList(T)).Iterator,
+        // It's measurably faster to use the iterator rather than index (less indirection), removing
+        // indirection by storing pointer to array is equiavlent in release mode and faster in debug
+        // mode.
+        archetype_lists: AutoArrayHashMapUnmanaged(ComponentFlags(T), ArchetypeList(T)).Iterator,
         archetype_list: ?*ArchetypeList(T),
         handle_iterator: ArchetypeList(T).HandleIterator,
 
@@ -382,9 +384,9 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
                 // If we don't have a page list, find the next compatible archetype's page
                 // list
                 if (self.archetype_list == null) {
-                    self.archetype_list = while (self.archetype_lists.next()) |page| {
-                        if (page.key_ptr.bits.supersetOf(self.archetype.bits)) {
-                            break page.value_ptr;
+                    self.archetype_list = while (self.archetype_lists.next()) |archetype_list| {
+                        if (archetype_list.value_ptr.archetype.bits.supersetOf(self.archetype.bits)) {
+                            break archetype_list.value_ptr;
                         }
                     } else return null;
                     self.handle_iterator = self.archetype_list.?.handleIterator();
@@ -404,7 +406,6 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
                     return item;
                 }
 
-                // TODO: can't we just ask for it here..?
                 self.archetype_list = null;
             }
         }
@@ -422,27 +423,16 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
         fn init(entities: *T) @This() {
             return .{
                 .entities = entities,
-                // TODO: replace with getter if possible
-                .archetype = comptime archetype: {
-                    var archetype = Archetype(T).initBits(Archetype(T).Bits.initEmpty());
-                    for (components) |field| {
-                        const component_name: T.ComponentKind = field;
-                        archetype.bits.set(@enumToInt(component_name));
-                    }
-                    break :archetype archetype;
-                },
+                .archetype = ComponentFlags(T).init(components),
                 .archetype_lists = entities.archetype_lists.iterator(),
                 .archetype_list = null,
-                // XXX: ...
                 .handle_iterator = undefined,
             };
         }
     };
 }
 
-// XXX: consider renaming to component flags or such since it's not always used to represent
-// an archetype
-pub fn Archetype(comptime T: type) type {
+pub fn ComponentFlags(comptime T: type) type {
     return struct {
         const Self = @This();
 
@@ -510,7 +500,7 @@ pub fn Prefab(comptime T: type) type {
 pub fn ArchetypeChange(comptime T: type) type {
     return struct {
         add: Prefab(T),
-        remove: Archetype(T),
+        remove: ComponentFlags(T),
     };
 }
 

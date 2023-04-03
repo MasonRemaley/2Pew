@@ -35,7 +35,7 @@ const Entities = ecs.entities.Entities(.{
     .front_shield = struct {},
 });
 const EntityHandle = Entities.Handle;
-const Archetype = ecs.entities.Archetype(Entities);
+const ComponentFlags = ecs.entities.ComponentFlags(Entities);
 const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
@@ -355,7 +355,7 @@ fn update(
                                     .damping = hook.damping,
                                 },
                             },
-                            .remove = Archetype.init(.{.hook}),
+                            .remove = ComponentFlags.init(.{.hook}),
                         });
                         hooked = true;
                     }
@@ -370,7 +370,7 @@ fn update(
                                     .damping = hook.damping,
                                 },
                             },
-                            .remove = Archetype.init(.{.hook}),
+                            .remove = ComponentFlags.init(.{.hook}),
                         });
                         hooked = true;
                     }
