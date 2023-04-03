@@ -71,7 +71,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         pub fn createChecked(self: *Self, components: anytype) Allocator.Error!Handle {
-            const archetype = ComponentFlags(Self).init(components);
+            const archetype = ComponentFlags(Self).initFromComponents(components);
             const archetype_list = try self.getOrPutArchetypeList(archetype);
             const handle = try self.slot_map.create(undefined);
             errdefer _ = self.slot_map.remove(handle) catch unreachable;
@@ -106,7 +106,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         pub fn addComponentsChecked(self: *Self, handle: Handle, add: anytype) error{ UseAfterFree, OutOfMemory }!void {
-            try self.changeArchetypeChecked(handle, .{ .add = add, .remove = ComponentFlags(Self).initBits(ComponentFlags(Self).Bits.initEmpty()) });
+            try self.changeArchetypeChecked(handle, .{ .add = add, .remove = .{} });
         }
 
         pub fn removeComponents(self: *Self, entity: Handle, remove: anytype) void {
@@ -119,7 +119,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 handle,
                 .{
                     .add = .{},
-                    .remove = ComponentFlags(Self).init(remove),
+                    .remove = ComponentFlags(Self).initFromKinds(remove),
                 },
             );
         }
@@ -137,11 +137,11 @@ pub fn Entities(comptime registered_components: anytype) type {
             // Determine our archetype bitsets
             const pointer = try self.slot_map.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
-            const components_added = ComponentFlags(Self).init(changes.add);
-            const archetype = ComponentFlags(Self).initBits(previous_archetype.bits.unionWith(components_added.bits)
-                .differenceWith(changes.remove.bits));
-            const components_copied = ComponentFlags(Self).initBits(previous_archetype.bits.intersectWith(archetype.bits)
-                .differenceWith(components_added.bits));
+            const components_added = ComponentFlags(Self).initFromComponents(changes.add);
+            const archetype = previous_archetype.unionWith(components_added)
+                .differenceWith(changes.remove);
+            const components_copied = previous_archetype.intersectWith(archetype)
+                .differenceWith(components_added);
 
             // Create the new entity location
             const old_pointer: EntityPointer(Self) = pointer.*;
@@ -212,9 +212,9 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         fn copyComponents(to: *const EntityPointer(Self), from: EntityPointer(Self), which: ComponentFlags(Self)) void {
             inline for (0..component_names.len) |i| {
-                if (which.bits.isSet(i)) {
-                    const component_name = @intToEnum(ComponentKind, i);
-                    to.archetype_list.getComponentUnchecked(to.index, component_name).* = from.archetype_list.getComponentUnchecked(from.index, component_name).*;
+                const kind = @intToEnum(ComponentKind, i);
+                if (which.isSet(kind)) {
+                    to.archetype_list.getComponentUnchecked(to.index, kind).* = from.archetype_list.getComponentUnchecked(from.index, kind).*;
                 }
             }
         }
@@ -235,7 +235,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 }
 
 fn ArchetypeList(comptime T: type) type {
-    const ComponentLists = ComponentMap(T, struct {
+    const ComponentLists = ComponentMap(T, .Auto, struct {
         fn FieldType(comptime _: T.ComponentKind, comptime C: type) type {
             return SegmentedListFirstShelfCount(C, first_shelf_count, false);
         }
@@ -272,8 +272,8 @@ fn ArchetypeList(comptime T: type) type {
         // TODO: could return a set of optional pointers to avoid recalculating them, could
         // have the append math between the lists be shared
         pub fn append(self: *Self, allocator: Allocator, handle: T.Handle) Allocator.Error!u32 {
-            inline for (T.component_names, 0..) |comp_name, i| {
-                if (self.archetype.bits.isSet(i)) {
+            inline for (T.component_names) |comp_name| {
+                if (self.archetype.isNameSet(comp_name)) {
                     _ = try @field(self.comps, comp_name).addOne(allocator);
                 }
             }
@@ -285,9 +285,9 @@ fn ArchetypeList(comptime T: type) type {
 
         pub fn swapRemove(self: *Self, index: u32, slot_map: *T.HandleSlotMap) void {
             assert(index < self.handles.len);
-            inline for (T.component_names, 0..) |comp_name, i| {
-                if (self.archetype.bits.isSet(i)) {
-                    var components = &@field(self.comps, comp_name);
+            inline for (T.component_names) |name| {
+                if (self.archetype.isNameSet(name)) {
+                    var components = &@field(self.comps, name);
                     components.uncheckedAt(index).* = components.pop().?;
                 }
             }
@@ -303,15 +303,15 @@ fn ArchetypeList(comptime T: type) type {
             return self.handles.iterator(0);
         }
 
-        pub fn getComponent(self: *Self, index: u32, comptime component_name: T.ComponentKind) ?*T.component_types[@enumToInt(component_name)] {
-            if (!self.archetype.bits.isSet(@enumToInt(component_name))) {
+        pub fn getComponent(self: *Self, index: u32, comptime kind: T.ComponentKind) ?*T.component_types[@enumToInt(kind)] {
+            if (!self.archetype.isSet(kind)) {
                 return null;
             }
-            return self.getComponentUnchecked(index, component_name);
+            return self.getComponentUnchecked(index, kind);
         }
 
-        pub fn getComponentUnchecked(self: *Self, index: u32, comptime component_name: T.ComponentKind) *T.component_types[@enumToInt(component_name)] {
-            return @field(self.comps, T.component_names[@enumToInt(component_name)]).uncheckedAt(index);
+        pub fn getComponentUnchecked(self: *Self, index: u32, comptime kind: T.ComponentKind) *T.component_types[@enumToInt(kind)] {
+            return @field(self.comps, T.component_names[@enumToInt(kind)]).uncheckedAt(index);
         }
 
         pub fn clearRetainingCapacity(self: *Self) void {
@@ -329,7 +329,7 @@ pub const IteratorComponentDescriptor = packed struct {
 };
 
 pub fn IteratorDescriptor(comptime T: type) type {
-    return ComponentMap(T, struct {
+    return ComponentMap(T, .Auto, struct {
         fn FieldType(comptime _: T.ComponentKind, comptime _: type) type {
             return ?IteratorComponentDescriptor;
         }
@@ -346,27 +346,8 @@ pub fn IteratorDescriptor(comptime T: type) type {
 
 pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) type {
     return struct {
-        const all_components = ac: {
-            comptime var flags = ComponentFlags(T).initBits(ComponentFlags(T).Bits.initEmpty());
-            inline for (T.component_names, 0..) |comp_name, i| {
-                if (@field(descriptor, comp_name) != null) {
-                    flags.bits.set(i);
-                }
-            }
-            break :ac flags;
-        };
-        const required_components = rc: {
-            comptime var flags = ComponentFlags(T).initBits(ComponentFlags(T).Bits.initEmpty());
-            inline for (T.component_names, 0..) |comp_name, i| {
-                if (@field(descriptor, comp_name)) |desc| {
-                    if (!desc.optional) {
-                        flags.bits.set(i);
-                    }
-                }
-            }
-            break :rc flags;
-        };
-        const Item = ComponentMap(T, struct {
+        const required_components = ComponentFlags(T).initFromIteratorDescriptorRequired(descriptor);
+        const Item = ComponentMap(T, .Auto, struct {
             fn FieldType(comptime kind: T.ComponentKind, comptime C: type) type {
                 const name = T.component_names[@enumToInt(kind)];
 
@@ -386,7 +367,7 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
             }
 
             fn default_value(comptime kind: T.ComponentKind, comptime _: type) ?*const anyopaque {
-                if (!required_components.bits.isSet(@enumToInt(kind))) {
+                if (!required_components.isSet(kind)) {
                     return null;
                 } else {
                     return &null;
@@ -413,7 +394,7 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
                 // list
                 if (self.archetype_list == null) {
                     self.archetype_list = while (self.archetype_lists.next()) |archetype_list| {
-                        if (archetype_list.value_ptr.archetype.bits.supersetOf(required_components.bits)) {
+                        if (archetype_list.value_ptr.archetype.supersetOf(required_components)) {
                             break archetype_list.value_ptr;
                         }
                     } else return null;
@@ -434,7 +415,7 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
                         comptime var ComponentType = T.component_types[@enumToInt(component_kind)];
 
                         const required = @field(descriptor, field.name) != null and !@field(descriptor, field.name).?.optional;
-                        const exists = required or self.archetype_list.?.archetype.bits.isSet(@enumToInt(component_kind));
+                        const exists = required or self.archetype_list.?.archetype.isNameSet(field.name);
 
                         if (exists) {
                             if (@sizeOf(ComponentType) == 0) {
@@ -484,48 +465,148 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
 }
 
 pub fn ComponentFlags(comptime T: type) type {
-    return struct {
+    const Mask = ComponentMap(T, .Packed, struct {
+        fn FieldType(comptime _: T.ComponentKind, comptime _: type) type {
+            return bool;
+        }
+
+        fn default_value(comptime _: T.ComponentKind, comptime _: type) ?*const anyopaque {
+            return &false;
+        }
+
+        fn skip(comptime _: T.ComponentKind) bool {
+            return false;
+        }
+    });
+    return packed struct {
         const Self = @This();
+        pub const Int = std.meta.Int(.unsigned, @bitSizeOf(Self));
+        pub const ShiftInt = std.math.Log2Int(Int);
 
-        pub const Bits = std.bit_set.IntegerBitSet(T.component_names.len);
+        mask: Mask = .{},
 
-        bits: Bits,
+        pub fn initMask(components: Mask) Self {
+            return .{ .mask = components };
+        }
 
-        // Creates an archetype from a prefab, a struct of components, or a tuple of enum
-        // component names.
-        pub fn init(components: anytype) Self {
+        pub fn initFromKinds(tuple: anytype) Self {
+            var self = Self{};
+            inline for (tuple) |kind| {
+                // XXX: i forget did i figure out how to use this for compiler errors everywhere or no..? do these
+                // changes affect that at all?
+                self.set(kind);
+            }
+            return self;
+        }
+
+        pub fn initFromComponents(components: anytype) Self {
             if (@TypeOf(components) == Prefab(T)) {
-                var archetype = initBits(Bits.initEmpty());
+                // XXX: no tests failed when missing this...
+                var self = Self{};
                 inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
                     if (@field(components, field.name) != null) {
-                        archetype.bits.set(@enumToInt(T.find_component_kind(field.name)));
+                        self.setName(field.name);
                     }
                 }
-                return archetype;
-            } else if (@typeInfo(@TypeOf(components)).Struct.is_tuple) {
-                var archetype = initBits(Bits.initEmpty());
-                inline for (components) |c| {
-                    const component: T.ComponentKind = c;
-                    archetype.bits.set(@enumToInt(component));
+                return self;
+            } else {
+                comptime {
+                    var self = Self{};
+                    for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                        self.setName(field.name);
+                    }
+                    return self;
                 }
-                return archetype;
-            } else comptime {
-                var archetype = initBits(Bits.initEmpty());
-                for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                    archetype.bits.set(@enumToInt(T.find_component_kind(field.name)));
-                }
-                return archetype;
             }
         }
 
-        pub fn initBits(bits: Bits) Self {
-            return .{ .bits = bits };
+        pub fn initFromIteratorDescriptorRequired(descriptor: IteratorDescriptor(T)) Self {
+            comptime var self = Self{};
+            inline for (T.component_names) |comp_name| {
+                if (@field(descriptor, comp_name)) |comp| {
+                    if (!comp.optional) {
+                        self.setName(comp_name);
+                    }
+                }
+            }
+            return self;
+        }
+
+        pub fn int(self: Self) Int {
+            return @bitCast(Int, self);
+        }
+
+        pub fn supersetOf(self: Self, of: Self) bool {
+            return (self.int() & of.int()) == of.int();
+        }
+
+        pub fn subsetOf(self: Self, of: Self) bool {
+            return (self.int() & of.int()) == self.int();
+        }
+
+        pub fn unionWith(self: Self, with: Self) Self {
+            return .{ .mask = @bitCast(Mask, self.int() | with.int()) };
+        }
+
+        pub fn intersectWith(self: Self, with: Self) Self {
+            return .{ .mask = @bitCast(Mask, self.int() & with.int()) };
+        }
+
+        pub fn differenceWith(self: Self, sub: Self) Self {
+            return .{ .mask = @bitCast(Mask, self.int() & ~sub.int()) };
+        }
+
+        fn maskBit(kind: T.ComponentKind) Int {
+            return @as(Int, 1) << @intCast(ShiftInt, @enumToInt(kind));
+        }
+
+        pub fn isSet(self: Self, kind: T.ComponentKind) bool {
+            return (self.int() & maskBit(kind)) != 0;
+        }
+
+        pub fn isNameSet(self: Self, comptime name: []const u8) bool {
+            return @field(self.mask, name);
+        }
+
+        pub fn set(self: *Self, kind: T.ComponentKind) void {
+            self.mask = @bitCast(Mask, self.int() | maskBit(kind));
+        }
+
+        pub fn setName(self: *Self, comptime name: []const u8) void {
+            @field(self.mask, name) = true;
+        }
+
+        pub fn unset(self: *Self, kind: T.ComponentKind) void {
+            self.mask = self.bitCast(Mask, self.int() & ~maskBit(kind));
+        }
+
+        pub fn unsetName(self: *Self, comptime name: []const u8) void {
+            @field(self.mask, name) = false;
         }
     };
 }
 
+test "basic" {
+    var entities = try Entities(.{ .x = u32, .y = u8 }).init(std.testing.allocator);
+    defer entities.deinit();
+
+    const e0 = entities.create(.{ .x = 10, .y = 'a' });
+    const e1 = entities.create(.{ .x = 11 });
+
+    try std.testing.expect(entities.getComponent(e0, .x).?.* == 10);
+    try std.testing.expect(entities.getComponent(e0, .y).?.* == 'a');
+    try std.testing.expect(entities.getComponent(e1, .x).?.* == 11);
+    try std.testing.expect(entities.getComponent(e1, .y) == null);
+
+    var iter = entities.iterator(.{ .x = .{}, .y = .{} });
+    var e = iter.next().?;
+    try std.testing.expect(e.x.* == 10);
+    try std.testing.expect(e.y.* == 'a');
+    try std.testing.expect(iter.next() == null);
+}
+
 pub fn Prefab(comptime T: type) type {
-    return ComponentMap(T, struct {
+    return ComponentMap(T, .Auto, struct {
         fn FieldType(comptime _: T.ComponentKind, comptime C: type) type {
             return ?C;
         }
@@ -569,7 +650,11 @@ fn field_values(s: anytype) FieldValuesType(@TypeOf(s)) {
     return values;
 }
 
-fn ComponentMap(comptime T: type, comptime Map: type) type {
+fn ComponentMap(
+    comptime T: type,
+    comptime layout: std.builtin.Type.ContainerLayout,
+    comptime Map: type,
+) type {
     var fields: [T.component_types.len]Type.StructField = undefined;
     var len: usize = 0;
     for (T.component_types, T.component_names, 0..) |comp_type, comp_name, i| {
@@ -581,14 +666,14 @@ fn ComponentMap(comptime T: type, comptime Map: type) type {
                 .type = FieldType,
                 .default_value = Map.default_value(kind, FieldType),
                 .is_comptime = false,
-                .alignment = @alignOf(FieldType),
+                .alignment = if (layout == .Packed) 0 else @alignOf(FieldType),
             };
             len += 1;
         }
     }
     return @Type(Type{
         .Struct = Type.Struct{
-            .layout = .Auto,
+            .layout = layout,
             .backing_integer = null,
             .fields = fields[0..len],
             .decls = &[_]Type.Declaration{},

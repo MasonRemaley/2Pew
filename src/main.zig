@@ -355,7 +355,7 @@ fn update(
                                     .damping = hook.damping,
                                 },
                             },
-                            .remove = ComponentFlags.init(.{.hook}),
+                            .remove = ComponentFlags.initFromKinds(.{.hook}),
                         });
                         hooked = true;
                     }
@@ -370,7 +370,7 @@ fn update(
                                     .damping = hook.damping,
                                 },
                             },
-                            .remove = ComponentFlags.init(.{.hook}),
+                            .remove = ComponentFlags.initFromKinds(.{.hook}),
                         });
                         hooked = true;
                     }
