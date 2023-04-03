@@ -492,8 +492,6 @@ pub fn ComponentFlags(comptime T: type) type {
         pub fn initFromKinds(tuple: anytype) Self {
             var self = Self{};
             inline for (tuple) |kind| {
-                // XXX: i forget did i figure out how to use this for compiler errors everywhere or no..? do these
-                // changes affect that at all?
                 self.set(kind);
             }
             return self;
@@ -501,7 +499,6 @@ pub fn ComponentFlags(comptime T: type) type {
 
         pub fn initFromComponents(components: anytype) Self {
             if (@TypeOf(components) == Prefab(T)) {
-                // XXX: no tests failed when missing this...
                 var self = Self{};
                 inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
                     if (@field(components, field.name) != null) {
@@ -509,14 +506,12 @@ pub fn ComponentFlags(comptime T: type) type {
                     }
                 }
                 return self;
-            } else {
-                comptime {
-                    var self = Self{};
-                    for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                        self.setName(field.name);
-                    }
-                    return self;
+            } else comptime {
+                var self = Self{};
+                for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                    self.setName(field.name);
                 }
+                return self;
             }
         }
 
