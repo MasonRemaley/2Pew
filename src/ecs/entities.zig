@@ -438,8 +438,8 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
 
                         if (exists) {
                             if (@sizeOf(ComponentType) == 0) {
-                                // XXX: https://github.com/ziglang/zig/issues/3325 also see segmented list
-                                @field(item, field.name) = @as(*ComponentType, undefined);
+                                // TODO: https://github.com/ziglang/zig/issues/3325
+                                @field(item, field.name) = @intToPtr(*ComponentType, 0xaaaaaaaaaaaaaaaa);
                             } else {
                                 @field(item, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
                             }
@@ -1225,7 +1225,6 @@ test "safety" {
     }));
 }
 
-// TODO: test 0 sized components? (used in game seemingly correctly!)
 test "random data" {
     const E = Entities(.{ .x = u32, .y = u8, .z = u16 });
     var allocator = std.testing.allocator;

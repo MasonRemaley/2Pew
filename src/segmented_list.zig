@@ -278,11 +278,8 @@ pub fn SegmentedListFirstShelfCount(comptime T: type, comptime first_shelf_count
 
         pub fn uncheckedAt(self: anytype, index: usize) AtType(@TypeOf(self)) {
             if (@sizeOf(T) == 0) {
-                // XXX: is this right? if it is, why can't i return it directly without an error? note
-                // that i also use this trick in the entities iterator
-                // XXX: https://github.com/ziglang/zig/issues/3325
-                var t = @as(*T, undefined);
-                return t;
+                // TODO: https://github.com/ziglang/zig/issues/3325
+                return @intToPtr(*T, 0xaaaaaaaaaaaaaaaa);
             }
 
             if (index < prealloc_count) {
