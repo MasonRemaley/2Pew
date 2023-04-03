@@ -188,11 +188,11 @@ fn update(
 ) void {
     // Update input
     {
-        var it = entities.iterator(.{ .input = .{} });
+        var it = entities.iterator(.{ .input = .{}, .health = .{ .optional = true } });
         while (it.next()) |entity| {
             entity.input.update();
 
-            if (entities.getComponent(it.handle(), .health)) |health| {
+            if (entity.health) |health| {
                 if (health.invulnerable_s > 0.0) {
                     entity.input.state.fire.positive = .inactive;
                 }
@@ -220,7 +220,13 @@ fn update(
 
     // Bonk
     {
-        var it = entities.iterator(.{ .rb = .{}, .collider = .{} });
+        var it = entities.iterator(.{
+            .rb = .{},
+            .collider = .{},
+            .health = .{ .optional = true },
+            .front_shield = .{ .optional = true },
+            .hook = .{ .optional = true },
+        });
         while (it.next()) |entity| {
             var other_it = it;
             while (other_it.next()) |other| {
@@ -257,31 +263,29 @@ fn update(
                 // The basic ranger ship has 80 HP.
                 var total_damage: f32 = 0;
                 const max_shield = 1.0;
-                const entity_health = entities.getComponent(it.handle(), .health);
-                const other_health = entities.getComponent(other_it.handle(), .health);
-                if (entity_health) |health| {
-                    if (other_health == null or other_health.?.invulnerable_s <= 0.0) {
+                if (entity.health) |entity_health| {
+                    if (other.health == null or other.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
-                        if (entities.getComponent(it.handle(), .front_shield) != null) {
+                        if (entity.front_shield != null) {
                             var dot = V.unit(entity.rb.angle).dot(normal);
                             shield_scale = std.math.max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
                         if (damage >= 2) {
-                            total_damage += health.damage(damage);
+                            total_damage += entity_health.damage(damage);
                         }
                     }
                 }
-                if (other_health) |health| {
-                    if (entity_health == null or entity_health.?.invulnerable_s <= 0.0) {
+                if (other.health) |other_health| {
+                    if (entity.health == null or entity.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
-                        if (entities.getComponent(it.handle(), .front_shield) != null) {
+                        if (other.front_shield != null) {
                             var dot = V.unit(other.rb.angle).dot(normal);
                             shield_scale = std.math.max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
                         if (damage >= 2) {
-                            total_damage += health.damage(damage);
+                            total_damage += other_health.damage(damage);
                         }
                     }
                 }
@@ -330,7 +334,7 @@ fn update(
                 // have opinions on rotation. We can add that though!
                 {
                     var hooked = false;
-                    if (entities.getComponent(it.handle(), .hook)) |hook| {
+                    if (entity.hook) |hook| {
                         // XXX: make a public changeArchetype function so that we can do this in a single
                         // move, could also be named removeComponentsAddComponents or such, probably
                         // should work even if overlap?
@@ -348,7 +352,7 @@ fn update(
                         });
                         hooked = true;
                     }
-                    if (entities.getComponent(other_it.handle(), .hook)) |hook| {
+                    if (other.hook) |hook| {
                         command_buffer.appendArchChange(other_it.handle(), .{
                             .add = .{
                                 .spring = Spring{
@@ -374,7 +378,7 @@ fn update(
 
     // Update rbs
     {
-        var it = entities.iterator(.{ .rb = .{} });
+        var it = entities.iterator(.{ .rb = .{}, .health = .{ .optional = true } });
         while (it.next()) |entity| {
             entity.rb.pos.add(entity.rb.vel.scaled(delta_s));
 
@@ -383,7 +387,7 @@ fn update(
                 const gravity = 500;
                 const gravity_v = display_center.minus(entity.rb.pos).normalized().scaled(gravity * delta_s);
                 entity.rb.vel.add(gravity_v);
-                if (entities.getComponent(it.handle(), .health)) |health| {
+                if (entity.health) |health| {
                     // punishment for leaving the circle
                     _ = health.damage(delta_s * 4);
                 }
@@ -488,11 +492,16 @@ fn update(
     // TODO(mason): take velocity from before impact? i may have messed that up somehow
     // Explode things that reach 0 hp
     {
-        var it = entities.iterator(.{ .health = .{} });
+        var it = entities.iterator(.{
+            .health = .{},
+            .rb = .{ .optional = true },
+            .ship = .{ .optional = true },
+            .input = .{ .optional = true },
+        });
         while (it.next()) |entity| {
             if (entity.health.hp <= 0) {
                 // spawn explosion here
-                if (entities.getComponent(it.handle(), .rb)) |rb| {
+                if (entity.rb) |rb| {
                     command_buffer.appendCreate(.{
                         .lifetime = .{
                             .seconds = 100,
@@ -515,8 +524,8 @@ fn update(
 
                 // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
-                if (entities.getComponent(it.handle(), .ship)) |ship| {
-                    if (entities.getComponent(it.handle(), .input)) |input| {
+                if (entity.ship) |ship| {
+                    if (entity.input) |input| {
                         // give player their next ship
                         const player = &game.players[ship.player];
                         const team = &game.teams[player.team];
@@ -806,7 +815,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw animations
     {
-        var it = entities.iterator(.{ .rb = .{}, .animation = .{} });
+        var it = entities.iterator(.{ .rb = .{}, .animation = .{}, .health = .{ .optional = true }, .ship = .{ .optional = true } });
         while (it.next()) |entity| {
             const frame = assets.animate(entity.animation, delta_s);
             const unscaled_sprite_size = frame.sprite.size();
@@ -816,7 +825,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             var dest_rect = sdlRect(entity.rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
 
             var hidden = false;
-            if (entities.getComponent(it.handle(), .health)) |health| {
+            if (entity.health) |health| {
                 if (health.invulnerable_s > 0.0) {
                     var flashes_ps: f32 = 2;
                     if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
@@ -839,7 +848,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                     c.SDL_FLIP_NONE,
                 ));
 
-                if (entities.getComponent(it.handle(), .ship)) |ship| {
+                if (entity.ship) |ship| {
                     const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
                     dest_rect.x -= @divTrunc(dest_rect.w, 2);
                     dest_rect.y -= @divTrunc(dest_rect.h, 2);

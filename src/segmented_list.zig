@@ -278,9 +278,11 @@ pub fn SegmentedListFirstShelfCount(comptime T: type, comptime first_shelf_count
 
         pub fn uncheckedAt(self: anytype, index: usize) AtType(@TypeOf(self)) {
             if (@sizeOf(T) == 0) {
-                // TODO: what's the correct way to get a pointer for a zst?
-                var t = T{};
-                return &t;
+                // XXX: is this right? if it is, why can't i return it directly without an error? note
+                // that i also use this trick in the entities iterator
+                // XXX: https://github.com/ziglang/zig/issues/3325
+                var t = @as(*T, undefined);
+                return t;
             }
 
             if (index < prealloc_count) {

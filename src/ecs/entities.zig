@@ -183,7 +183,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             return Iterator(Self, components).init(self);
         }
 
-        fn find_component_name(comptime name: []const u8) ComponentKind {
+        fn find_component_kind(comptime name: []const u8) ComponentKind {
             const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
             if (maybe_index) |index| {
                 return @intToEnum(ComponentKind, index);
@@ -221,7 +221,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         fn setComponents(pointer: *const EntityPointer(Self), components: anytype) void {
             inline for (@typeInfo(@TypeOf(components)).Struct.fields) |f| {
-                const component_name = comptime find_component_name(f.name);
+                const component_name = comptime find_component_kind(f.name);
                 if (@TypeOf(components) == Prefab(Self)) {
                     if (@field(components, f.name)) |component| {
                         pointer.archetype_list.getComponentUnchecked(pointer.index, component_name).* = component;
@@ -236,12 +236,12 @@ pub fn Entities(comptime registered_components: anytype) type {
 
 fn ArchetypeList(comptime T: type) type {
     const ComponentLists = ComponentMap(T, struct {
-        fn FieldType(comptime C: type) type {
+        fn FieldType(comptime _: T.ComponentKind, comptime C: type) type {
             return SegmentedListFirstShelfCount(C, first_shelf_count, false);
         }
 
-        fn default_value(comptime C: type) ?*const anyopaque {
-            return &FieldType(C){};
+        fn default_value(comptime _: T.ComponentKind, comptime C: type) ?*const anyopaque {
+            return &C{};
         }
 
         fn skip(comptime _: T.ComponentKind) bool {
@@ -330,11 +330,11 @@ pub const IteratorComponentDescriptor = packed struct {
 
 pub fn IteratorDescriptor(comptime T: type) type {
     return ComponentMap(T, struct {
-        fn FieldType(comptime _: type) type {
+        fn FieldType(comptime _: T.ComponentKind, comptime _: type) type {
             return ?IteratorComponentDescriptor;
         }
 
-        fn default_value(comptime _: type) ?*const anyopaque {
+        fn default_value(comptime _: T.ComponentKind, comptime _: type) ?*const anyopaque {
             return &null;
         }
 
@@ -346,8 +346,7 @@ pub fn IteratorDescriptor(comptime T: type) type {
 
 pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) type {
     return struct {
-        // XXX: actually use this, and also make the pointers actually mutable or not depending
-        // on it
+        // XXX: respect mutability of descriptor!
         const all_components = ac: {
             comptime var flags = ComponentFlags(T).initBits(ComponentFlags(T).Bits.initEmpty());
             inline for (T.component_names, 0..) |comp_name, i| {
@@ -369,12 +368,20 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
             break :rc flags;
         };
         const Item = ComponentMap(T, struct {
-            fn FieldType(comptime C: type) type {
-                return *C;
+            fn FieldType(comptime kind: T.ComponentKind, comptime C: type) type {
+                if (!required_components.bits.isSet(@enumToInt(kind))) {
+                    return ?*C;
+                } else {
+                    return *C;
+                }
             }
 
-            fn default_value(comptime _: type) ?*const anyopaque {
-                return &null;
+            fn default_value(comptime kind: T.ComponentKind, comptime _: type) ?*const anyopaque {
+                if (!required_components.bits.isSet(@enumToInt(kind))) {
+                    return null;
+                } else {
+                    return &null;
+                }
             }
 
             fn skip(comptime kind: T.ComponentKind) bool {
@@ -410,9 +417,26 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
                     self.current_handle = current_handle.*;
                     comptime assert(@TypeOf(self.archetype_list.?.handles).prealloc_count == 0);
                     inline for (@typeInfo(Item).Struct.fields) |field| {
+                        // Make sure the component list is compatible with the handle iterator
                         comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).prealloc_count == 0);
                         comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);
-                        @field(item, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
+
+                        comptime var component_kind = T.find_component_kind(field.name);
+                        comptime var ComponentType = T.component_types[@enumToInt(component_kind)];
+
+                        const required = @field(descriptor, field.name) != null and !@field(descriptor, field.name).?.optional;
+                        const exists = required or self.archetype_list.?.archetype.bits.isSet(@enumToInt(component_kind));
+
+                        if (exists) {
+                            if (@sizeOf(ComponentType) == 0) {
+                                // XXX: https://github.com/ziglang/zig/issues/3325 also see segmented list
+                                @field(item, field.name) = @as(*ComponentType, undefined);
+                            } else {
+                                @field(item, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
+                            }
+                        } else {
+                            @field(item, field.name) = null;
+                        }
                     }
                     _ = self.handle_iterator.next();
                     return item;
@@ -465,7 +489,7 @@ pub fn ComponentFlags(comptime T: type) type {
                 var archetype = initBits(Bits.initEmpty());
                 inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
                     if (@field(components, field.name) != null) {
-                        archetype.bits.set(@enumToInt(T.find_component_name(field.name)));
+                        archetype.bits.set(@enumToInt(T.find_component_kind(field.name)));
                     }
                 }
                 return archetype;
@@ -479,7 +503,7 @@ pub fn ComponentFlags(comptime T: type) type {
             } else comptime {
                 var archetype = initBits(Bits.initEmpty());
                 for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
-                    archetype.bits.set(@enumToInt(T.find_component_name(field.name)));
+                    archetype.bits.set(@enumToInt(T.find_component_kind(field.name)));
                 }
                 return archetype;
             }
@@ -493,11 +517,11 @@ pub fn ComponentFlags(comptime T: type) type {
 
 pub fn Prefab(comptime T: type) type {
     return ComponentMap(T, struct {
-        fn FieldType(comptime C: type) type {
+        fn FieldType(comptime _: T.ComponentKind, comptime C: type) type {
             return ?C;
         }
 
-        fn default_value(comptime _: type) ?*const anyopaque {
+        fn default_value(comptime _: T.ComponentKind, comptime _: type) ?*const anyopaque {
             return &null;
         }
 
@@ -540,12 +564,13 @@ fn ComponentMap(comptime T: type, comptime Map: type) type {
     var fields: [T.component_types.len]Type.StructField = undefined;
     var len: usize = 0;
     for (T.component_types, T.component_names, 0..) |comp_type, comp_name, i| {
-        if (!Map.skip(@intToEnum(T.ComponentKind, i))) {
-            const FieldType = Map.FieldType(comp_type);
+        const kind = @intToEnum(T.ComponentKind, i);
+        if (!Map.skip(kind)) {
+            const FieldType = Map.FieldType(kind, comp_type);
             fields[len] = Type.StructField{
                 .name = comp_name,
                 .type = FieldType,
-                .default_value = Map.default_value(comp_type),
+                .default_value = Map.default_value(kind, FieldType),
                 .is_comptime = false,
                 .alignment = @alignOf(FieldType),
             };
@@ -561,6 +586,139 @@ fn ComponentMap(comptime T: type, comptime Map: type) type {
             .is_tuple = false,
         },
     });
+}
+
+test "zero-sized-component" {
+    var allocator = std.testing.allocator;
+    var entities = try Entities(.{ .x = void }).init(allocator);
+    defer entities.deinit();
+
+    const a = entities.create(.{ .x = {} });
+    const b = entities.create(.{});
+
+    try std.testing.expect(entities.getComponent(a, .x) != null);
+    try std.testing.expect(entities.getComponent(b, .x) == null);
+
+    {
+        var iter = entities.iterator(.{ .x = .{} });
+        try std.testing.expect(iter.next() != null);
+        try std.testing.expect(iter.next() == null);
+    }
+
+    {
+        const Expected = struct { x: ?void = null };
+        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(allocator);
+        defer expected.deinit();
+        try expected.put(a, .{ .x = {} });
+        try expected.put(b, .{});
+        var iter = entities.iterator(.{ .x = .{ .optional = true } });
+        while (iter.next()) |entity| {
+            try std.testing.expectEqual(expected.get(iter.handle()), .{
+                .x = if (entity.x) |x| x.* else null,
+            });
+            _ = expected.remove(iter.handle());
+        }
+        try std.testing.expect(expected.count() == 0);
+    }
+}
+
+test "optional iter" {
+    var allocator = std.testing.allocator;
+
+    var entities = try Entities(.{ .x = u32, .y = u8 }).init(allocator);
+    defer entities.deinit();
+
+    const e0 = entities.create(.{ .x = 10, .y = 'a' });
+    const e1 = entities.create(.{ .x = 20, .y = 'b' });
+    const e2 = entities.create(.{ .x = 30 });
+    const e3 = entities.create(.{ .x = 40 });
+    const e4 = entities.create(.{ .y = 'c' });
+    const e5 = entities.create(.{ .y = 'd' });
+    const e6 = entities.create(.{});
+    const e7 = entities.create(.{});
+
+    const Expected = struct {
+        x: ?u32 = null,
+        y: ?u8 = null,
+    };
+
+    {
+        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(std.heap.page_allocator);
+        defer expected.deinit();
+        try expected.put(e0, .{ .x = 10, .y = 'a' });
+        try expected.put(e1, .{ .x = 20, .y = 'b' });
+
+        var iter = entities.iterator(.{ .x = .{}, .y = .{} });
+        while (iter.next()) |entity| {
+            try std.testing.expectEqual(expected.get(iter.handle()).?, .{
+                .x = entity.x.*,
+                .y = entity.y.*,
+            });
+            try std.testing.expect(expected.remove(iter.handle()));
+        }
+        try std.testing.expect(expected.count() == 0);
+    }
+
+    {
+        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(std.heap.page_allocator);
+        defer expected.deinit();
+        try expected.put(e0, .{ .x = 10, .y = 'a' });
+        try expected.put(e1, .{ .x = 20, .y = 'b' });
+        try expected.put(e2, .{ .x = 30 });
+        try expected.put(e3, .{ .x = 40 });
+
+        var iter = entities.iterator(.{ .x = .{}, .y = .{ .optional = true } });
+        while (iter.next()) |entity| {
+            try std.testing.expectEqual(expected.get(iter.handle()).?, .{
+                .x = entity.x.*,
+                .y = if (entity.y) |y| y.* else null,
+            });
+            try std.testing.expect(expected.remove(iter.handle()));
+        }
+        try std.testing.expect(expected.count() == 0);
+    }
+
+    {
+        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(std.heap.page_allocator);
+        defer expected.deinit();
+        try expected.put(e0, .{ .x = 10, .y = 'a' });
+        try expected.put(e1, .{ .x = 20, .y = 'b' });
+        try expected.put(e2, .{ .x = 30 });
+        try expected.put(e3, .{ .x = 40 });
+        try expected.put(e4, .{ .y = 'c' });
+        try expected.put(e5, .{ .y = 'd' });
+        try expected.put(e6, .{});
+        try expected.put(e7, .{});
+
+        var iter = entities.iterator(.{ .x = .{ .optional = true }, .y = .{ .optional = true } });
+        while (iter.next()) |entity| {
+            try std.testing.expectEqual(expected.get(iter.handle()).?, .{
+                .x = if (entity.x) |x| x.* else null,
+                .y = if (entity.y) |y| y.* else null,
+            });
+            try std.testing.expect(expected.remove(iter.handle()));
+        }
+        try std.testing.expect(expected.count() == 0);
+    }
+
+    {
+        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(std.heap.page_allocator);
+        defer expected.deinit();
+        try expected.put(e0, .{ .x = 10, .y = 'a' });
+        try expected.put(e1, .{ .x = 20, .y = 'b' });
+        try expected.put(e4, .{ .y = 'c' });
+        try expected.put(e5, .{ .y = 'd' });
+
+        var iter = entities.iterator(.{ .x = .{ .optional = true }, .y = .{} });
+        while (iter.next()) |entity| {
+            try std.testing.expectEqual(expected.get(iter.handle()).?, .{
+                .x = if (entity.x) |x| x.* else null,
+                .y = entity.y.*,
+            });
+            try std.testing.expect(expected.remove(iter.handle()));
+        }
+        try std.testing.expect(expected.count() == 0);
+    }
 }
 
 test "iter remove" {
@@ -852,7 +1010,8 @@ test "clear retaining capacity" {
         try std.testing.expect(entities.getComponent(xy1_new, .x).?.* == 17);
         try std.testing.expect(entities.getComponent(xy1_new, .y).?.* == 18);
 
-        var expected = std.AutoHashMap(@TypeOf(entities).Handle, void).init(std.heap.page_allocator);
+        var expected = std.AutoHashMap(@TypeOf(entities).Handle, void).init(allocator);
+        defer expected.deinit();
         for (second_batch) |e| {
             try expected.put(e, {});
         }
@@ -862,20 +1021,6 @@ test "clear retaining capacity" {
         }
         try std.testing.expect(expected.count() == 0);
     }
-}
-
-// Could use a more exhaustive test, this at least makes sure it compiles which was a problem
-// at one point!
-test "zero-sized-component" {
-    var allocator = std.testing.allocator;
-    var entities = try Entities(.{ .x = struct {} }).init(allocator);
-    defer entities.deinit();
-
-    const a = entities.create(.{ .x = .{} });
-    const b = entities.create(.{});
-
-    try std.testing.expect(entities.getComponent(a, .x) != null);
-    try std.testing.expect(entities.getComponent(b, .x) == null);
 }
 
 // TODO: update this test or no since we have it externally?
