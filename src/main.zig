@@ -628,7 +628,7 @@ fn update(
                         .rb = .{
                             .pos = entity.rb.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius)),
                             .vel = vel,
-                            .angle = 0,
+                            .angle = vel.angle() + math.pi / 2.0,
                             .rotation_vel = 0,
                             .radius = turret.projectile_radius,
                             // TODO(mason): modify math to accept 0 and inf mass
