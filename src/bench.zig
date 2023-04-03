@@ -47,7 +47,7 @@ fn benchEcs() !void {
 
     // Iter over entities
     {
-        var iter = entities.iterator(.{ .x, .y });
+        var iter = entities.iterator(.{ .x = .{}, .y = .{} });
         while (iter.next()) |e| {
             try std.testing.expect(e.x.* == 24);
             try std.testing.expect(e.y.* == 12);
@@ -57,7 +57,7 @@ fn benchEcs() !void {
 
     // Iter one entity
     {
-        var iter = entities.iterator(.{.z});
+        var iter = entities.iterator(.{ .z = .{} });
         while (iter.next()) |e| {
             try std.testing.expect(e.z.* == 13);
         }

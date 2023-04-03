@@ -188,7 +188,7 @@ fn update(
 ) void {
     // Update input
     {
-        var it = entities.iterator(.{.input});
+        var it = entities.iterator(.{ .input = .{} });
         while (it.next()) |entity| {
             entity.input.update();
 
@@ -202,7 +202,7 @@ fn update(
 
     // Update ship animations
     {
-        var it = entities.iterator(.{ .ship, .animation, .input });
+        var it = entities.iterator(.{ .ship = .{}, .animation = .{}, .input = .{} });
         while (it.next()) |entity| {
             if (entity.input.isAction(.thrust_forward, .positive, .activated)) {
                 entity.animation.* = .{
@@ -220,7 +220,7 @@ fn update(
 
     // Bonk
     {
-        var it = entities.iterator(.{ .rb, .collider });
+        var it = entities.iterator(.{ .rb = .{}, .collider = .{} });
         while (it.next()) |entity| {
             var other_it = it;
             while (other_it.next()) |other| {
@@ -374,7 +374,7 @@ fn update(
 
     // Update rbs
     {
-        var it = entities.iterator(.{.rb});
+        var it = entities.iterator(.{ .rb = .{} });
         while (it.next()) |entity| {
             entity.rb.pos.add(entity.rb.vel.scaled(delta_s));
 
@@ -398,7 +398,7 @@ fn update(
 
     // Update springs
     {
-        var it = entities.iterator(.{.spring});
+        var it = entities.iterator(.{ .spring = .{} });
         while (it.next()) |entity| {
             // XXX: crashes if either end has been deleted right now. we may wanna actually make
             // checking if an entity is valid or not a feature if there's not a bette way to handle this?
@@ -438,9 +438,9 @@ fn update(
     // Update entities that do damage
     {
         // TODO(mason): hard to keep the components straight, make shorter handles names and get rid of comps
-        var damage_it = entities.iterator(.{ .damage, .rb });
+        var damage_it = entities.iterator(.{ .damage = .{}, .rb = .{} });
         while (damage_it.next()) |damage_entity| {
-            var health_it = entities.iterator(.{ .health, .rb });
+            var health_it = entities.iterator(.{ .health = .{}, .rb = .{} });
             const destroy = while (health_it.next()) |health_entity| {
                 if (health_entity.rb.pos.distanceSqrd(damage_entity.rb.pos) <
                     health_entity.rb.radius * health_entity.rb.radius + damage_entity.rb.radius * damage_entity.rb.radius)
@@ -488,7 +488,7 @@ fn update(
     // TODO(mason): take velocity from before impact? i may have messed that up somehow
     // Explode things that reach 0 hp
     {
-        var it = entities.iterator(.{.health});
+        var it = entities.iterator(.{ .health = .{} });
         while (it.next()) |entity| {
             if (entity.health.hp <= 0) {
                 // spawn explosion here
@@ -558,7 +558,7 @@ fn update(
 
     // Update ships
     {
-        var it = entities.iterator(.{ .ship, .rb, .input });
+        var it = entities.iterator(.{ .ship = .{}, .rb = .{}, .input = .{} });
         while (it.next()) |entity| {
             if (entity.ship.omnithrusters) {
                 entity.rb.vel.add(.{
@@ -581,7 +581,7 @@ fn update(
 
     // Update turrets
     {
-        var it = entities.iterator(.{ .turrets, .input, .rb });
+        var it = entities.iterator(.{ .turrets = .{}, .input = .{}, .rb = .{} });
         while (it.next()) |entity| {
             for (entity.turrets) |*turret| {
                 turret.cooldown_s -= delta_s;
@@ -627,7 +627,7 @@ fn update(
     // XXX: break out cooldown logic or no?
     // Update grapple guns
     {
-        var it = entities.iterator(.{ .grapple_gun, .input, .rb });
+        var it = entities.iterator(.{ .grapple_gun = .{}, .input = .{}, .rb = .{} });
         while (it.next()) |entity| {
             var gg = entity.grapple_gun;
             var input = entity.input;
@@ -734,7 +734,7 @@ fn update(
 
     // Update animations
     {
-        var it = entities.iterator(.{.animation});
+        var it = entities.iterator(.{ .animation = .{} });
         while (it.next()) |entity| {
             if (entity.animation.destroys_entity and entity.animation.index == .none) {
                 it.swapRemove();
@@ -745,7 +745,7 @@ fn update(
 
     // Update lifetimes
     {
-        var it = entities.iterator(.{.lifetime});
+        var it = entities.iterator(.{ .lifetime = .{} });
         while (it.next()) |entity| {
             entity.lifetime.seconds -= delta_s;
             if (entity.lifetime.seconds <= 0) {
@@ -806,7 +806,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw animations
     {
-        var it = entities.iterator(.{ .rb, .animation });
+        var it = entities.iterator(.{ .rb = .{}, .animation = .{} });
         while (it.next()) |entity| {
             const frame = assets.animate(entity.animation, delta_s);
             const unscaled_sprite_size = frame.sprite.size();
@@ -861,7 +861,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw health bars
     {
-        var it = entities.iterator(.{ .health, .rb });
+        var it = entities.iterator(.{ .health = .{}, .rb = .{} });
         while (it.next()) |entity| {
             if (entity.health.hp < entity.health.max_hp) {
                 const health_bar_size: V = .{ .x = 32, .y = 4 };
@@ -891,7 +891,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     // Draw sprites
     // TODO(mason): sort draw calls somehow (can the sdl renderer do depth buffers?)
     {
-        var it = entities.iterator(.{ .sprite, .rb });
+        var it = entities.iterator(.{ .sprite = .{}, .rb = .{} });
         while (it.next()) |entity| {
             const sprite = assets.sprite(entity.sprite.*);
             const unscaled_sprite_size = sprite.size();
@@ -916,7 +916,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     // same!
     // Draw springs
     {
-        var it = entities.iterator(.{.spring});
+        var it = entities.iterator(.{ .spring = .{} });
         while (it.next()) |entity| {
             var start = (entities.getComponent(entity.spring.start, .rb) orelse continue).pos;
             var end = (entities.getComponent(entity.spring.end, .rb) orelse continue).pos;

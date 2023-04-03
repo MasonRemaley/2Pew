@@ -179,7 +179,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             self.slot_map.clearRetainingCapacity();
         }
 
-        pub fn iterator(self: *Self, components: anytype) Iterator(Self, components) {
+        pub fn iterator(self: *Self, comptime components: IteratorDescriptor(Self)) Iterator(Self, components) {
             return Iterator(Self, components).init(self);
         }
 
@@ -323,8 +323,51 @@ fn ArchetypeList(comptime T: type) type {
     };
 }
 
-pub fn Iterator(comptime T: type, comptime components: anytype) type {
+pub const IteratorComponentDescriptor = packed struct {
+    mutable: bool = false,
+    optional: bool = false,
+};
+
+pub fn IteratorDescriptor(comptime T: type) type {
+    return ComponentMap(T, struct {
+        fn FieldType(comptime _: type) type {
+            return ?IteratorComponentDescriptor;
+        }
+
+        fn default_value(comptime _: type) ?*const anyopaque {
+            return &null;
+        }
+
+        fn skip(comptime _: T.ComponentKind) bool {
+            return false;
+        }
+    });
+}
+
+pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) type {
     return struct {
+        // XXX: actually use this, and also make the pointers actually mutable or not depending
+        // on it
+        const all_components = ac: {
+            comptime var flags = ComponentFlags(T).initBits(ComponentFlags(T).Bits.initEmpty());
+            inline for (T.component_names, 0..) |comp_name, i| {
+                if (@field(descriptor, comp_name) != null) {
+                    flags.bits.set(i);
+                }
+            }
+            break :ac flags;
+        };
+        const required_components = rc: {
+            comptime var flags = ComponentFlags(T).initBits(ComponentFlags(T).Bits.initEmpty());
+            inline for (T.component_names, 0..) |comp_name, i| {
+                if (@field(descriptor, comp_name)) |desc| {
+                    if (!desc.optional) {
+                        flags.bits.set(i);
+                    }
+                }
+            }
+            break :rc flags;
+        };
         const Item = ComponentMap(T, struct {
             fn FieldType(comptime C: type) type {
                 return *C;
@@ -335,11 +378,10 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
             }
 
             fn skip(comptime kind: T.ComponentKind) bool {
-                return !ComponentFlags(T).init(components).bits.isSet(@enumToInt(kind));
+                return !all_components.bits.isSet(@enumToInt(kind));
             }
         });
 
-        archetype: ComponentFlags(T),
         entities: *T,
         // It's measurably faster to use the iterator rather than index (less indirection), removing
         // indirection by storing pointer to array is equiavlent in release mode and faster in debug
@@ -355,7 +397,7 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
                 // list
                 if (self.archetype_list == null) {
                     self.archetype_list = while (self.archetype_lists.next()) |archetype_list| {
-                        if (archetype_list.value_ptr.archetype.bits.supersetOf(self.archetype.bits)) {
+                        if (archetype_list.value_ptr.archetype.bits.supersetOf(required_components.bits)) {
                             break archetype_list.value_ptr;
                         }
                     } else return null;
@@ -399,7 +441,6 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
         fn init(entities: *T) @This() {
             return .{
                 .entities = entities,
-                .archetype = ComponentFlags(T).init(components),
                 .archetype_lists = entities.archetype_lists.iterator(),
                 .archetype_list = null,
                 .handle_iterator = undefined,
@@ -536,7 +577,7 @@ test "iter remove" {
         const e3 = entities.create(.{ .x = 30 });
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             iter.swapRemove();
             try std.testing.expect(iter.next().?.x.* == 30);
@@ -551,7 +592,7 @@ test "iter remove" {
         try std.testing.expect(entities.getComponent(e3, .x).?.* == 30);
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 30);
             try std.testing.expect(iter.next().?.x.* == 10);
             try std.testing.expect(iter.next().?.x.* == 20);
@@ -570,7 +611,7 @@ test "iter remove" {
         const e3 = entities.create(.{ .x = 30 });
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             try std.testing.expect(iter.next().?.x.* == 10);
             iter.swapRemove();
@@ -585,7 +626,7 @@ test "iter remove" {
         try std.testing.expect(entities.getComponent(e3, .x).?.* == 30);
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             try std.testing.expect(iter.next().?.x.* == 30);
             try std.testing.expect(iter.next().?.x.* == 20);
@@ -604,7 +645,7 @@ test "iter remove" {
         const e3 = entities.create(.{ .x = 30 });
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             try std.testing.expect(iter.next().?.x.* == 10);
             try std.testing.expect(iter.next().?.x.* == 20);
@@ -619,7 +660,7 @@ test "iter remove" {
         try std.testing.expect(entities.getComponentChecked(e3, .x) == error.UseAfterFree);
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             try std.testing.expect(iter.next().?.x.* == 10);
             try std.testing.expect(iter.next().?.x.* == 20);
@@ -638,7 +679,7 @@ test "iter remove" {
         const e3 = entities.create(.{ .x = 30 });
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             iter.swapRemove();
             try std.testing.expect(iter.next().?.x.* == 30);
@@ -656,7 +697,7 @@ test "iter remove" {
         try std.testing.expect(entities.getComponentChecked(e3, .x) == error.UseAfterFree);
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next() == null);
         }
     }
@@ -671,7 +712,7 @@ test "iter remove" {
         _ = entities.create(.{ .x = 20 });
         _ = entities.create(.{ .x = 30 });
 
-        var iter = entities.iterator(.{.x});
+        var iter = entities.iterator(.{ .x = .{} });
         try std.testing.expect(iter.swapRemoveChecked() == error.NothingToRemove);
         for (0..5) |_| {
             _ = iter.next();
@@ -690,7 +731,7 @@ test "iter remove" {
         const e3 = entities.create(.{ .x = 30, .y = {} });
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             try std.testing.expect(iter.next().?.x.* == 10);
             iter.swapRemove();
@@ -699,7 +740,7 @@ test "iter remove" {
         }
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             try std.testing.expect(iter.next().?.x.* == 20);
             try std.testing.expect(iter.next().?.x.* == 30);
@@ -723,7 +764,7 @@ test "iter remove" {
         const e3 = entities.create(.{ .x = 30, .y = {} });
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             try std.testing.expect(iter.next().?.x.* == 10);
             try std.testing.expect(iter.next().?.x.* == 20);
@@ -732,7 +773,7 @@ test "iter remove" {
         }
 
         {
-            var iter = entities.iterator(.{.x});
+            var iter = entities.iterator(.{ .x = .{} });
             try std.testing.expect(iter.next().?.x.* == 0);
             try std.testing.expect(iter.next().?.x.* == 10);
             try std.testing.expect(iter.next().?.x.* == 30);
@@ -1219,7 +1260,7 @@ test "random data" {
                 try truth_all.put(entity.handle, entity.data);
             }
 
-            var iter_xyz = entities.iterator(.{ .x, .y, .z });
+            var iter_xyz = entities.iterator(.{ .x = .{}, .y = .{}, .z = .{} });
             while (iter_xyz.next()) |entity| {
                 var expected = truth_xyz.get(iter_xyz.handle()).?;
                 _ = truth_xyz.swapRemove(iter_xyz.handle());
@@ -1229,7 +1270,7 @@ test "random data" {
             }
             try std.testing.expect(truth_xyz.count() == 0);
 
-            var iter_xz = entities.iterator(.{ .x, .z });
+            var iter_xz = entities.iterator(.{ .x = .{}, .z = .{} });
             while (iter_xz.next()) |entity| {
                 var expected = truth_xz.get(iter_xz.handle()).?;
                 _ = truth_xz.swapRemove(iter_xz.handle());
@@ -1238,7 +1279,7 @@ test "random data" {
             }
             try std.testing.expect(truth_xz.count() == 0);
 
-            var iter_y = entities.iterator(.{.y});
+            var iter_y = entities.iterator(.{ .y = .{} });
             while (iter_y.next()) |entity| {
                 var expected = truth_y.get(iter_y.handle()).?;
                 _ = truth_y.swapRemove(iter_y.handle());
@@ -1266,7 +1307,7 @@ test "minimal iter test" {
     const entity_3 = entities.create(.{ .y = 60 });
 
     {
-        var iter = entities.iterator(.{ .x, .y });
+        var iter = entities.iterator(.{ .x = .{}, .y = .{} });
         var next = iter.next().?;
         try std.testing.expectEqual(iter.handle(), entity_0);
         try std.testing.expectEqual(next.x.*, 10);
@@ -1281,7 +1322,7 @@ test "minimal iter test" {
     }
 
     {
-        var iter = entities.iterator(.{.x});
+        var iter = entities.iterator(.{ .x = .{} });
         var next = iter.next().?;
         try std.testing.expectEqual(iter.handle(), entity_0);
         try std.testing.expectEqual(next.x.*, 10);
@@ -1296,7 +1337,7 @@ test "minimal iter test" {
     }
 
     {
-        var iter = entities.iterator(.{.y});
+        var iter = entities.iterator(.{ .y = .{} });
         var next = iter.next().?;
         try std.testing.expectEqual(iter.handle(), entity_0);
         try std.testing.expectEqual(next.y.*, 20);
