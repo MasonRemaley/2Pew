@@ -105,13 +105,10 @@ pub fn Entities(comptime registered_components: anytype) type {
                 std.debug.panic("failed to add components: {}", .{err});
         }
 
-        // TODO: test errors
         pub fn addComponentsChecked(self: *Self, handle: Handle, add: anytype) error{ UseAfterFree, OutOfMemory }!void {
             try self.changeArchetypeChecked(handle, .{ .add = add, .remove = ComponentFlags(Self).initBits(ComponentFlags(Self).Bits.initEmpty()) });
         }
 
-        // TODO: return a bool indicating if it was present or no? also we could have a faster
-        // hasComponents check for when you don't need the actual data?
         pub fn removeComponents(self: *Self, entity: Handle, remove: anytype) void {
             self.removeComponentsChecked(entity, remove) catch |err|
                 std.debug.panic("failed to remove components: {}", .{err});
@@ -133,7 +130,6 @@ pub fn Entities(comptime registered_components: anytype) type {
                 std.debug.panic("failed to change archetype: {}", .{err});
         }
 
-        // TODO: test the failure conditions here?
         // TODO: early out if no change?
         // Changes the components archetype. The logical equivalent of removing `changes.remove`,
         // and then adding `changes.add`.
@@ -788,7 +784,7 @@ test "clear retaining capacity" {
             try std.testing.expect(entities.getComponentChecked(e, .y) == error.UseAfterFree);
         }
 
-        // XXX: test iters, test getcomponent on these
+        // TODO: test iters, test getcomponent on these
 
         for (first_batch, second_batch) |first, second| {
             var expected = first;
@@ -839,7 +835,7 @@ test "zero-sized-component" {
     try std.testing.expect(entities.getComponent(b, .x) == null);
 }
 
-// XXX: update this test or no since we have it externally?
+// TODO: update this test or no since we have it externally?
 // test "free list" {
 //     var allocator = std.testing.allocator;
 //     var entities = try Entities(.{}).init(allocator);
@@ -904,7 +900,6 @@ test "zero-sized-component" {
 test "limits" {
     // Make sure our page index type is big enough
     {
-        // TODO: break this out into constant?
         const IndexInPage = std.meta.fields(EntityPointer(Entities(.{})))[std.meta.fieldIndex(EntityPointer(Entities(.{})), "index").?].type;
         assert(std.math.maxInt(IndexInPage) > page_size);
     }
@@ -923,15 +918,11 @@ test "limits" {
         try created.append(entity);
     }
     try std.testing.expectError(error.OutOfMemory, entities.createChecked(.{}));
-    // XXX: ...
-    // const page_pool_size = entities.page_pool.items.len;
 
     // Remove all the entities
     while (created.popOrNull()) |entity| {
         entities.swapRemove(entity);
     }
-    // XXX: ...
-    // try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
     // Assert that all pages are empty
     {
@@ -949,10 +940,8 @@ test "limits" {
         );
     }
     try std.testing.expectError(error.OutOfMemory, entities.createChecked(.{}));
-    // XXX: ...
-    // try std.testing.expectEqual(page_pool_size, entities.page_pool.items.len);
 
-    // XXX: update this test or no since we have it externally?
+    // TODO: update this test or no since we have it externally?
     // // Wrap a generation counter
     // {
     //     const entity = Handle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
@@ -979,7 +968,6 @@ test "safety" {
     }));
 }
 
-// TODO: speed up this test by replacing the allocator?
 // TODO: test 0 sized components? (used in game seemingly correctly!)
 test "random data" {
     const E = Entities(.{ .x = u32, .y = u8, .z = u16 });
