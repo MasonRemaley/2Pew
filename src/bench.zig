@@ -49,8 +49,8 @@ fn benchEcs() !void {
     {
         var iter = entities.iterator(.{ .x, .y });
         while (iter.next()) |e| {
-            try std.testing.expect(e.comps.x.* == 24);
-            try std.testing.expect(e.comps.y.* == 12);
+            try std.testing.expect(e.x.* == 24);
+            try std.testing.expect(e.y.* == 12);
         }
         std.debug.print("\titer(all): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
     }
@@ -59,7 +59,7 @@ fn benchEcs() !void {
     {
         var iter = entities.iterator(.{.z});
         while (iter.next()) |e| {
-            try std.testing.expect(e.comps.z.* == 13);
+            try std.testing.expect(e.z.* == 13);
         }
         std.debug.print("\titer(1): {d}ms\n", .{@intToFloat(f32, timer.lap()) / 1000000.0});
     }
@@ -68,8 +68,8 @@ fn benchEcs() !void {
     defer all.deinit();
     {
         var iter = entities.iterator(.{});
-        while (iter.next()) |next| {
-            try all.append(next.handle);
+        while (iter.next()) |_| {
+            try all.append(iter.handle());
         }
     }
     _ = timer.lap();

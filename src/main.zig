@@ -190,11 +190,11 @@ fn update(
     {
         var it = entities.iterator(.{.input});
         while (it.next()) |entity| {
-            entity.comps.input.update();
+            entity.input.update();
 
-            if (entities.getComponent(entity.handle, .health)) |health| {
+            if (entities.getComponent(it.handle(), .health)) |health| {
                 if (health.invulnerable_s > 0.0) {
-                    entity.comps.input.state.fire.positive = .inactive;
+                    entity.input.state.fire.positive = .inactive;
                 }
             }
         }
@@ -204,14 +204,14 @@ fn update(
     {
         var it = entities.iterator(.{ .ship, .animation, .input });
         while (it.next()) |entity| {
-            if (entity.comps.input.isAction(.thrust_forward, .positive, .activated)) {
-                entity.comps.animation.* = .{
-                    .index = entity.comps.ship.accel,
+            if (entity.input.isAction(.thrust_forward, .positive, .activated)) {
+                entity.animation.* = .{
+                    .index = entity.ship.accel,
                     .time_passed = 0,
                 };
-            } else if (entity.comps.input.isAction(.thrust_forward, .positive, .deactivated)) {
-                entity.comps.animation.* = .{
-                    .index = entity.comps.ship.still,
+            } else if (entity.input.isAction(.thrust_forward, .positive, .deactivated)) {
+                entity.animation.* = .{
+                    .index = entity.ship.still,
                     .time_passed = 0,
                 };
             }
@@ -224,32 +224,32 @@ fn update(
         while (it.next()) |entity| {
             var other_it = it;
             while (other_it.next()) |other| {
-                if (!Collider.interacts.get(entity.comps.collider.layer, other.comps.collider.layer)) continue;
+                if (!Collider.interacts.get(entity.collider.layer, other.collider.layer)) continue;
 
-                const added_radii = entity.comps.rb.radius + other.comps.rb.radius;
-                if (entity.comps.rb.pos.distanceSqrd(other.comps.rb.pos) > added_radii * added_radii) continue;
+                const added_radii = entity.rb.radius + other.rb.radius;
+                if (entity.rb.pos.distanceSqrd(other.rb.pos) > added_radii * added_radii) continue;
 
                 // calculate normal
-                const normal = other.comps.rb.pos.minus(entity.comps.rb.pos).normalized();
+                const normal = other.rb.pos.minus(entity.rb.pos).normalized();
                 // calculate relative velocity
-                const rv = other.comps.rb.vel.minus(entity.comps.rb.vel);
+                const rv = other.rb.vel.minus(entity.rb.vel);
                 // calculate relative velocity in terms of the normal direction
                 const vel_along_normal = rv.dot(normal);
                 // do not resolve if velocities are separating
                 if (vel_along_normal > 0) continue;
                 // calculate restitution
-                const e = @min(entity.comps.collider.collision_damping, other.comps.collider.collision_damping);
+                const e = @min(entity.collider.collision_damping, other.collider.collision_damping);
                 // calculate impulse scalar
                 var j: f32 = -(1.0 + e) * vel_along_normal;
-                const my_mass = entity.comps.rb.mass();
-                const other_mass = other.comps.rb.mass();
+                const my_mass = entity.rb.mass();
+                const other_mass = other.rb.mass();
                 j /= 1.0 / my_mass + 1.0 / other_mass;
                 // apply impulse
                 const impulse_mag = normal.scaled(j);
                 const impulse = impulse_mag.scaled(1 / my_mass);
                 const other_impulse = impulse_mag.scaled(1 / other_mass);
-                entity.comps.rb.vel.sub(impulse);
-                other.comps.rb.vel.add(other_impulse);
+                entity.rb.vel.sub(impulse);
+                other.rb.vel.add(other_impulse);
 
                 // Deal HP damage relative to the change in velocity.
                 // A very gentle bonk is something like impulse 20, while a
@@ -257,13 +257,13 @@ fn update(
                 // The basic ranger ship has 80 HP.
                 var total_damage: f32 = 0;
                 const max_shield = 1.0;
-                const entity_health = entities.getComponent(entity.handle, .health);
-                const other_health = entities.getComponent(other.handle, .health);
+                const entity_health = entities.getComponent(it.handle(), .health);
+                const other_health = entities.getComponent(other_it.handle(), .health);
                 if (entity_health) |health| {
                     if (other_health == null or other_health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
-                        if (entities.getComponent(entity.handle, .front_shield) != null) {
-                            var dot = V.unit(entity.comps.rb.angle).dot(normal);
+                        if (entities.getComponent(it.handle(), .front_shield) != null) {
+                            var dot = V.unit(entity.rb.angle).dot(normal);
                             shield_scale = std.math.max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
@@ -275,8 +275,8 @@ fn update(
                 if (other_health) |health| {
                     if (entity_health == null or entity_health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
-                        if (entities.getComponent(entity.handle, .front_shield) != null) {
-                            var dot = V.unit(other.comps.rb.angle).dot(normal);
+                        if (entities.getComponent(it.handle(), .front_shield) != null) {
+                            var dot = V.unit(other.rb.angle).dot(normal);
                             shield_scale = std.math.max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
@@ -290,8 +290,8 @@ fn update(
                     u32,
                     @floor(remap_clamped(0, 100, 0, 30, total_damage)),
                 );
-                const shrapnel_center = entity.comps.rb.pos.plus(other.comps.rb.pos).scaled(0.5);
-                const avg_vel = entity.comps.rb.vel.plus(other.comps.rb.vel).scaled(0.5);
+                const shrapnel_center = entity.rb.pos.plus(other.rb.pos).scaled(0.5);
+                const avg_vel = entity.rb.vel.plus(other.rb.vel).scaled(0.5);
                 for (0..shrapnel_amt) |_| {
                     const shrapnel_animation = game.shrapnel_animations[
                         std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
@@ -300,7 +300,7 @@ fn update(
                     const random_offset = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * 10);
                     // Give them random velocities.
-                    const base_vel = if (std.crypto.random.boolean()) entity.comps.rb.vel else other.comps.rb.vel;
+                    const base_vel = if (std.crypto.random.boolean()) entity.rb.vel else other.rb.vel;
                     const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
                     command_buffer.appendCreate(.{
@@ -330,17 +330,17 @@ fn update(
                 // have opinions on rotation. We can add that though!
                 {
                     var hooked = false;
-                    if (entities.getComponent(entity.handle, .hook)) |hook| {
+                    if (entities.getComponent(it.handle(), .hook)) |hook| {
                         // XXX: make a public changeArchetype function so that we can do this in a single
                         // move, could also be named removeComponentsAddComponents or such, probably
                         // should work even if overlap?
-                        command_buffer.appendArchChange(entity.handle, .{
+                        command_buffer.appendArchChange(it.handle(), .{
                             .add = .{
                                 .spring = Spring{
-                                    .start = entity.handle,
-                                    .end = other.handle,
+                                    .start = it.handle(),
+                                    .end = other_it.handle(),
                                     .k = hook.k,
-                                    .length = entity.comps.rb.pos.distance(other.comps.rb.pos),
+                                    .length = entity.rb.pos.distance(other.rb.pos),
                                     .damping = hook.damping,
                                 },
                             },
@@ -348,14 +348,14 @@ fn update(
                         });
                         hooked = true;
                     }
-                    if (entities.getComponent(other.handle, .hook)) |hook| {
-                        command_buffer.appendArchChange(other.handle, .{
+                    if (entities.getComponent(other_it.handle(), .hook)) |hook| {
+                        command_buffer.appendArchChange(other_it.handle(), .{
                             .add = .{
                                 .spring = Spring{
-                                    .start = entity.handle,
-                                    .end = other.handle,
+                                    .start = it.handle(),
+                                    .end = other_it.handle(),
                                     .k = hook.k,
-                                    .length = entity.comps.rb.pos.distance(other.comps.rb.pos),
+                                    .length = entity.rb.pos.distance(other.rb.pos),
                                     .damping = hook.damping,
                                 },
                             },
@@ -376,21 +376,21 @@ fn update(
     {
         var it = entities.iterator(.{.rb});
         while (it.next()) |entity| {
-            entity.comps.rb.pos.add(entity.comps.rb.vel.scaled(delta_s));
+            entity.rb.pos.add(entity.rb.vel.scaled(delta_s));
 
             // gravity if the rb is outside the ring
-            if (entity.comps.rb.pos.distanceSqrd(display_center) > display_radius * display_radius) {
+            if (entity.rb.pos.distanceSqrd(display_center) > display_radius * display_radius) {
                 const gravity = 500;
-                const gravity_v = display_center.minus(entity.comps.rb.pos).normalized().scaled(gravity * delta_s);
-                entity.comps.rb.vel.add(gravity_v);
-                if (entities.getComponent(entity.handle, .health)) |health| {
+                const gravity_v = display_center.minus(entity.rb.pos).normalized().scaled(gravity * delta_s);
+                entity.rb.vel.add(gravity_v);
+                if (entities.getComponent(it.handle(), .health)) |health| {
                     // punishment for leaving the circle
                     _ = health.damage(delta_s * 4);
                 }
             }
 
-            entity.comps.rb.angle = @mod(
-                entity.comps.rb.angle + entity.comps.rb.rotation_vel * delta_s,
+            entity.rb.angle = @mod(
+                entity.rb.angle + entity.rb.rotation_vel * delta_s,
                 2 * math.pi,
             );
         }
@@ -402,13 +402,13 @@ fn update(
         while (it.next()) |entity| {
             // XXX: crashes if either end has been deleted right now. we may wanna actually make
             // checking if an entity is valid or not a feature if there's not a bette way to handle this?
-            var start = entities.getComponent(entity.comps.spring.start, .rb) orelse {
+            var start = entities.getComponent(entity.spring.start, .rb) orelse {
                 std.log.err("spring connections require rb, destroying spring entity", .{});
                 it.swapRemove();
                 continue;
             };
 
-            var end = entities.getComponent(entity.comps.spring.end, .rb) orelse {
+            var end = entities.getComponent(entity.spring.end, .rb) orelse {
                 std.log.err("spring connections require rb, destroying spring entity", .{});
                 it.swapRemove();
                 continue;
@@ -419,13 +419,13 @@ fn update(
 
             // XXX: min length 0 right now, could make min and max (before force) settable though?
             // const x = delta.length() - spring.length;
-            const x = std.math.max(delta.length() - entity.comps.spring.length, 0.0);
-            const spring_force = entity.comps.spring.k * x;
+            const x = std.math.max(delta.length() - entity.spring.length, 0.0);
+            const spring_force = entity.spring.k * x;
 
             const relative_vel = end.vel.dot(dir) - start.vel.dot(dir);
-            const start_b = @sqrt(entity.comps.spring.damping * 4.0 * start.mass() * entity.comps.spring.k);
+            const start_b = @sqrt(entity.spring.damping * 4.0 * start.mass() * entity.spring.k);
             const start_damping_force = start_b * relative_vel;
-            const end_b = @sqrt(entity.comps.spring.damping * 4.0 * end.mass() * entity.comps.spring.k);
+            const end_b = @sqrt(entity.spring.damping * 4.0 * end.mass() * entity.spring.k);
             const end_damping_force = end_b * relative_vel;
 
             const start_impulse = (start_damping_force + spring_force) * delta_s;
@@ -442,23 +442,23 @@ fn update(
         while (damage_it.next()) |damage_entity| {
             var health_it = entities.iterator(.{ .health, .rb });
             const destroy = while (health_it.next()) |health_entity| {
-                if (health_entity.comps.rb.pos.distanceSqrd(damage_entity.comps.rb.pos) <
-                    health_entity.comps.rb.radius * health_entity.comps.rb.radius + damage_entity.comps.rb.radius * damage_entity.comps.rb.radius)
+                if (health_entity.rb.pos.distanceSqrd(damage_entity.rb.pos) <
+                    health_entity.rb.radius * health_entity.rb.radius + damage_entity.rb.radius * damage_entity.rb.radius)
                 {
-                    if (health_entity.comps.health.damage(damage_entity.comps.damage.hp) > 0.0) {
+                    if (health_entity.health.damage(damage_entity.damage.hp) > 0.0) {
                         // spawn shrapnel here
                         const shrapnel_animation = game.shrapnel_animations[
                             std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
                         ];
                         const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                            .scaled(damage_entity.comps.rb.vel.length() * 0.2);
+                            .scaled(damage_entity.rb.vel.length() * 0.2);
                         command_buffer.appendCreate(.{
                             .lifetime = .{
                                 .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
                             },
                             .rb = .{
-                                .pos = health_entity.comps.rb.pos,
-                                .vel = health_entity.comps.rb.vel.plus(damage_entity.comps.rb.vel.scaled(0.2)).plus(random_vector),
+                                .pos = health_entity.rb.pos,
+                                .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
                                 .angle = 2 * math.pi * std.crypto.random.float(f32),
                                 .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                                 .radius = game.animationRadius(shrapnel_animation),
@@ -481,7 +481,7 @@ fn update(
                 continue;
             }
 
-            damage_entity.comps.rb.angle = damage_entity.comps.rb.vel.angle() + math.pi / 2.0;
+            damage_entity.rb.angle = damage_entity.rb.vel.angle() + math.pi / 2.0;
         }
     }
 
@@ -490,9 +490,9 @@ fn update(
     {
         var it = entities.iterator(.{.health});
         while (it.next()) |entity| {
-            if (entity.comps.health.hp <= 0) {
+            if (entity.health.hp <= 0) {
                 // spawn explosion here
-                if (entities.getComponent(entity.handle, .rb)) |rb| {
+                if (entities.getComponent(it.handle(), .rb)) |rb| {
                     command_buffer.appendCreate(.{
                         .lifetime = .{
                             .seconds = 100,
@@ -515,8 +515,8 @@ fn update(
 
                 // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
-                if (entities.getComponent(entity.handle, .ship)) |ship| {
-                    if (entities.getComponent(entity.handle, .input)) |input| {
+                if (entities.getComponent(it.handle(), .ship)) |ship| {
+                    if (entities.getComponent(it.handle(), .input)) |input| {
                         // give player their next ship
                         const player = &game.players[ship.player];
                         const team = &game.teams[player.team];
@@ -544,15 +544,15 @@ fn update(
             }
 
             // Regen health
-            var max_regen = entity.comps.health.regen_ratio * entity.comps.health.max_hp;
-            var regen_speed = max_regen / entity.comps.health.regen_s;
-            if (entity.comps.health.regen_cooldown_s <= 0.0 and entity.comps.health.hp < max_regen) {
-                entity.comps.health.hp = std.math.min(entity.comps.health.hp + regen_speed * delta_s, max_regen);
+            var max_regen = entity.health.regen_ratio * entity.health.max_hp;
+            var regen_speed = max_regen / entity.health.regen_s;
+            if (entity.health.regen_cooldown_s <= 0.0 and entity.health.hp < max_regen) {
+                entity.health.hp = std.math.min(entity.health.hp + regen_speed * delta_s, max_regen);
             }
-            entity.comps.health.regen_cooldown_s = std.math.max(entity.comps.health.regen_cooldown_s - delta_s, 0.0);
+            entity.health.regen_cooldown_s = std.math.max(entity.health.regen_cooldown_s - delta_s, 0.0);
 
             // Update invulnerability
-            entity.comps.health.invulnerable_s = std.math.max(entity.comps.health.invulnerable_s - delta_s, 0.0);
+            entity.health.invulnerable_s = std.math.max(entity.health.invulnerable_s - delta_s, 0.0);
         }
     }
 
@@ -560,21 +560,21 @@ fn update(
     {
         var it = entities.iterator(.{ .ship, .rb, .input });
         while (it.next()) |entity| {
-            if (entity.comps.ship.omnithrusters) {
-                entity.comps.rb.vel.add(.{
-                    .x = entity.comps.input.getAxis(.thrust_x) * entity.comps.ship.thrust * delta_s,
-                    .y = entity.comps.input.getAxis(.thrust_y) * entity.comps.ship.thrust * delta_s,
+            if (entity.ship.omnithrusters) {
+                entity.rb.vel.add(.{
+                    .x = entity.input.getAxis(.thrust_x) * entity.ship.thrust * delta_s,
+                    .y = entity.input.getAxis(.thrust_y) * entity.ship.thrust * delta_s,
                 });
             } else {
                 // convert to 1.0 or 0.0
-                entity.comps.rb.angle = @mod(
-                    entity.comps.rb.angle + entity.comps.input.getAxis(.turn) * entity.comps.ship.turn_speed * delta_s,
+                entity.rb.angle = @mod(
+                    entity.rb.angle + entity.input.getAxis(.turn) * entity.ship.turn_speed * delta_s,
                     2 * math.pi,
                 );
 
-                const thrust_input = @intToFloat(f32, @boolToInt(entity.comps.input.isAction(.thrust_forward, .positive, .active)));
-                const thrust = V.unit(entity.comps.rb.angle);
-                entity.comps.rb.vel.add(thrust.scaled(thrust_input * entity.comps.ship.thrust * delta_s));
+                const thrust_input = @intToFloat(f32, @boolToInt(entity.input.isAction(.thrust_forward, .positive, .active)));
+                const thrust = V.unit(entity.rb.angle);
+                entity.rb.vel.add(thrust.scaled(thrust_input * entity.ship.thrust * delta_s));
             }
         }
     }
@@ -583,16 +583,16 @@ fn update(
     {
         var it = entities.iterator(.{ .turrets, .input, .rb });
         while (it.next()) |entity| {
-            for (entity.comps.turrets) |*turret| {
+            for (entity.turrets) |*turret| {
                 turret.cooldown_s -= delta_s;
-                if (entity.comps.input.isAction(.fire, .positive, .active) and turret.cooldown_s <= 0) {
+                if (entity.input.isAction(.fire, .positive, .active) and turret.cooldown_s <= 0) {
                     turret.cooldown_s = turret.max_cooldown_s;
                     // TODO(mason): just make separate component for wall
-                    var angle = entity.comps.rb.angle;
-                    var vel = V.unit(angle).scaled(turret.projectile_speed).plus(entity.comps.rb.vel);
+                    var angle = entity.rb.angle;
+                    var vel = V.unit(angle).scaled(turret.projectile_speed).plus(entity.rb.vel);
                     var sprite = game.bullet_small;
                     if (turret.aim_opposite_movement) {
-                        angle = entity.comps.rb.vel.angle() + std.math.pi;
+                        angle = entity.rb.vel.angle() + std.math.pi;
                         vel = V.zero;
                         sprite = game.bullet_shiny;
                     }
@@ -601,7 +601,7 @@ fn update(
                             .hp = turret.projectile_damage,
                         },
                         .rb = .{
-                            .pos = entity.comps.rb.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius)),
+                            .pos = entity.rb.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius)),
                             .vel = vel,
                             .angle = 0,
                             .rotation_vel = 0,
@@ -629,9 +629,9 @@ fn update(
     {
         var it = entities.iterator(.{ .grapple_gun, .input, .rb });
         while (it.next()) |entity| {
-            var gg = entity.comps.grapple_gun;
-            var input = entity.comps.input;
-            var rb = entity.comps.rb;
+            var gg = entity.grapple_gun;
+            var input = entity.input;
+            var rb = entity.rb;
             gg.cooldown_s -= delta_s;
             if (input.isAction(.fire, .positive, .activated) and gg.cooldown_s <= 0) {
                 gg.cooldown_s = gg.max_cooldown_s;
@@ -714,7 +714,7 @@ fn update(
                         gg.live.?.springs[i] = entities.create(.{
                             .spring = .{
                                 .start = if (i == 0)
-                                    entity.handle
+                                    it.handle()
                                 else
                                     gg.live.?.joints[i - 1],
                                 .end = if (i < gg.live.?.joints.len)
@@ -736,7 +736,7 @@ fn update(
     {
         var it = entities.iterator(.{.animation});
         while (it.next()) |entity| {
-            if (entity.comps.animation.destroys_entity and entity.comps.animation.index == .none) {
+            if (entity.animation.destroys_entity and entity.animation.index == .none) {
                 it.swapRemove();
                 continue;
             }
@@ -747,8 +747,8 @@ fn update(
     {
         var it = entities.iterator(.{.lifetime});
         while (it.next()) |entity| {
-            entity.comps.lifetime.seconds -= delta_s;
-            if (entity.comps.lifetime.seconds <= 0) {
+            entity.lifetime.seconds -= delta_s;
+            if (entity.lifetime.seconds <= 0) {
                 it.swapRemove();
                 continue;
             }
@@ -808,15 +808,15 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     {
         var it = entities.iterator(.{ .rb, .animation });
         while (it.next()) |entity| {
-            const frame = assets.animate(entity.comps.animation, delta_s);
+            const frame = assets.animate(entity.animation, delta_s);
             const unscaled_sprite_size = frame.sprite.size();
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
-            const size_coefficient = entity.comps.rb.radius / sprite_radius;
+            const size_coefficient = entity.rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            var dest_rect = sdlRect(entity.comps.rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
+            var dest_rect = sdlRect(entity.rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
 
             var hidden = false;
-            if (entities.getComponent(entity.handle, .health)) |health| {
+            if (entities.getComponent(it.handle(), .health)) |health| {
                 if (health.invulnerable_s > 0.0) {
                     var flashes_ps: f32 = 2;
                     if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
@@ -834,12 +834,12 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                     frame.sprite.texture,
                     null, // source rectangle
                     &dest_rect,
-                    toDegrees(entity.comps.rb.angle + frame.angle),
+                    toDegrees(entity.rb.angle + frame.angle),
                     null, // center of angle
                     c.SDL_FLIP_NONE,
                 ));
 
-                if (entities.getComponent(entity.handle, .ship)) |ship| {
+                if (entities.getComponent(it.handle(), .ship)) |ship| {
                     const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
                     dest_rect.x -= @divTrunc(dest_rect.w, 2);
                     dest_rect.y -= @divTrunc(dest_rect.h, 2);
@@ -863,19 +863,19 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     {
         var it = entities.iterator(.{ .health, .rb });
         while (it.next()) |entity| {
-            if (entity.comps.health.hp < entity.comps.health.max_hp) {
+            if (entity.health.hp < entity.health.max_hp) {
                 const health_bar_size: V = .{ .x = 32, .y = 4 };
-                var start = entity.comps.rb.pos.minus(health_bar_size.scaled(0.5)).floored();
-                start.y -= entity.comps.rb.radius + health_bar_size.y;
+                var start = entity.rb.pos.minus(health_bar_size.scaled(0.5)).floored();
+                start.y -= entity.rb.radius + health_bar_size.y;
                 sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
                 sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
                     start.minus(.{ .x = 1, .y = 1 }),
                     health_bar_size.plus(.{ .x = 2, .y = 2 }),
                 )));
-                const hp_percent = entity.comps.health.hp / entity.comps.health.max_hp;
-                if (hp_percent >= entity.comps.health.regen_ratio) {
+                const hp_percent = entity.health.hp / entity.health.max_hp;
+                if (hp_percent >= entity.health.regen_ratio) {
                     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
-                } else if (entity.comps.health.regen_cooldown_s > 0.0) {
+                } else if (entity.health.regen_cooldown_s > 0.0) {
                     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
                 } else {
                     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0x7d, 0x03, 0xff));
@@ -893,18 +893,18 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     {
         var it = entities.iterator(.{ .sprite, .rb });
         while (it.next()) |entity| {
-            const sprite = assets.sprite(entity.comps.sprite.*);
+            const sprite = assets.sprite(entity.sprite.*);
             const unscaled_sprite_size = sprite.size();
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
-            const size_coefficient = entity.comps.rb.radius / sprite_radius;
+            const size_coefficient = entity.rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            const dest_rect = sdlRect(entity.comps.rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
+            const dest_rect = sdlRect(entity.rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
                 null, // source rectangle
                 &dest_rect,
-                toDegrees(entity.comps.rb.angle),
+                toDegrees(entity.rb.angle),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -918,8 +918,8 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     {
         var it = entities.iterator(.{.spring});
         while (it.next()) |entity| {
-            var start = (entities.getComponent(entity.comps.spring.start, .rb) orelse continue).pos;
-            var end = (entities.getComponent(entity.comps.spring.end, .rb) orelse continue).pos;
+            var start = (entities.getComponent(entity.spring.start, .rb) orelse continue).pos;
+            var end = (entities.getComponent(entity.spring.end, .rb) orelse continue).pos;
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,

@@ -325,7 +325,7 @@ fn ArchetypeList(comptime T: type) type {
 
 pub fn Iterator(comptime T: type, comptime components: anytype) type {
     return struct {
-        const Components = ComponentMap(T, struct {
+        const Item = ComponentMap(T, struct {
             fn FieldType(comptime C: type) type {
                 return *C;
             }
@@ -339,12 +339,6 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
             }
         });
 
-        // TODO: maybe have a getter on the iterator for the handle since that's less often used instead of returning it here?
-        const Item = struct {
-            handle: T.Handle,
-            comps: Components,
-        };
-
         archetype: ComponentFlags(T),
         entities: *T,
         // It's measurably faster to use the iterator rather than index (less indirection), removing
@@ -353,6 +347,7 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
         archetype_lists: AutoArrayHashMapUnmanaged(ComponentFlags(T), ArchetypeList(T)).Iterator,
         archetype_list: ?*ArchetypeList(T),
         handle_iterator: ArchetypeList(T).HandleIterator,
+        current_handle: T.Handle,
 
         pub fn next(self: *@This()) ?Item {
             while (true) {
@@ -368,14 +363,14 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
                 }
 
                 // Get the next entity in this page list, if it exists
-                if (self.handle_iterator.peek()) |handle| {
+                if (self.handle_iterator.peek()) |current_handle| {
                     var item: Item = undefined;
-                    item.handle = handle.*;
+                    self.current_handle = current_handle.*;
                     comptime assert(@TypeOf(self.archetype_list.?.handles).prealloc_count == 0);
-                    inline for (@typeInfo(Components).Struct.fields) |field| {
+                    inline for (@typeInfo(Item).Struct.fields) |field| {
                         comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).prealloc_count == 0);
                         comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);
-                        @field(item.comps, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
+                        @field(item, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
                     }
                     _ = self.handle_iterator.next();
                     return item;
@@ -383,6 +378,12 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
 
                 self.archetype_list = null;
             }
+        }
+
+        // TODO: test coverage
+        pub fn handle(self: *const @This()) T.Handle {
+            assert(self.archetype_list != null);
+            return self.current_handle;
         }
 
         pub fn swapRemove(self: *@This()) void {
@@ -402,6 +403,7 @@ pub fn Iterator(comptime T: type, comptime components: anytype) type {
                 .archetype_lists = entities.archetype_lists.iterator(),
                 .archetype_list = null,
                 .handle_iterator = undefined,
+                .current_handle = undefined,
             };
         }
     };
@@ -535,11 +537,11 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 0);
             iter.swapRemove();
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 20);
             try std.testing.expect(iter.next() == null);
         }
 
@@ -550,9 +552,9 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 20);
             try std.testing.expect(iter.next() == null);
         }
     }
@@ -569,11 +571,11 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 10);
             iter.swapRemove();
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 20);
             try std.testing.expect(iter.next() == null);
         }
 
@@ -584,9 +586,9 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 20);
             try std.testing.expect(iter.next() == null);
         }
     }
@@ -603,10 +605,10 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 30);
             iter.swapRemove();
             try std.testing.expect(iter.next() == null);
         }
@@ -618,9 +620,9 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 20);
             try std.testing.expect(iter.next() == null);
         }
     }
@@ -637,13 +639,13 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 0);
             iter.swapRemove();
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 30);
             iter.swapRemove();
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 20);
             iter.swapRemove();
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 10);
             iter.swapRemove();
             try std.testing.expect(iter.next() == null);
         }
@@ -689,18 +691,18 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 10);
             iter.swapRemove();
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 30);
         }
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 30);
             try std.testing.expect(iter.next() == null);
         }
 
@@ -722,18 +724,18 @@ test "iter remove" {
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
-            try std.testing.expect(iter.next().?.comps.x.* == 20);
+            try std.testing.expect(iter.next().?.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 20);
             iter.swapRemove();
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 30);
         }
 
         {
             var iter = entities.iterator(.{.x});
-            try std.testing.expect(iter.next().?.comps.x.* == 0);
-            try std.testing.expect(iter.next().?.comps.x.* == 10);
-            try std.testing.expect(iter.next().?.comps.x.* == 30);
+            try std.testing.expect(iter.next().?.x.* == 0);
+            try std.testing.expect(iter.next().?.x.* == 10);
+            try std.testing.expect(iter.next().?.x.* == 30);
             try std.testing.expect(iter.next() == null);
         }
 
@@ -814,8 +816,8 @@ test "clear retaining capacity" {
             try expected.put(e, {});
         }
         var it = entities.iterator(.{});
-        while (it.next()) |n| {
-            try std.testing.expect(expected.remove(n.handle));
+        while (it.next()) |_| {
+            try std.testing.expect(expected.remove(it.handle()));
         }
         try std.testing.expect(expected.count() == 0);
     }
@@ -1219,34 +1221,34 @@ test "random data" {
 
             var iter_xyz = entities.iterator(.{ .x, .y, .z });
             while (iter_xyz.next()) |entity| {
-                var expected = truth_xyz.get(entity.handle).?;
-                _ = truth_xyz.swapRemove(entity.handle);
-                try std.testing.expectEqual(expected.x.?, entity.comps.x.*);
-                try std.testing.expectEqual(expected.y.?, entity.comps.y.*);
-                try std.testing.expectEqual(expected.z.?, entity.comps.z.*);
+                var expected = truth_xyz.get(iter_xyz.handle()).?;
+                _ = truth_xyz.swapRemove(iter_xyz.handle());
+                try std.testing.expectEqual(expected.x.?, entity.x.*);
+                try std.testing.expectEqual(expected.y.?, entity.y.*);
+                try std.testing.expectEqual(expected.z.?, entity.z.*);
             }
             try std.testing.expect(truth_xyz.count() == 0);
 
             var iter_xz = entities.iterator(.{ .x, .z });
             while (iter_xz.next()) |entity| {
-                var expected = truth_xz.get(entity.handle).?;
-                _ = truth_xz.swapRemove(entity.handle);
-                try std.testing.expectEqual(expected.x.?, entity.comps.x.*);
-                try std.testing.expectEqual(expected.z.?, entity.comps.z.*);
+                var expected = truth_xz.get(iter_xz.handle()).?;
+                _ = truth_xz.swapRemove(iter_xz.handle());
+                try std.testing.expectEqual(expected.x.?, entity.x.*);
+                try std.testing.expectEqual(expected.z.?, entity.z.*);
             }
             try std.testing.expect(truth_xz.count() == 0);
 
             var iter_y = entities.iterator(.{.y});
             while (iter_y.next()) |entity| {
-                var expected = truth_y.get(entity.handle).?;
-                _ = truth_y.swapRemove(entity.handle);
-                try std.testing.expectEqual(expected.y.?, entity.comps.y.*);
+                var expected = truth_y.get(iter_y.handle()).?;
+                _ = truth_y.swapRemove(iter_y.handle());
+                try std.testing.expectEqual(expected.y.?, entity.y.*);
             }
             try std.testing.expect(truth_y.count() == 0);
 
             var iter_all = entities.iterator(.{});
-            while (iter_all.next()) |entity| {
-                try std.testing.expect(truth_all.swapRemove(entity.handle));
+            while (iter_all.next()) |_| {
+                try std.testing.expect(truth_all.swapRemove(iter_all.handle()));
             }
             try std.testing.expect(truth_all.count() == 0);
         }
@@ -1266,13 +1268,13 @@ test "minimal iter test" {
     {
         var iter = entities.iterator(.{ .x, .y });
         var next = iter.next().?;
-        try std.testing.expectEqual(next.handle, entity_0);
-        try std.testing.expectEqual(next.comps.x.*, 10);
-        try std.testing.expectEqual(next.comps.y.*, 20);
+        try std.testing.expectEqual(iter.handle(), entity_0);
+        try std.testing.expectEqual(next.x.*, 10);
+        try std.testing.expectEqual(next.y.*, 20);
         next = iter.next().?;
-        try std.testing.expectEqual(next.handle, entity_1);
-        try std.testing.expectEqual(next.comps.x.*, 30);
-        try std.testing.expectEqual(next.comps.y.*, 40);
+        try std.testing.expectEqual(iter.handle(), entity_1);
+        try std.testing.expectEqual(next.x.*, 30);
+        try std.testing.expectEqual(next.y.*, 40);
 
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
@@ -1281,14 +1283,14 @@ test "minimal iter test" {
     {
         var iter = entities.iterator(.{.x});
         var next = iter.next().?;
-        try std.testing.expectEqual(next.handle, entity_0);
-        try std.testing.expectEqual(next.comps.x.*, 10);
+        try std.testing.expectEqual(iter.handle(), entity_0);
+        try std.testing.expectEqual(next.x.*, 10);
         next = iter.next().?;
-        try std.testing.expectEqual(next.handle, entity_1);
-        try std.testing.expectEqual(next.comps.x.*, 30);
+        try std.testing.expectEqual(iter.handle(), entity_1);
+        try std.testing.expectEqual(next.x.*, 30);
         next = iter.next().?;
-        try std.testing.expectEqual(next.handle, entity_2);
-        try std.testing.expectEqual(next.comps.x.*, 50);
+        try std.testing.expectEqual(iter.handle(), entity_2);
+        try std.testing.expectEqual(next.x.*, 50);
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
     }
@@ -1296,24 +1298,28 @@ test "minimal iter test" {
     {
         var iter = entities.iterator(.{.y});
         var next = iter.next().?;
-        try std.testing.expectEqual(next.handle, entity_0);
-        try std.testing.expectEqual(next.comps.y.*, 20);
+        try std.testing.expectEqual(iter.handle(), entity_0);
+        try std.testing.expectEqual(next.y.*, 20);
         next = iter.next().?;
-        try std.testing.expectEqual(next.handle, entity_1);
-        try std.testing.expectEqual(next.comps.y.*, 40);
+        try std.testing.expectEqual(iter.handle(), entity_1);
+        try std.testing.expectEqual(next.y.*, 40);
         next = iter.next().?;
-        try std.testing.expectEqual(next.handle, entity_3);
-        try std.testing.expectEqual(next.comps.y.*, 60);
+        try std.testing.expectEqual(iter.handle(), entity_3);
+        try std.testing.expectEqual(next.y.*, 60);
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
     }
 
     {
         var iter = entities.iterator(.{});
-        try std.testing.expectEqual(iter.next().?.handle, entity_0);
-        try std.testing.expectEqual(iter.next().?.handle, entity_1);
-        try std.testing.expectEqual(iter.next().?.handle, entity_2);
-        try std.testing.expectEqual(iter.next().?.handle, entity_3);
+        _ = iter.next().?;
+        try std.testing.expectEqual(iter.handle(), entity_0);
+        _ = iter.next().?;
+        try std.testing.expectEqual(iter.handle(), entity_1);
+        _ = iter.next().?;
+        try std.testing.expectEqual(iter.handle(), entity_2);
+        _ = iter.next().?;
+        try std.testing.expectEqual(iter.handle(), entity_3);
         try std.testing.expect(iter.next() == null);
         try std.testing.expect(iter.next() == null);
     }
