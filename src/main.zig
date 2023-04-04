@@ -21,6 +21,7 @@ const ecs = @import("ecs/index.zig");
 const Entities = ecs.entities.Entities(.{
     .damage = Damage,
     .ship = Ship,
+    .transform = Transform,
     .rb = RigidBody,
     .input = Input,
     .lifetime = Lifetime,
@@ -236,6 +237,7 @@ fn update(
     {
         var it = entities.iterator(.{
             .rb = .{ .mutable = true },
+            .transform = .{},
             .collider = .{},
             .health = .{ .mutable = true, .optional = true },
             .front_shield = .{ .optional = true },
@@ -247,10 +249,10 @@ fn update(
                 if (!Collider.interacts.get(entity.collider.layer, other.collider.layer)) continue;
 
                 const added_radii = entity.rb.radius + other.rb.radius;
-                if (entity.rb.pos.distanceSqrd(other.rb.pos) > added_radii * added_radii) continue;
+                if (entity.transform.pos.distanceSqrd(other.transform.pos) > added_radii * added_radii) continue;
 
                 // calculate normal
-                const normal = other.rb.pos.minus(entity.rb.pos).normalized();
+                const normal = other.transform.pos.minus(entity.transform.pos).normalized();
                 // calculate relative velocity
                 const rv = other.rb.vel.minus(entity.rb.vel);
                 // calculate relative velocity in terms of the normal direction
@@ -308,7 +310,7 @@ fn update(
                     u32,
                     @floor(remap_clamped(0, 100, 0, 30, total_damage)),
                 );
-                const shrapnel_center = entity.rb.pos.plus(other.rb.pos).scaled(0.5);
+                const shrapnel_center = entity.transform.pos.plus(other.transform.pos).scaled(0.5);
                 const avg_vel = entity.rb.vel.plus(other.rb.vel).scaled(0.5);
                 for (0..shrapnel_amt) |_| {
                     const shrapnel_animation = game.shrapnel_animations[
@@ -325,8 +327,10 @@ fn update(
                         .lifetime = .{
                             .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
                         },
-                        .rb = .{
+                        .transform = .{
                             .pos = shrapnel_center.plus(random_offset),
+                        },
+                        .rb = .{
                             .vel = avg_vel.plus(random_vel),
                             .angle = 2 * math.pi * std.crypto.random.float(f32),
                             .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
@@ -355,7 +359,7 @@ fn update(
                                     .start = it.handle(),
                                     .end = other_it.handle(),
                                     .k = hook.k,
-                                    .length = entity.rb.pos.distance(other.rb.pos),
+                                    .length = entity.transform.pos.distance(other.transform.pos),
                                     .damping = hook.damping,
                                 },
                             },
@@ -370,7 +374,7 @@ fn update(
                                     .start = it.handle(),
                                     .end = other_it.handle(),
                                     .k = hook.k,
-                                    .length = entity.rb.pos.distance(other.rb.pos),
+                                    .length = entity.transform.pos.distance(other.transform.pos),
                                     .damping = hook.damping,
                                 },
                             },
@@ -391,15 +395,16 @@ fn update(
     {
         var it = entities.iterator(.{
             .rb = .{ .mutable = true },
+            .transform = .{ .mutable = true },
             .health = .{ .mutable = true, .optional = true },
         });
         while (it.next()) |entity| {
-            entity.rb.pos.add(entity.rb.vel.scaled(delta_s));
+            entity.transform.pos.add(entity.rb.vel.scaled(delta_s));
 
             // gravity if the rb is outside the ring
-            if (entity.rb.pos.distanceSqrd(display_center) > display_radius * display_radius and entity.rb.density < std.math.inf(f32)) {
+            if (entity.transform.pos.distanceSqrd(display_center) > display_radius * display_radius and entity.rb.density < std.math.inf(f32)) {
                 const gravity = 500;
-                const gravity_v = display_center.minus(entity.rb.pos).normalized().scaled(gravity * delta_s);
+                const gravity_v = display_center.minus(entity.transform.pos).normalized().scaled(gravity * delta_s);
                 entity.rb.vel.add(gravity_v);
                 if (entity.health) |health| {
                     // punishment for leaving the circle
@@ -420,19 +425,30 @@ fn update(
         while (it.next()) |entity| {
             // TODO: crashes if either end has been deleted right now. we may wanna actually make
             // checking if an entity is valid or not a feature if there's not a bette way to handle this?
-            var start = entities.getComponent(entity.spring.start, .rb) orelse {
+            var start_trans = entities.getComponent(entity.spring.start, .transform) orelse {
+                std.log.err("spring connections require transform, destroying spring entity", .{});
+                it.swapRemove();
+                continue;
+            };
+
+            var end_trans = entities.getComponent(entity.spring.end, .transform) orelse {
+                std.log.err("spring connections require transform, destroying spring entity", .{});
+                it.swapRemove();
+                continue;
+            };
+            var start_rb = entities.getComponent(entity.spring.start, .rb) orelse {
                 std.log.err("spring connections require rb, destroying spring entity", .{});
                 it.swapRemove();
                 continue;
             };
 
-            var end = entities.getComponent(entity.spring.end, .rb) orelse {
+            var end_rb = entities.getComponent(entity.spring.end, .rb) orelse {
                 std.log.err("spring connections require rb, destroying spring entity", .{});
                 it.swapRemove();
                 continue;
             };
 
-            var delta = end.pos.minus(start.pos);
+            var delta = end_trans.pos.minus(start_trans.pos);
             const dir = delta.normalized();
 
             // TODO: min length 0 right now, could make min and max (before force) settable though?
@@ -440,16 +456,16 @@ fn update(
             const x = std.math.max(delta.length() - entity.spring.length, 0.0);
             const spring_force = entity.spring.k * x;
 
-            const relative_vel = end.vel.dot(dir) - start.vel.dot(dir);
-            const start_b = @sqrt(entity.spring.damping * 4.0 * start.mass() * entity.spring.k);
+            const relative_vel = end_rb.vel.dot(dir) - start_rb.vel.dot(dir);
+            const start_b = @sqrt(entity.spring.damping * 4.0 * start_rb.mass() * entity.spring.k);
             const start_damping_force = start_b * relative_vel;
-            const end_b = @sqrt(entity.spring.damping * 4.0 * end.mass() * entity.spring.k);
+            const end_b = @sqrt(entity.spring.damping * 4.0 * end_rb.mass() * entity.spring.k);
             const end_damping_force = end_b * relative_vel;
 
             const start_impulse = (start_damping_force + spring_force) * delta_s;
             const end_impulse = (end_damping_force + spring_force) * delta_s;
-            start.vel.add(dir.scaled(start_impulse / start.mass()));
-            end.vel.add(dir.scaled(-end_impulse / start.mass()));
+            start_rb.vel.add(dir.scaled(start_impulse / start_rb.mass()));
+            end_rb.vel.add(dir.scaled(-end_impulse / start_rb.mass()));
         }
     }
 
@@ -459,14 +475,16 @@ fn update(
         var damage_it = entities.iterator(.{
             .damage = .{},
             .rb = .{ .mutable = true },
+            .transform = .{},
         });
         while (damage_it.next()) |damage_entity| {
             var health_it = entities.iterator(.{
                 .health = .{ .mutable = true },
                 .rb = .{},
+                .transform = .{},
             });
             const destroy = while (health_it.next()) |health_entity| {
-                if (health_entity.rb.pos.distanceSqrd(damage_entity.rb.pos) <
+                if (health_entity.transform.pos.distanceSqrd(damage_entity.transform.pos) <
                     health_entity.rb.radius * health_entity.rb.radius + damage_entity.rb.radius * damage_entity.rb.radius)
                 {
                     if (health_entity.health.damage(damage_entity.damage.hp) > 0.0) {
@@ -480,8 +498,10 @@ fn update(
                             .lifetime = .{
                                 .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
                             },
+                            .transform = .{
+                                .pos = health_entity.transform.pos,
+                            },
                             .rb = .{
-                                .pos = health_entity.rb.pos,
                                 .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
                                 .angle = 2 * math.pi * std.crypto.random.float(f32),
                                 .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
@@ -515,20 +535,23 @@ fn update(
         var it = entities.iterator(.{
             .health = .{ .mutable = true },
             .rb = .{ .optional = true },
+            .transform = .{ .optional = true },
             .ship = .{ .optional = true },
             .input = .{ .optional = true },
         });
         while (it.next()) |entity| {
             if (entity.health.hp <= 0) {
                 // spawn explosion here
-                if (entity.rb) |rb| {
+                if (entity.transform) |trans| {
                     command_buffer.appendCreate(.{
                         .lifetime = .{
                             .seconds = 100,
                         },
+                        .transform = .{
+                            .pos = trans.pos,
+                        },
                         .rb = .{
-                            .pos = rb.pos,
-                            .vel = rb.vel,
+                            .vel = if (entity.rb) |rb| rb.vel else .{ .x = 0, .y = 0 },
                             .angle = 0,
                             .rotation_vel = 0,
                             .radius = 32,
@@ -610,7 +633,12 @@ fn update(
 
     // Update turrets
     {
-        var it = entities.iterator(.{ .turrets = .{ .mutable = true }, .input = .{}, .rb = .{} });
+        var it = entities.iterator(.{
+            .turrets = .{ .mutable = true },
+            .input = .{},
+            .rb = .{},
+            .transform = .{},
+        });
         while (it.next()) |entity| {
             for (entity.turrets) |*turret| {
                 var angle = entity.rb.angle;
@@ -621,7 +649,7 @@ fn update(
                     vel = V.zero;
                     sprite = game.bullet_shiny;
                 }
-                const fire_pos = entity.rb.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius));
+                const fire_pos = entity.transform.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius));
                 const ready = switch (turret.cooldown) {
                     .time => |*time| r: {
                         time.current_s -= delta_s;
@@ -642,8 +670,10 @@ fn update(
                         .damage = .{
                             .hp = turret.projectile_damage,
                         },
-                        .rb = .{
+                        .transform = .{
                             .pos = fire_pos,
+                        },
+                        .rb = .{
                             .vel = vel,
                             .angle = vel.angle() + math.pi / 2.0,
                             .rotation_vel = 0,
@@ -669,7 +699,12 @@ fn update(
     // TODO: break out cooldown logic or no?
     // Update grapple guns
     {
-        var it = entities.iterator(.{ .grapple_gun = .{ .mutable = true }, .input = .{}, .rb = .{} });
+        var it = entities.iterator(.{
+            .grapple_gun = .{ .mutable = true },
+            .input = .{},
+            .rb = .{},
+            .transform = .{},
+        });
         while (it.next()) |entity| {
             var gg = entity.grapple_gun;
             var input = entity.input;
@@ -713,11 +748,13 @@ fn update(
                     var dir = V.unit(rb.angle + gg.angle);
                     var vel = rb.vel;
                     const segment_len = 50.0;
-                    var pos = rb.pos.plus(dir.scaled(segment_len));
+                    var pos = entity.transform.pos.plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
                         gg.live.?.joints[i] = entities.create(.{
-                            .rb = .{
+                            .transform = .{
                                 .pos = pos,
+                            },
+                            .rb = .{
                                 .vel = vel,
                                 .radius = 2,
                                 .density = 0.001,
@@ -736,8 +773,10 @@ fn update(
                         .k = 100.0,
                     };
                     gg.live.?.hook = entities.create(.{
-                        .rb = .{
+                        .transform = .{
                             .pos = pos,
+                        },
+                        .rb = .{
                             .vel = vel,
                             .angle = 0,
                             .rotation_vel = 0,
@@ -850,6 +889,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     {
         var it = entities.iterator(.{
             .rb = .{},
+            .transform = .{},
             .animation = .{ .mutable = true },
             .health = .{ .optional = true },
             .ship = .{ .optional = true },
@@ -860,7 +900,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = entity.rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            var dest_rect = sdlRect(entity.rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
+            var dest_rect = sdlRect(entity.transform.pos.minus(sprite_size.scaled(0.5)), sprite_size);
 
             var hidden = false;
             if (entity.health) |health| {
@@ -908,11 +948,11 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw health bars
     {
-        var it = entities.iterator(.{ .health = .{}, .rb = .{} });
+        var it = entities.iterator(.{ .health = .{}, .rb = .{}, .transform = .{} });
         while (it.next()) |entity| {
             if (entity.health.hp < entity.health.max_hp) {
                 const health_bar_size: V = .{ .x = 32, .y = 4 };
-                var start = entity.rb.pos.minus(health_bar_size.scaled(0.5)).floored();
+                var start = entity.transform.pos.minus(health_bar_size.scaled(0.5)).floored();
                 start.y -= entity.rb.radius + health_bar_size.y;
                 sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
                 sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
@@ -938,14 +978,14 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     // Draw sprites
     // TODO(mason): sort draw calls somehow (can the sdl renderer do depth buffers?)
     {
-        var it = entities.iterator(.{ .sprite = .{}, .rb = .{} });
+        var it = entities.iterator(.{ .sprite = .{}, .rb = .{}, .transform = .{} });
         while (it.next()) |entity| {
             const sprite = assets.sprite(entity.sprite.*);
             const unscaled_sprite_size = sprite.size();
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = entity.rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            const dest_rect = sdlRect(entity.rb.pos.minus(sprite_size.scaled(0.5)), sprite_size);
+            const dest_rect = sdlRect(entity.transform.pos.minus(sprite_size.scaled(0.5)), sprite_size);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.texture,
@@ -965,8 +1005,8 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     {
         var it = entities.iterator(.{ .spring = .{} });
         while (it.next()) |entity| {
-            var start = (entities.getComponent(entity.spring.start, .rb) orelse continue).pos;
-            var end = (entities.getComponent(entity.spring.end, .rb) orelse continue).pos;
+            var start = (entities.getComponent(entity.spring.start, .transform) orelse continue).pos;
+            var end = (entities.getComponent(entity.spring.end, .transform) orelse continue).pos;
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,
@@ -1286,13 +1326,16 @@ const GrappleGun = struct {
     } = null,
 };
 
+const Transform = struct {
+    /// pixels
+    pos: V,
+};
+
 const RigidBody = struct {
     fn mass(self: RigidBody) f32 {
         return self.density * math.pi * self.radius * self.radius;
     }
 
-    /// pixels
-    pos: V,
     /// pixels per second
     vel: V = .{ .x = 0, .y = 0 },
     /// radians
@@ -1474,8 +1517,10 @@ const Game = struct {
                 .hp = 80,
                 .max_hp = 80,
             },
-            .rb = .{
+            .transform = .{
                 .pos = pos,
+            },
+            .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
                 .angle = angle,
                 .radius = self.ranger_radius,
@@ -1529,8 +1574,10 @@ const Game = struct {
                 .max_hp = 100,
                 .regen_ratio = 0.5,
             },
-            .rb = .{
+            .transform = .{
                 .pos = pos,
+            },
+            .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
                 .angle = angle,
                 .radius = 26,
@@ -1582,8 +1629,10 @@ const Game = struct {
                 .hp = 80,
                 .max_hp = 80,
             },
-            .rb = .{
+            .transform = .{
                 .pos = pos,
+            },
+            .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
                 .angle = angle,
                 .rotation_vel = 0.0,
@@ -1633,8 +1682,10 @@ const Game = struct {
                 .hp = 300,
                 .max_hp = 300,
             },
-            .rb = .{
+            .transform = .{
                 .pos = pos,
+            },
+            .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
                 .angle = angle,
                 .radius = 32,
@@ -1697,8 +1748,10 @@ const Game = struct {
                 .hp = 400,
                 .max_hp = 400,
             },
-            .rb = .{
+            .transform = .{
                 .pos = pos,
+            },
+            .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
                 .angle = angle,
                 .radius = self.wendy_radius,
@@ -2199,8 +2252,10 @@ const Game = struct {
 
             _ = entities.create(.{
                 .sprite = sprite,
-                .rb = .{
+                .transform = .{
                     .pos = pos,
+                },
+                .rb = .{
                     .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
                     .angle = 0,
                     .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
@@ -2225,8 +2280,10 @@ const Game = struct {
                 .lifetime = .{
                     .seconds = 1000,
                 },
-                .rb = .{
+                .transform = .{
                     .pos = pos,
+                },
+                .rb = .{
                     .vel = random_vel,
                     .angle = 2 * math.pi * std.crypto.random.float(f32),
                     .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
