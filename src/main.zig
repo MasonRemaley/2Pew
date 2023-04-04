@@ -154,6 +154,13 @@ fn poll(entities: *Entities, game: *Game) bool {
             c.SDL_QUIT => return true,
             c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
                 c.SDL_SCANCODE_ESCAPE => return true,
+                c.SDL_SCANCODE_RETURN => {
+                    // Clear invulnerability so you don't have to wait when testing
+                    var it = entities.iterator(.{ .health = .{ .mutable = true } });
+                    while (it.next()) |entity| {
+                        entity.health.invulnerable_s = 0.0;
+                    }
+                },
                 c.SDL_SCANCODE_1 => {
                     game.setupScenario(entities, .deathmatch_2v2);
                 },
@@ -334,17 +341,14 @@ fn update(
                     });
                 }
 
-                // XXX: why does it fly away when attached? well partly it's that i set the distance to 0 when
+                // TODO: why does it fly away when attached? well partly it's that i set the distance to 0 when
                 // the current distance is greater...fixing that
-                // XXX: don't always attach to the center? this is easy to do, but, it won't cause
+                // TODO: don't always attach to the center? this is easy to do, but, it won't cause
                 // rotation the way you'd expect at the moment since the current physics system doesn't
                 // have opinions on rotation. We can add that though!
                 {
                     var hooked = false;
                     if (entity.hook) |hook| {
-                        // XXX: make a public changeArchetype function so that we can do this in a single
-                        // move, could also be named removeComponentsAddComponents or such, probably
-                        // should work even if overlap?
                         command_buffer.appendArchChange(it.handle(), .{
                             .add = .{
                                 .spring = Spring{
@@ -374,7 +378,7 @@ fn update(
                         });
                         hooked = true;
                     }
-                    // XXX: continue afte first one..?
+                    // TODO: continue afte first one..?
                     if (hooked) {
                         continue;
                     }
@@ -393,7 +397,7 @@ fn update(
             entity.rb.pos.add(entity.rb.vel.scaled(delta_s));
 
             // gravity if the rb is outside the ring
-            if (entity.rb.pos.distanceSqrd(display_center) > display_radius * display_radius) {
+            if (entity.rb.pos.distanceSqrd(display_center) > display_radius * display_radius and entity.rb.density < std.math.inf(f32)) {
                 const gravity = 500;
                 const gravity_v = display_center.minus(entity.rb.pos).normalized().scaled(gravity * delta_s);
                 entity.rb.vel.add(gravity_v);
@@ -414,7 +418,7 @@ fn update(
     {
         var it = entities.iterator(.{ .spring = .{} });
         while (it.next()) |entity| {
-            // XXX: crashes if either end has been deleted right now. we may wanna actually make
+            // TODO: crashes if either end has been deleted right now. we may wanna actually make
             // checking if an entity is valid or not a feature if there's not a bette way to handle this?
             var start = entities.getComponent(entity.spring.start, .rb) orelse {
                 std.log.err("spring connections require rb, destroying spring entity", .{});
@@ -431,7 +435,7 @@ fn update(
             var delta = end.pos.minus(start.pos);
             const dir = delta.normalized();
 
-            // XXX: min length 0 right now, could make min and max (before force) settable though?
+            // TODO: min length 0 right now, could make min and max (before force) settable though?
             // const x = delta.length() - spring.length;
             const x = std.math.max(delta.length() - entity.spring.length, 0.0);
             const spring_force = entity.spring.k * x;
@@ -609,30 +613,43 @@ fn update(
         var it = entities.iterator(.{ .turrets = .{ .mutable = true }, .input = .{}, .rb = .{} });
         while (it.next()) |entity| {
             for (entity.turrets) |*turret| {
-                turret.cooldown_s -= delta_s;
-                if (entity.input.isAction(.fire, .positive, .active) and turret.cooldown_s <= 0) {
-                    turret.cooldown_s = turret.max_cooldown_s;
-                    // TODO(mason): just make separate component for wall
-                    var angle = entity.rb.angle;
-                    var vel = V.unit(angle).scaled(turret.projectile_speed).plus(entity.rb.vel);
-                    var sprite = game.bullet_small;
-                    if (turret.aim_opposite_movement) {
-                        angle = entity.rb.vel.angle() + std.math.pi;
-                        vel = V.zero;
-                        sprite = game.bullet_shiny;
+                var angle = entity.rb.angle;
+                var vel = V.unit(angle).scaled(turret.projectile_speed).plus(entity.rb.vel);
+                var sprite = game.bullet_small;
+                if (turret.aim_opposite_movement) {
+                    angle = entity.rb.vel.angle() + std.math.pi;
+                    vel = V.zero;
+                    sprite = game.bullet_shiny;
+                }
+                const fire_pos = entity.rb.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius));
+                const ready = switch (turret.cooldown) {
+                    .time => |*time| r: {
+                        time.current_s -= delta_s;
+                        break :r time.current_s <= 0;
+                    },
+                    .distance => |dist| if (dist.last_pos) |last_pos|
+                        fire_pos.distanceSqrd(last_pos) >= dist.min_sq
+                    else
+                        true,
+                };
+                if (entity.input.isAction(.fire, .positive, .active) and ready) {
+                    switch (turret.cooldown) {
+                        .time => |*time| time.current_s = time.max_s,
+                        .distance => |*dist| dist.last_pos = fire_pos,
                     }
+                    // TODO(mason): just make separate component for wall
                     command_buffer.appendCreate(.{
                         .damage = .{
                             .hp = turret.projectile_damage,
                         },
                         .rb = .{
-                            .pos = entity.rb.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius)),
+                            .pos = fire_pos,
                             .vel = vel,
                             .angle = vel.angle() + math.pi / 2.0,
                             .rotation_vel = 0,
                             .radius = turret.projectile_radius,
                             // TODO(mason): modify math to accept 0 and inf mass
-                            .density = 0.001,
+                            .density = turret.projectile_density,
                         },
                         .sprite = sprite,
                         .collider = .{
@@ -649,7 +666,7 @@ fn update(
         }
     }
 
-    // XXX: break out cooldown logic or no?
+    // TODO: break out cooldown logic or no?
     // Update grapple guns
     {
         var it = entities.iterator(.{ .grapple_gun = .{ .mutable = true }, .input = .{}, .rb = .{} });
@@ -661,7 +678,7 @@ fn update(
             if (input.isAction(.fire, .positive, .activated) and gg.cooldown_s <= 0) {
                 gg.cooldown_s = gg.max_cooldown_s;
 
-                // XXX: increase cooldown_s?
+                // TODO: increase cooldown_s?
                 if (gg.live) |live| {
                     for (live.joints) |piece| {
                         command_buffer.appendRemove(piece);
@@ -672,11 +689,11 @@ fn update(
                     command_buffer.appendRemove(live.hook);
                     gg.live = null;
                 } else {
-                    // XXX: behave sensibly if the ship that fired it dies...right now crashes cause
+                    // TODO: behave sensibly if the ship that fired it dies...right now crashes cause
                     // one side of the spring has a bad generation
-                    // XXX: change sprite!
-                    // XXX: make lower mass or something lol
-                    // XXX: how do i make it connect? we could replace the hook with the thing it's connected
+                    // TODO: change sprite!
+                    // TODO: make lower mass or something lol
+                    // TODO: how do i make it connect? we could replace the hook with the thing it's connected
                     // to when it hits, but, then it'd always connect to the center. so really we wanna
                     // create a new spring that's very strong between the hook and the thing it's connected to.
                     // this means we need to either add a new spring later, or allow for disconnected springs.
@@ -684,7 +701,7 @@ fn update(
                     // that's what we actually want!
                     // for now though lets just make the spring ends optional and make a note that this is a good
                     // place for addcomponent.
-                    // XXX: then again, addcomponent is easy to add. we just create a new entity move over the components
+                    // TODO: then again, addcomponent is easy to add. we just create a new entity move over the components
                     // then delete the old one, and remap the handle.
                     gg.live = .{
                         .joints = undefined,
@@ -692,7 +709,7 @@ fn update(
                         .hook = undefined,
                     };
 
-                    // XXX: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
+                    // TODO: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
                     var dir = V.unit(rb.angle + gg.angle);
                     var vel = rb.vel;
                     const segment_len = 50.0;
@@ -705,15 +722,15 @@ fn update(
                                 .radius = 2,
                                 .density = 0.001,
                             },
-                            // XXX: ...
+                            // TODO: ...
                             // .sprite = game.bullet_small,
                         });
                         pos.add(dir.scaled(segment_len));
                     }
-                    // XXX: i think the damping code is broken, if i set this to be critically damped
+                    // TODO: i think the damping code is broken, if i set this to be critically damped
                     // it explodes--even over damping shouldn't do that it should slow things down
                     // extra!
-                    // XXX: ah yeah, damping prevents len from going to low for some reason??
+                    // TODO: ah yeah, damping prevents len from going to low for some reason??
                     const hook = Hook{
                         .damping = 0.0,
                         .k = 100.0,
@@ -732,7 +749,7 @@ fn update(
                             .layer = .hook,
                         },
                         .hook = hook,
-                        // XXX: ...
+                        // TODO: ...
                         // .sprite = game.bullet_small,
                     });
                     for (0..(gg.live.?.springs.len)) |i| {
@@ -1191,6 +1208,17 @@ const Animation = struct {
     };
 };
 
+const Cooldown = union(enum) {
+    time: struct {
+        max_s: f32,
+        current_s: f32 = 0.0,
+    },
+    distance: struct {
+        min_sq: f32,
+        last_pos: ?V = null,
+    },
+};
+
 const Turret = struct {
     /// Together with angle, this is the location of the turret from the center
     /// of the containing object. Pixels.
@@ -1198,10 +1226,7 @@ const Turret = struct {
     /// Together with radius, this is the location of the turret from the
     /// center of the containing object. Radians.
     angle: f32,
-    /// Seconds until ready. Less than or equal to 0 means ready.
-    cooldown_s: f32,
-    /// Seconds until ready. Cooldown is set to this after firing.
-    max_cooldown_s: f32,
+    cooldown: Cooldown,
 
     aim_opposite_movement: bool = false,
 
@@ -1213,14 +1238,14 @@ const Turret = struct {
     projectile_damage: f32,
     /// Radius of spawned projectiles.
     projectile_radius: f32,
+    projectile_density: f32 = 0.001,
 
     enabled: bool = true,
 
     pub const none: Turret = .{
         .radius = undefined,
         .angle = undefined,
-        .cooldown_s = undefined,
-        .max_cooldown_s = undefined,
+        .cooldown = undefined,
         .projectile_speed = undefined,
         .projectile_lifetime = undefined,
         .projectile_damage = undefined,
@@ -1245,11 +1270,11 @@ const GrappleGun = struct {
 
     /// pixels per second
     projectile_speed: f32,
-    // XXX: ...
+    // TODO: ...
     // /// seconds
     // projectile_lifetime: f32,
 
-    // XXX: if we add this back, need to make it not destroy itself on damage
+    // TODO: if we add this back, need to make it not destroy itself on damage
     // /// Amount of HP the projectile removes upon landing a hit.
     // projectile_damage: f32,
 
@@ -1291,7 +1316,7 @@ const Collider = struct {
         var m = SymmetricMatrix(Layer, bool).init(true);
         m.set(.projectile, .projectile, false);
         m.set(.vehicle, .projectile, false);
-        // XXX: why doesn't this cause an issue if not set?
+        // TODO: why doesn't this cause an issue if not set?
         m.set(.projectile, .hook, false);
         break :interacts m;
     };
@@ -1469,8 +1494,7 @@ const Game = struct {
                 .{
                     .radius = self.ranger_radius,
                     .angle = 0,
-                    .cooldown_s = 0,
-                    .max_cooldown_s = 0.10,
+                    .cooldown = .{ .time = .{ .max_s = 0.1 } },
                     .projectile_speed = 550,
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 6,
@@ -1525,8 +1549,7 @@ const Game = struct {
                 .{
                     .radius = radius,
                     .angle = 0,
-                    .cooldown_s = 0,
-                    .max_cooldown_s = 0.2,
+                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
                     .projectile_speed = 700,
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 12,
@@ -1580,7 +1603,7 @@ const Game = struct {
             //     .angle = 0,
             //     .cooldown_s = 0,
             //     .max_cooldown_s = 0.2,
-            //     // XXX: when nonzero, causes the ship to move. wouldn't happen if there was equal
+            //     // TODO: when nonzero, causes the ship to move. wouldn't happen if there was equal
             //     // kickback!
             //     .projectile_speed = 0,
             // },
@@ -1630,8 +1653,7 @@ const Game = struct {
                 .{
                     .radius = 32,
                     .angle = math.pi * 0.1,
-                    .cooldown_s = 0,
-                    .max_cooldown_s = 0.2,
+                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
                     .projectile_speed = 500,
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 18,
@@ -1640,8 +1662,7 @@ const Game = struct {
                 .{
                     .radius = 32,
                     .angle = math.pi * -0.1,
-                    .cooldown_s = 0,
-                    .max_cooldown_s = 0.2,
+                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
                     .projectile_speed = 500,
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 18,
@@ -1652,6 +1673,8 @@ const Game = struct {
         });
     }
 
+    // XXX: organize assets vs data, and delete unused stuff, etc
+    // XXX: animations? (just rotate the ship right now? but multiple?)
     fn createWendy(
         self: *const @This(),
         entities: *Entities,
@@ -1694,12 +1717,12 @@ const Game = struct {
                 .{
                     .radius = self.wendy_radius,
                     .angle = 0,
-                    .cooldown_s = 0,
-                    .max_cooldown_s = 0.1,
+                    .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
                     .projectile_speed = 0,
                     .projectile_lifetime = 5.0,
                     .projectile_damage = 50,
                     .projectile_radius = 8,
+                    .projectile_density = std.math.inf(f32),
                     .aim_opposite_movement = true,
                 },
                 Turret.none,
@@ -1963,6 +1986,7 @@ const Game = struct {
             .deathmatch_2v2_one_rock,
             => {
                 const progression = &.{
+                    .wendy, // XXX: ...
                     .ranger,
                     .militia,
                     .ranger,
@@ -1993,6 +2017,7 @@ const Game = struct {
 
             .deathmatch_1v1, .deathmatch_1v1_one_rock => {
                 const progression = &.{
+                    .wendy, // XXX: ...
                     .ranger,
                     .militia,
                     .triangle,
@@ -2018,6 +2043,7 @@ const Game = struct {
 
             .royale_4p => {
                 const progression = &.{
+                    .wendy, // XXX: ...
                     .ranger,
                     .militia,
                     .triangle,
