@@ -836,8 +836,44 @@ fn update(
         }
     }
 
+    // Update cached world positions
+    {
+        var it = entities.iterator(.{ .transform = .{ .mutable = true } });
+        while (it.next()) |entity| {
+            entity.transform.pos_world_cached = entity.transform.pos;
+            var transform = entity.transform;
+            while (transform.parent) |parent| {
+                transform = entities.getComponent(parent, .transform) orelse break;
+                entity.transform.pos_world_cached.add(transform.pos);
+            }
+        }
+    }
+
+    // Apply queued deletions
     command_buffer.execute();
     command_buffer.clearRetainingCapacity();
+
+    // XXX: now depending on exists working (though wouldn't be if there was a separate execute and create step actually)
+    // Delete children of deleted entities. We do this suboptimally to avoid needing to keep parent
+    // child pointers in sync. If we ever need to store the child pointers for another reason, or
+    // we end up with large hieararchies where this is a problem, we can simplify this to just read
+    // from the command buffer and delete children directly.
+    {
+        var dirty = true;
+        while (dirty) {
+            dirty = false;
+            var it = entities.iterator(.{ .transform = .{} });
+            while (it.next()) |entity| {
+                if (entity.transform.parent) |parent| {
+                    if (!entities.exists(parent) or entities.getComponent(parent, .transform) == null) {
+                        it.swapRemove();
+                        dirty = true;
+                        continue;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
@@ -900,7 +936,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = entity.rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            var dest_rect = sdlRect(entity.transform.pos.minus(sprite_size.scaled(0.5)), sprite_size);
+            var dest_rect = sdlRect(entity.transform.pos_world_cached.minus(sprite_size.scaled(0.5)), sprite_size);
 
             var hidden = false;
             if (entity.health) |health| {
@@ -1327,8 +1363,10 @@ const GrappleGun = struct {
 };
 
 const Transform = struct {
-    /// pixels
+    parent: ?Entities.Handle = null,
+    /// pixels, relative to parent
     pos: V,
+    pos_world_cached: V = undefined,
 };
 
 const RigidBody = struct {
