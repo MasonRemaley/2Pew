@@ -42,9 +42,9 @@ pub fn build(b: *std.Build) void {
     exe.addIncludePath("src");
 
     b.installDirectory(.{
-        .source_dir = "assets",
+        .source_dir = "data",
         .install_dir = .prefix,
-        .install_subdir = "assets",
+        .install_subdir = "data",
     });
 
     exe.override_dest_dir = .prefix;
