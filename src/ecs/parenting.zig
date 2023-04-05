@@ -44,14 +44,15 @@ pub fn setParent(entities: anytype, child: Handle, parent: ?Handle) void {
     entities.addComponents(child, .{ .parent = parent });
 
     // If this change caused a parent cycle, break the cycle
-    var curr = parent;
-    while (curr) |_| {
-        const next = getParent(entities, curr.?);
-        if (next != null and next.?.eql(child)) {
-            setParent(entities, curr.?, null);
-            break;
+    if (parent != null) {
+        var it = iterator(entities, parent.?);
+        while (it.next()) |current| {
+            const next = it.peek();
+            if (next != null and next.?.eql(child)) {
+                setParent(entities, current, null);
+                break;
+            }
         }
-        curr = next;
     }
 }
 
@@ -75,4 +76,35 @@ pub fn removeOrphans(entities: anytype) void {
             }
         }
     }
+}
+
+pub fn Iterator(comptime Entities: type) type {
+    requireSupport(Entities);
+    return struct {
+        const Self = @This();
+
+        entities: *Entities,
+        current: ?Handle,
+
+        pub fn next(self: *Self) ?Handle {
+            if (self.current == null) return null;
+
+            const result = self.peek();
+            self.current = getParent(self.entities, self.current.?);
+            return result;
+        }
+
+        pub fn peek(self: *const Self) ?Handle {
+            return self.current;
+        }
+    };
+}
+
+pub fn iterator(entities: anytype, handle: Handle) Iterator(@TypeOf(entities.*)) {
+    comptime assert(@typeInfo(@TypeOf(entities)) == .Pointer);
+    requireSupport(@TypeOf(entities.*));
+    return .{
+        .entities = entities,
+        .current = handle,
+    };
 }

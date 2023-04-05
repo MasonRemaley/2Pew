@@ -210,9 +210,13 @@ fn update(
         while (it.next()) |entity| {
             entity.input.update();
 
-            if (entity.health) |health| {
-                if (health.invulnerable_s > 0.0) {
-                    entity.input.state.getPtr(.fire).positive = .inactive;
+            var parent_it = parenting.iterator(entities, it.handle());
+            while (parent_it.next()) |current| {
+                if (entities.getComponent(current, .health)) |health| {
+                    if (health.invulnerable_s > 0.0) {
+                        entity.input.state.getPtr(.fire).positive = .inactive;
+                        break;
+                    }
                 }
             }
         }
@@ -772,15 +776,14 @@ fn update(
     {
         var it = entities.iterator(.{ .transform = .{ .mutable = true } });
         while (it.next()) |entity| {
-            entity.transform.pos_world_cached = entity.transform.pos;
-            entity.transform.angle_world_cached = entity.transform.angle;
+            entity.transform.pos_world_cached = V.zero;
+            entity.transform.angle_world_cached = 0;
 
-            var curr = it.handle();
-            while (parenting.getParent(entities, curr)) |parent| {
-                if (entities.getComponent(parent, .transform)) |transform| {
+            var parent_it = parenting.iterator(entities, it.handle());
+            while (parent_it.next()) |current| {
+                if (entities.getComponent(current, .transform)) |transform| {
                     entity.transform.pos_world_cached.add(transform.pos);
                     entity.transform.angle_world_cached += transform.angle;
-                    curr = parent;
                 } else break;
             }
         }
@@ -2195,7 +2198,6 @@ const Game = struct {
             .deathmatch_2v2_one_rock,
             => {
                 const progression = &.{
-                    .kevin,
                     .ranger,
                     .militia,
                     .ranger,
@@ -2226,7 +2228,6 @@ const Game = struct {
 
             .deathmatch_1v1, .deathmatch_1v1_one_rock => {
                 const progression = &.{
-                    .kevin,
                     .ranger,
                     .militia,
                     .triangle,
@@ -2252,7 +2253,6 @@ const Game = struct {
 
             .royale_4p => {
                 const progression = &.{
-                    .kevin,
                     .ranger,
                     .militia,
                     .triangle,
