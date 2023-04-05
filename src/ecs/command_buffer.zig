@@ -1,10 +1,10 @@
 const std = @import("std");
 const ecs = @import("index.zig");
+const Handle = ecs.entities.Handle;
 const Allocator = std.mem.Allocator;
 const BoundedArrayList = @import("../bounded_array_list.zig").BoundedArrayList;
 
 pub fn CommandBuffer(comptime Entities: anytype) type {
-    const Handle = Entities.Handle;
     const Prefab = ecs.entities.Prefab(Entities);
     const ArchetypeChange = ecs.entities.ArchetypeChange(Entities);
     const ArchetypeChangeCommand = struct {

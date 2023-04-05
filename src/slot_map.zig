@@ -6,22 +6,29 @@ const testing = std.testing;
 const log2_int_ceil = std.math.log2_int_ceil;
 const BoundedArrayList = @import("bounded_array_list.zig").BoundedArrayList;
 
-pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime GenerationType: type) type {
+pub fn IndexType(comptime capacity: usize) type {
+    return @Type(std.builtin.Type{
+        .Int = .{
+            .signedness = .unsigned,
+            .bits = if (capacity == 0) 0 else log2_int_ceil(usize, capacity),
+        },
+    });
+}
+
+pub fn HandleType(comptime Index: type, comptime Generation: type) type {
     return struct {
-        // TODO: using u32, make automatic based on capacity? or set capacity automatically idk though lol
-        pub const Index = @Type(std.builtin.Type{
-            .Int = .{
-                .signedness = .unsigned,
-                .bits = if (capacity == 0) 0 else log2_int_ceil(usize, capacity),
-            },
-        });
-        pub const Generation = GenerationType;
+        index: Index,
+        generation: Generation,
+    };
+}
+
+pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generation: type) type {
+    return struct {
+        pub const Handle = HandleType(Index, Generation);
+
+        const Index = IndexType(capacity);
         const Slot = struct {
             item: Item,
-            generation: Generation,
-        };
-        pub const Handle = struct {
-            index: Index,
             generation: Generation,
         };
 

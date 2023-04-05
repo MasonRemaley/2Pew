@@ -1,10 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const slot_map = @import("../slot_map.zig");
 const SegmentedListFirstShelfCount = @import("../segmented_list.zig").SegmentedListFirstShelfCount;
-const SlotMap = @import("../slot_map.zig").SlotMap;
 
 const assert = std.debug.assert;
 
+const SlotMap = @import("../slot_map.zig").SlotMap;
 const Allocator = std.mem.Allocator;
 const FieldEnum = std.meta.FieldEnum;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
@@ -22,24 +23,32 @@ const max_pages = max_entities / 32;
 const max_archetypes = 40000;
 const first_shelf_count = 8;
 
+pub const Handle = slot_map.HandleType(slot_map.IndexType(max_entities), EntityGeneration);
+
 pub fn Entities(comptime registered_components: anytype) type {
     return struct {
         const Self = @This();
-        const ComponentKind = std.meta.FieldEnum(@TypeOf(registered_components));
-        const component_types = field_values(registered_components);
+        const ComponentTag = std.meta.FieldEnum(@TypeOf(registered_components));
+        const component_types = ct: {
+            const fields = @typeInfo(@TypeOf(registered_components)).Struct.fields;
+            var values: [fields.len]type = undefined;
+            for (fields, 0..) |field, i| {
+                values[i] = @field(registered_components, field.name);
+            }
+            break :ct &values;
+        };
         const component_names = std.meta.fieldNames(@TypeOf(registered_components));
 
-        pub const Handle = HandleSlotMap.Handle;
         const HandleSlotMap = SlotMap(EntityPointer(Self), max_entities, EntityGeneration);
 
         allocator: Allocator,
-        slot_map: HandleSlotMap,
+        handles: HandleSlotMap,
         archetype_lists: AutoArrayHashMapUnmanaged(ComponentFlags(Self), ArchetypeList(Self)),
 
         // Is designed to ensure compatibility with allocators that do not implement free.
         pub fn init(allocator: Allocator) Allocator.Error!Self {
-            var slot_map = try HandleSlotMap.init(allocator);
-            errdefer slot_map.deinit(allocator);
+            var handles = try HandleSlotMap.init(allocator);
+            errdefer handles.deinit(allocator);
 
             var archetype_lists = archetype_lists: {
                 var archetype_lists = AutoArrayHashMapUnmanaged(ComponentFlags(Self), ArchetypeList(Self)){};
@@ -52,13 +61,13 @@ pub fn Entities(comptime registered_components: anytype) type {
 
             return .{
                 .allocator = allocator,
-                .slot_map = slot_map,
+                .handles = handles,
                 .archetype_lists = archetype_lists,
             };
         }
 
         pub fn deinit(self: *Self) void {
-            self.slot_map.deinit(self.allocator);
+            self.handles.deinit(self.allocator);
             for (self.archetype_lists.values()) |*archetype_list| {
                 archetype_list.deinit(self.allocator);
             }
@@ -73,9 +82,9 @@ pub fn Entities(comptime registered_components: anytype) type {
         pub fn createChecked(self: *Self, components: anytype) Allocator.Error!Handle {
             const archetype = ComponentFlags(Self).initFromComponents(components);
             const archetype_list = try self.getOrPutArchetypeList(archetype);
-            const handle = try self.slot_map.create(undefined);
-            errdefer _ = self.slot_map.remove(handle) catch unreachable;
-            const pointer = self.slot_map.getUnchecked(handle);
+            const handle = try self.handles.create(undefined);
+            errdefer _ = self.handles.remove(handle) catch unreachable;
+            const pointer = self.handles.getUnchecked(handle);
             const index = try archetype_list.append(self.allocator, handle);
             errdefer archetype_list.pop();
             pointer.* = .{
@@ -92,12 +101,12 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         pub fn swapRemoveChecked(self: *Self, entity: Handle) error{DoubleFree}!void {
-            const entity_pointer = try self.slot_map.remove(entity);
-            entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.slot_map);
+            const entity_pointer = try self.handles.remove(entity);
+            entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.handles);
         }
 
         pub fn exists(self: *Self, handle: Handle) bool {
-            return self.slot_map.exists(handle);
+            return self.handles.exists(handle);
         }
 
         pub fn addComponents(self: *Self, entity: Handle, add: anytype) void {
@@ -135,7 +144,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         // and then adding `changes.add`.
         pub fn changeArchetypeChecked(self: *Self, handle: Handle, changes: anytype) error{ UseAfterFree, OutOfMemory }!void {
             // Determine our archetype bitsets
-            const pointer = try self.slot_map.get(handle);
+            const pointer = try self.handles.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
             const components_added = ComponentFlags(Self).initFromComponents(changes.add);
             const archetype = previous_archetype.unionWith(components_added)
@@ -158,15 +167,15 @@ pub fn Entities(comptime registered_components: anytype) type {
             setComponents(pointer, changes.add);
 
             // Delete the old data
-            old_pointer.archetype_list.swapRemove(old_pointer.index, &self.slot_map);
+            old_pointer.archetype_list.swapRemove(old_pointer.index, &self.handles);
         }
 
-        pub fn getComponent(self: *Self, entity: Handle, comptime component: ComponentKind) ?*component_types[@enumToInt(component)] {
+        pub fn getComponent(self: *Self, entity: Handle, comptime component: ComponentTag) ?*component_types[@enumToInt(component)] {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
-        pub fn getComponentChecked(self: *Self, entity: Handle, comptime component: ComponentKind) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
-            const entity_pointer = try self.slot_map.get(entity);
+        pub fn getComponentChecked(self: *Self, entity: Handle, comptime component: ComponentTag) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
+            const entity_pointer = try self.handles.get(entity);
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
 
@@ -176,17 +185,17 @@ pub fn Entities(comptime registered_components: anytype) type {
             for (self.archetype_lists.values()) |*archetype_list| {
                 archetype_list.clearRetainingCapacity();
             }
-            self.slot_map.clearRetainingCapacity();
+            self.handles.clearRetainingCapacity();
         }
 
         pub fn iterator(self: *Self, comptime components: IteratorDescriptor(Self)) Iterator(Self, components) {
             return Iterator(Self, components).init(self);
         }
 
-        fn find_component_kind(comptime name: []const u8) ComponentKind {
+        fn componentTag(comptime name: []const u8) ComponentTag {
             const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
             if (maybe_index) |index| {
-                return @intToEnum(ComponentKind, index);
+                return @intToEnum(ComponentTag, index);
             } else {
                 @compileError("no registered component named '" ++ name ++ "'");
             }
@@ -212,22 +221,21 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         fn copyComponents(to: *const EntityPointer(Self), from: EntityPointer(Self), which: ComponentFlags(Self)) void {
             inline for (0..component_names.len) |i| {
-                const kind = @intToEnum(ComponentKind, i);
-                if (which.isSet(kind)) {
-                    to.archetype_list.getComponentUnchecked(to.index, kind).* = from.archetype_list.getComponentUnchecked(from.index, kind).*;
+                const component = @intToEnum(ComponentTag, i);
+                if (which.isSet(component)) {
+                    to.archetype_list.getComponentUnchecked(to.index, component).* = from.archetype_list.getComponentUnchecked(from.index, component).*;
                 }
             }
         }
 
         fn setComponents(pointer: *const EntityPointer(Self), components: anytype) void {
             inline for (@typeInfo(@TypeOf(components)).Struct.fields) |f| {
-                const component_name = comptime find_component_kind(f.name);
                 if (@TypeOf(components) == Prefab(Self)) {
                     if (@field(components, f.name)) |component| {
-                        pointer.archetype_list.getComponentUnchecked(pointer.index, component_name).* = component;
+                        pointer.archetype_list.getComponentUnchecked(pointer.index, componentTag(f.name)).* = component;
                     }
                 } else {
-                    pointer.archetype_list.getComponentUnchecked(pointer.index, component_name).* = @field(components, f.name);
+                    pointer.archetype_list.getComponentUnchecked(pointer.index, componentTag(f.name)).* = @field(components, f.name);
                 }
             }
         }
@@ -236,15 +244,15 @@ pub fn Entities(comptime registered_components: anytype) type {
 
 fn ArchetypeList(comptime T: type) type {
     const ComponentLists = ComponentMap(T, .Auto, struct {
-        fn FieldType(comptime _: T.ComponentKind, comptime C: type) type {
+        fn FieldType(comptime _: T.ComponentTag, comptime C: type) type {
             return SegmentedListFirstShelfCount(C, first_shelf_count, false);
         }
 
-        fn default_value(comptime _: T.ComponentKind, comptime C: type) ?*const anyopaque {
+        fn default_value(comptime _: T.ComponentTag, comptime C: type) ?*const anyopaque {
             return &C{};
         }
 
-        fn skip(comptime _: T.ComponentKind) bool {
+        fn skip(comptime _: T.ComponentTag) bool {
             return false;
         }
     });
@@ -252,10 +260,10 @@ fn ArchetypeList(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        pub const HandleIterator = SegmentedListFirstShelfCount(T.Handle, first_shelf_count, false).Iterator;
+        pub const HandleIterator = SegmentedListFirstShelfCount(Handle, first_shelf_count, false).Iterator;
 
         archetype: ComponentFlags(T),
-        handles: SegmentedListFirstShelfCount(T.Handle, first_shelf_count, false) = .{},
+        handles: SegmentedListFirstShelfCount(Handle, first_shelf_count, false) = .{},
         comps: ComponentLists = .{},
 
         pub fn init(archetype: ComponentFlags(T)) Self {
@@ -271,7 +279,7 @@ fn ArchetypeList(comptime T: type) type {
 
         // TODO: could return a set of optional pointers to avoid recalculating them, could
         // have the append math between the lists be shared
-        pub fn append(self: *Self, allocator: Allocator, handle: T.Handle) Allocator.Error!u32 {
+        pub fn append(self: *Self, allocator: Allocator, handle: Handle) Allocator.Error!u32 {
             inline for (T.component_names) |comp_name| {
                 if (self.archetype.isNameSet(comp_name)) {
                     _ = try @field(self.comps, comp_name).addOne(allocator);
@@ -283,7 +291,7 @@ fn ArchetypeList(comptime T: type) type {
             return @intCast(u32, index);
         }
 
-        pub fn swapRemove(self: *Self, index: u32, slot_map: *T.HandleSlotMap) void {
+        pub fn swapRemove(self: *Self, index: u32, handles: *T.HandleSlotMap) void {
             assert(index < self.handles.len);
             inline for (T.component_names) |name| {
                 if (self.archetype.isNameSet(name)) {
@@ -295,7 +303,7 @@ fn ArchetypeList(comptime T: type) type {
             self.handles.uncheckedAt(index).* = moved_handle;
             // TODO: why do i have to skip this if last?
             if (index != self.handles.len) {
-                slot_map.getUnchecked(moved_handle).index = index;
+                handles.getUnchecked(moved_handle).index = index;
             }
         }
 
@@ -303,15 +311,15 @@ fn ArchetypeList(comptime T: type) type {
             return self.handles.iterator(0);
         }
 
-        pub fn getComponent(self: *Self, index: u32, comptime kind: T.ComponentKind) ?*T.component_types[@enumToInt(kind)] {
-            if (!self.archetype.isSet(kind)) {
+        pub fn getComponent(self: *Self, index: u32, comptime component: T.ComponentTag) ?*T.component_types[@enumToInt(component)] {
+            if (!self.archetype.isSet(component)) {
                 return null;
             }
-            return self.getComponentUnchecked(index, kind);
+            return self.getComponentUnchecked(index, component);
         }
 
-        pub fn getComponentUnchecked(self: *Self, index: u32, comptime kind: T.ComponentKind) *T.component_types[@enumToInt(kind)] {
-            return @field(self.comps, T.component_names[@enumToInt(kind)]).uncheckedAt(index);
+        pub fn getComponentUnchecked(self: *Self, index: u32, comptime component: T.ComponentTag) *T.component_types[@enumToInt(component)] {
+            return @field(self.comps, T.component_names[@enumToInt(component)]).uncheckedAt(index);
         }
 
         pub fn clearRetainingCapacity(self: *Self) void {
@@ -330,15 +338,15 @@ pub const IteratorComponentDescriptor = packed struct {
 
 pub fn IteratorDescriptor(comptime T: type) type {
     return ComponentMap(T, .Auto, struct {
-        fn FieldType(comptime _: T.ComponentKind, comptime _: type) type {
+        fn FieldType(comptime _: T.ComponentTag, comptime _: type) type {
             return ?IteratorComponentDescriptor;
         }
 
-        fn default_value(comptime _: T.ComponentKind, comptime _: type) ?*const anyopaque {
+        fn default_value(comptime _: T.ComponentTag, comptime _: type) ?*const anyopaque {
             return &null;
         }
 
-        fn skip(comptime _: T.ComponentKind) bool {
+        fn skip(comptime _: T.ComponentTag) bool {
             return false;
         }
     });
@@ -348,8 +356,8 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
     return struct {
         const required_components = ComponentFlags(T).initFromIteratorDescriptorRequired(descriptor);
         const Item = ComponentMap(T, .Auto, struct {
-            fn FieldType(comptime kind: T.ComponentKind, comptime C: type) type {
-                const name = T.component_names[@enumToInt(kind)];
+            fn FieldType(comptime component: T.ComponentTag, comptime C: type) type {
+                const name = T.component_names[@enumToInt(component)];
 
                 var Result = C;
 
@@ -366,16 +374,16 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
                 return Result;
             }
 
-            fn default_value(comptime kind: T.ComponentKind, comptime _: type) ?*const anyopaque {
-                if (!required_components.isSet(kind)) {
+            fn default_value(comptime component: T.ComponentTag, comptime _: type) ?*const anyopaque {
+                if (!required_components.isSet(component)) {
                     return null;
                 } else {
                     return &null;
                 }
             }
 
-            fn skip(comptime kind: T.ComponentKind) bool {
-                return @field(descriptor, T.component_names[@enumToInt(kind)]) == null;
+            fn skip(comptime component: T.ComponentTag) bool {
+                return @field(descriptor, T.component_names[@enumToInt(component)]) == null;
             }
         });
 
@@ -386,7 +394,7 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
         archetype_lists: AutoArrayHashMapUnmanaged(ComponentFlags(T), ArchetypeList(T)).Iterator,
         archetype_list: ?*ArchetypeList(T),
         handle_iterator: ArchetypeList(T).HandleIterator,
-        current_handle: T.Handle,
+        current_handle: Handle,
 
         pub fn next(self: *@This()) ?Item {
             while (true) {
@@ -411,8 +419,8 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
                         comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).prealloc_count == 0);
                         comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);
 
-                        comptime var component_kind = T.find_component_kind(field.name);
-                        comptime var ComponentType = T.component_types[@enumToInt(component_kind)];
+                        comptime var component = T.componentTag(field.name);
+                        comptime var ComponentType = T.component_types[@enumToInt(component)];
 
                         const required = @field(descriptor, field.name) != null and !@field(descriptor, field.name).?.optional;
                         const exists = required or self.archetype_list.?.archetype.isNameSet(field.name);
@@ -437,7 +445,7 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
         }
 
         // TODO: test coverage
-        pub fn handle(self: *const @This()) T.Handle {
+        pub fn handle(self: *const @This()) Handle {
             assert(self.archetype_list != null);
             return self.current_handle;
         }
@@ -466,15 +474,15 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
 
 pub fn ComponentFlags(comptime T: type) type {
     const Mask = ComponentMap(T, .Packed, struct {
-        fn FieldType(comptime _: T.ComponentKind, comptime _: type) type {
+        fn FieldType(comptime _: T.ComponentTag, comptime _: type) type {
             return bool;
         }
 
-        fn default_value(comptime _: T.ComponentKind, comptime _: type) ?*const anyopaque {
+        fn default_value(comptime _: T.ComponentTag, comptime _: type) ?*const anyopaque {
             return &false;
         }
 
-        fn skip(comptime _: T.ComponentKind) bool {
+        fn skip(comptime _: T.ComponentTag) bool {
             return false;
         }
     });
@@ -551,28 +559,28 @@ pub fn ComponentFlags(comptime T: type) type {
             return .{ .mask = @bitCast(Mask, self.int() & ~sub.int()) };
         }
 
-        fn maskBit(kind: T.ComponentKind) Int {
-            return @as(Int, 1) << @intCast(ShiftInt, @enumToInt(kind));
+        fn maskBit(component: T.ComponentTag) Int {
+            return @as(Int, 1) << @intCast(ShiftInt, @enumToInt(component));
         }
 
-        pub fn isSet(self: Self, kind: T.ComponentKind) bool {
-            return (self.int() & maskBit(kind)) != 0;
+        pub fn isSet(self: Self, component: T.ComponentTag) bool {
+            return (self.int() & maskBit(component)) != 0;
         }
 
         pub fn isNameSet(self: Self, comptime name: []const u8) bool {
             return @field(self.mask, name);
         }
 
-        pub fn set(self: *Self, kind: T.ComponentKind) void {
-            self.mask = @bitCast(Mask, self.int() | maskBit(kind));
+        pub fn set(self: *Self, component: T.ComponentTag) void {
+            self.mask = @bitCast(Mask, self.int() | maskBit(component));
         }
 
         pub fn setName(self: *Self, comptime name: []const u8) void {
             @field(self.mask, name) = true;
         }
 
-        pub fn unset(self: *Self, kind: T.ComponentKind) void {
-            self.mask = self.bitCast(Mask, self.int() & ~maskBit(kind));
+        pub fn unset(self: *Self, component: T.ComponentTag) void {
+            self.mask = self.bitCast(Mask, self.int() & ~maskBit(component));
         }
 
         pub fn unsetName(self: *Self, comptime name: []const u8) void {
@@ -602,15 +610,15 @@ test "basic" {
 
 pub fn Prefab(comptime T: type) type {
     return ComponentMap(T, .Auto, struct {
-        fn FieldType(comptime _: T.ComponentKind, comptime C: type) type {
+        fn FieldType(comptime _: T.ComponentTag, comptime C: type) type {
             return ?C;
         }
 
-        fn default_value(comptime _: T.ComponentKind, comptime _: type) ?*const anyopaque {
+        fn default_value(comptime _: T.ComponentTag, comptime _: type) ?*const anyopaque {
             return &null;
         }
 
-        fn skip(comptime _: T.ComponentKind) bool {
+        fn skip(comptime _: T.ComponentTag) bool {
             return false;
         }
     });
@@ -630,21 +638,6 @@ pub fn EntityPointer(comptime T: type) type {
     };
 }
 
-fn FieldValuesType(comptime T: type) type {
-    const fields = @typeInfo(T).Struct.fields;
-    if (fields.len == 0) return [0]void;
-    return [fields.len]fields[0].type;
-}
-
-fn field_values(s: anytype) FieldValuesType(@TypeOf(s)) {
-    const fields = @typeInfo(@TypeOf(s)).Struct.fields;
-    var values: FieldValuesType(@TypeOf(s)) = undefined;
-    for (fields, 0..) |field, i| {
-        values[i] = @field(s, field.name);
-    }
-    return values;
-}
-
 fn ComponentMap(
     comptime T: type,
     comptime layout: std.builtin.Type.ContainerLayout,
@@ -653,13 +646,13 @@ fn ComponentMap(
     var fields: [T.component_types.len]Type.StructField = undefined;
     var len: usize = 0;
     for (T.component_types, T.component_names, 0..) |comp_type, comp_name, i| {
-        const kind = @intToEnum(T.ComponentKind, i);
-        if (!Map.skip(kind)) {
-            const FieldType = Map.FieldType(kind, comp_type);
+        const component = @intToEnum(T.ComponentTag, i);
+        if (!Map.skip(component)) {
+            const FieldType = Map.FieldType(component, comp_type);
             fields[len] = Type.StructField{
                 .name = comp_name,
                 .type = FieldType,
-                .default_value = Map.default_value(kind, FieldType),
+                .default_value = Map.default_value(component, FieldType),
                 .is_comptime = false,
                 .alignment = if (layout == .Packed) 0 else @alignOf(FieldType),
             };
@@ -696,7 +689,7 @@ test "zero-sized-component" {
 
     {
         const Expected = struct { x: ?void = null };
-        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(allocator);
+        var expected = std.AutoHashMap(Handle, Expected).init(allocator);
         defer expected.deinit();
         try expected.put(a, .{ .x = {} });
         try expected.put(b, .{});
@@ -732,7 +725,7 @@ test "iter desc" {
     };
 
     {
-        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(std.heap.page_allocator);
+        var expected = std.AutoHashMap(Handle, Expected).init(std.heap.page_allocator);
         defer expected.deinit();
         try expected.put(e0, .{ .x = 10, .y = 'a' });
         try expected.put(e1, .{ .x = 20, .y = 'b' });
@@ -749,7 +742,7 @@ test "iter desc" {
     }
 
     {
-        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(std.heap.page_allocator);
+        var expected = std.AutoHashMap(Handle, Expected).init(std.heap.page_allocator);
         defer expected.deinit();
         try expected.put(e0, .{ .x = 10, .y = 'a' });
         try expected.put(e1, .{ .x = 20, .y = 'b' });
@@ -768,7 +761,7 @@ test "iter desc" {
     }
 
     {
-        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(std.heap.page_allocator);
+        var expected = std.AutoHashMap(Handle, Expected).init(std.heap.page_allocator);
         defer expected.deinit();
         try expected.put(e0, .{ .x = 10, .y = 'a' });
         try expected.put(e1, .{ .x = 20, .y = 'b' });
@@ -791,7 +784,7 @@ test "iter desc" {
     }
 
     {
-        var expected = std.AutoHashMap(@TypeOf(entities).Handle, Expected).init(std.heap.page_allocator);
+        var expected = std.AutoHashMap(Handle, Expected).init(std.heap.page_allocator);
         defer expected.deinit();
         try expected.put(e0, .{ .x = 10, .y = 'a' });
         try expected.put(e1, .{ .x = 20, .y = 'b' });
@@ -1110,7 +1103,7 @@ test "clear retaining capacity" {
         const y1 = entities.create(.{ .y = 40 });
         const xy0 = entities.create(.{ .x = 50, .y = 60 });
         const xy1 = entities.create(.{ .x = 70, .y = 80 });
-        const first_batch = [_]@TypeOf(entities).Handle{ e0, e1, x0, x1, y0, y1, xy0, xy1 };
+        const first_batch = [_]Handle{ e0, e1, x0, x1, y0, y1, xy0, xy1 };
 
         entities.clearRetainingCapacity();
 
@@ -1127,7 +1120,7 @@ test "clear retaining capacity" {
         const y1_new = entities.create(.{ .y = 14 });
         const xy0_new = entities.create(.{ .x = 15, .y = 16 });
         const xy1_new = entities.create(.{ .x = 17, .y = 18 });
-        const second_batch = [_]@TypeOf(entities).Handle{ e0_new, e1_new, x0_new, x1_new, y0_new, y1_new, xy0_new, xy1_new };
+        const second_batch = [_]Handle{ e0_new, e1_new, x0_new, x1_new, y0_new, y1_new, xy0_new, xy1_new };
 
         for (first_batch) |e| {
             try std.testing.expect(entities.getComponentChecked(e, .x) == error.UseAfterFree);
@@ -1159,7 +1152,7 @@ test "clear retaining capacity" {
         try std.testing.expect(entities.getComponent(xy1_new, .x).?.* == 17);
         try std.testing.expect(entities.getComponent(xy1_new, .y).?.* == 18);
 
-        var expected = std.AutoHashMap(@TypeOf(entities).Handle, void).init(allocator);
+        var expected = std.AutoHashMap(Handle, void).init(allocator);
         defer expected.deinit();
         for (second_batch) |e| {
             try expected.put(e, {});
@@ -1243,7 +1236,6 @@ test "limits" {
 
     var allocator = std.testing.allocator;
     var entities = try Entities(.{}).init(allocator);
-    const Handle = @TypeOf(entities).Handle;
     defer entities.deinit();
     var created = std.ArrayList(Handle).init(allocator);
     defer created.deinit();
@@ -1251,7 +1243,7 @@ test "limits" {
     // Add the max number of entities
     for (0..max_entities) |i| {
         const entity = entities.create(.{});
-        try std.testing.expectEqual(Handle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 0 }, entity);
+        try std.testing.expectEqual(Handle{ .index = @intCast(u20, i), .generation = 0 }, entity);
         try created.append(entity);
     }
     try std.testing.expectError(error.OutOfMemory, entities.createChecked(.{}));
@@ -1272,7 +1264,7 @@ test "limits" {
     // Create a bunch of entities again
     for (0..max_entities) |i| {
         try std.testing.expectEqual(
-            Handle{ .index = @intCast(Entities(.{}).HandleSlotMap.Index, i), .generation = 1 },
+            Handle{ .index = @intCast(u20, i), .generation = 1 },
             entities.create(.{}),
         );
     }
@@ -1299,7 +1291,7 @@ test "safety" {
     const entity = entities.create(.{});
     entities.swapRemove(entity);
     try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(entity));
-    try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(@TypeOf(entities).Handle{
+    try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(Handle{
         .index = 1,
         .generation = 0,
     }));
@@ -1318,7 +1310,7 @@ test "random data" {
     };
     const Created = struct {
         data: Data,
-        handle: E.Handle,
+        handle: Handle,
     };
 
     var rnd = std.rand.DefaultPrng.init(0);
@@ -1534,13 +1526,13 @@ test "random data" {
 
         // Test that iterators are working properly
         {
-            var truth_xyz = std.AutoArrayHashMap(E.Handle, Data).init(allocator);
+            var truth_xyz = std.AutoArrayHashMap(Handle, Data).init(allocator);
             defer truth_xyz.deinit();
-            var truth_xz = std.AutoArrayHashMap(E.Handle, Data).init(allocator);
+            var truth_xz = std.AutoArrayHashMap(Handle, Data).init(allocator);
             defer truth_xz.deinit();
-            var truth_y = std.AutoArrayHashMap(E.Handle, Data).init(allocator);
+            var truth_y = std.AutoArrayHashMap(Handle, Data).init(allocator);
             defer truth_y.deinit();
-            var truth_all = std.AutoArrayHashMap(E.Handle, Data).init(allocator);
+            var truth_all = std.AutoArrayHashMap(Handle, Data).init(allocator);
             defer truth_all.deinit();
 
             for (truth.items) |entity| {

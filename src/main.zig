@@ -37,7 +37,7 @@ const Entities = ecs.entities.Entities(.{
     .hook = Hook,
     .front_shield = struct {},
 });
-const EntityHandle = Entities.Handle;
+const EntityHandle = ecs.entities.Handle;
 const ComponentFlags = ecs.entities.ComponentFlags(Entities);
 const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
 
@@ -1391,7 +1391,7 @@ const GrappleGun = struct {
 };
 
 const Transform = struct {
-    parent: ?Entities.Handle = null,
+    parent: ?EntityHandle = null,
     /// pixels, relative to parent
     pos: V = V{ .x = 0, .y = 0 },
     pos_world_cached: V = undefined,
