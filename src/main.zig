@@ -32,7 +32,7 @@ const Entities = ecs.entities.Entities(.{
     .sprite = Sprite.Index,
     .animation = Animation.Playback,
     .collider = Collider,
-    .turrets = BoundedArray(Turret, 2),
+    .turret = Turret,
     .grapple_gun = GrappleGun,
     .health = Health,
     .spring = Spring,
@@ -268,7 +268,7 @@ fn update(
                     if (other.health == null or other.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (entity.front_shield != null) {
-                            var dot = V.unit(entity.rb.angle).dot(normal);
+                            var dot = V.unit(entity.transform.angle).dot(normal);
                             shield_scale = std.math.max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
@@ -281,7 +281,7 @@ fn update(
                     if (entity.health == null or entity.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (other.front_shield != null) {
-                            var dot = V.unit(other.rb.angle).dot(normal);
+                            var dot = V.unit(other.transform.angle).dot(normal);
                             shield_scale = std.math.max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
@@ -314,10 +314,10 @@ fn update(
                         },
                         .transform = .{
                             .pos = shrapnel_center.plus(random_offset),
+                            .angle = 2 * math.pi * std.crypto.random.float(f32),
                         },
                         .rb = .{
                             .vel = avg_vel.plus(random_vel),
-                            .angle = 2 * math.pi * std.crypto.random.float(f32),
                             .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                             .radius = game.animationRadius(shrapnel_animation),
                             .density = 0.001,
@@ -396,8 +396,8 @@ fn update(
                 }
             }
 
-            entity.rb.angle = @mod(
-                entity.rb.angle + entity.rb.rotation_vel * delta_s,
+            entity.transform.angle = @mod(
+                entity.transform.angle + entity.rb.rotation_vel * delta_s,
                 2 * math.pi,
             );
         }
@@ -458,8 +458,8 @@ fn update(
         // TODO(mason): hard to keep the components straight, make shorter handles names and get rid of comps
         var damage_it = entities.iterator(.{
             .damage = .{},
-            .rb = .{ .mutable = true },
-            .transform = .{},
+            .rb = .{},
+            .transform = .{ .mutable = true },
         });
         while (damage_it.next()) |damage_entity| {
             var health_it = entities.iterator(.{
@@ -484,10 +484,10 @@ fn update(
                             },
                             .transform = .{
                                 .pos = health_entity.transform.pos,
+                                .angle = 2 * math.pi * std.crypto.random.float(f32),
                             },
                             .rb = .{
                                 .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
-                                .angle = 2 * math.pi * std.crypto.random.float(f32),
                                 .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                                 .radius = game.animationRadius(shrapnel_animation),
                                 .density = 0.001,
@@ -503,7 +503,7 @@ fn update(
                 }
             }
 
-            damage_entity.rb.angle = damage_entity.rb.vel.angle() + math.pi / 2.0;
+            damage_entity.transform.angle = damage_entity.rb.vel.angle() + math.pi / 2.0;
         }
     }
 
@@ -530,7 +530,6 @@ fn update(
                         },
                         .rb = .{
                             .vel = if (entity.rb) |rb| rb.vel else .{ .x = 0, .y = 0 },
-                            .angle = 0,
                             .rotation_vel = 0,
                             .radius = 32,
                             .density = 0.001,
@@ -587,6 +586,7 @@ fn update(
         var it = entities.iterator(.{
             .ship = .{},
             .rb = .{ .mutable = true },
+            .transform = .{ .mutable = true },
             .input = .{},
             .animation = .{ .optional = true, .mutable = true },
         });
@@ -598,13 +598,13 @@ fn update(
                 });
             } else {
                 // convert to 1.0 or 0.0
-                entity.rb.angle = @mod(
-                    entity.rb.angle + entity.input.getAxis(.turn) * entity.ship.turn_speed * delta_s,
+                entity.transform.angle = @mod(
+                    entity.transform.angle + entity.input.getAxis(.turn) * entity.ship.turn_speed * delta_s,
                     2 * math.pi,
                 );
 
                 const thrust_input = @intToFloat(f32, @boolToInt(entity.input.isAction(.thrust_forward, .positive, .active)));
-                const thrust = V.unit(entity.rb.angle);
+                const thrust = V.unit(entity.transform.angle);
                 entity.rb.vel.add(thrust.scaled(thrust_input * entity.ship.thrust * delta_s));
             }
         }
@@ -633,71 +633,6 @@ fn update(
                     };
                 } else {
                     entity.animation.playing = false;
-                }
-            }
-        }
-    }
-
-    // Update turrets
-    {
-        var it = entities.iterator(.{
-            .turrets = .{ .mutable = true },
-            .input = .{},
-            .rb = .{},
-            .transform = .{},
-        });
-        while (it.next()) |entity| {
-            for (entity.turrets.slice()) |*turret| {
-                var angle = entity.rb.angle;
-                var vel = V.unit(angle).scaled(turret.projectile_speed).plus(entity.rb.vel);
-                var sprite = game.bullet_small;
-                if (turret.aim_opposite_movement) {
-                    angle = entity.rb.vel.angle() + std.math.pi;
-                    vel = V.zero;
-                    sprite = game.bullet_shiny;
-                }
-                const fire_pos = entity.transform.pos.plus(V.unit(angle + turret.angle).scaled(turret.radius + turret.projectile_radius));
-                const ready = switch (turret.cooldown) {
-                    .time => |*time| r: {
-                        time.current_s -= delta_s;
-                        break :r time.current_s <= 0;
-                    },
-                    .distance => |dist| if (dist.last_pos) |last_pos|
-                        fire_pos.distanceSqrd(last_pos) >= dist.min_sq
-                    else
-                        true,
-                };
-                if (entity.input.isAction(.fire, .positive, .active) and ready) {
-                    switch (turret.cooldown) {
-                        .time => |*time| time.current_s = time.max_s,
-                        .distance => |*dist| dist.last_pos = fire_pos,
-                    }
-                    // TODO(mason): just make separate component for wall
-                    _ = command_buffer.appendCreate(.{
-                        .damage = .{
-                            .hp = turret.projectile_damage,
-                        },
-                        .transform = .{
-                            .pos = fire_pos,
-                        },
-                        .rb = .{
-                            .vel = vel,
-                            .angle = vel.angle() + math.pi / 2.0,
-                            .rotation_vel = 0,
-                            .radius = turret.projectile_radius,
-                            // TODO(mason): modify math to accept 0 and inf mass
-                            .density = turret.projectile_density,
-                        },
-                        .sprite = sprite,
-                        .collider = .{
-                            // Lasers gain energy when bouncing off of rocks
-                            .collision_damping = 1,
-                            .layer = .projectile,
-                        },
-                        .lifetime = .{
-                            .seconds = turret.projectile_lifetime,
-                        },
-                    });
                 }
             }
         }
@@ -752,7 +687,7 @@ fn update(
                     };
 
                     // TODO: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
-                    var dir = V.unit(rb.angle + gg.angle);
+                    var dir = V.unit(entity.transform.angle + gg.angle);
                     var vel = rb.vel;
                     const segment_len = 50.0;
                     var pos = entity.transform.pos.plus(dir.scaled(segment_len));
@@ -782,10 +717,10 @@ fn update(
                     gg.live.?.hook = entities.create(.{
                         .transform = .{
                             .pos = pos,
+                            .angle = 0,
                         },
                         .rb = .{
                             .vel = vel,
-                            .angle = 0,
                             .rotation_vel = 0,
                             .radius = 2,
                             .density = 0.001,
@@ -843,18 +778,83 @@ fn update(
         }
     }
 
-    // Update cached world positions
+    // Update cached world positions and angles
     {
         var it = entities.iterator(.{ .transform = .{ .mutable = true } });
         while (it.next()) |entity| {
             entity.transform.pos_world_cached = entity.transform.pos;
+            entity.transform.angle_world_cached = entity.transform.angle;
 
             var curr = it.handle();
             while (parenting.getParent(entities, curr)) |parent| {
                 if (entities.getComponent(parent, .transform)) |transform| {
                     entity.transform.pos_world_cached.add(transform.pos);
+                    entity.transform.angle_world_cached += transform.angle;
                     curr = parent;
                 } else break;
+            }
+        }
+    }
+
+    // Update turrets
+    {
+        var it = entities.iterator(.{
+            .turret = .{ .mutable = true },
+            .input = .{},
+            .rb = .{},
+            .transform = .{},
+        });
+        while (it.next()) |entity| {
+            var angle = entity.transform.angle_world_cached;
+            var vel = V.unit(angle).scaled(entity.turret.projectile_speed).plus(entity.rb.vel);
+            var sprite = game.bullet_small;
+            if (entity.turret.aim_opposite_movement) {
+                angle = entity.rb.vel.angle() + std.math.pi;
+                vel = V.zero;
+                sprite = game.bullet_shiny;
+            }
+            const fire_pos = entity.transform.pos_world_cached.plus(V.unit(angle + entity.turret.angle).scaled(entity.turret.radius + entity.turret.projectile_radius));
+            const ready = switch (entity.turret.cooldown) {
+                .time => |*time| r: {
+                    time.current_s -= delta_s;
+                    break :r time.current_s <= 0;
+                },
+                .distance => |dist| if (dist.last_pos) |last_pos|
+                    fire_pos.distanceSqrd(last_pos) >= dist.min_sq
+                else
+                    true,
+            };
+            if (entity.input.isAction(.fire, .positive, .active) and ready) {
+                switch (entity.turret.cooldown) {
+                    .time => |*time| time.current_s = time.max_s,
+                    .distance => |*dist| dist.last_pos = fire_pos,
+                }
+                // TODO(mason): just make separate component for wall
+                _ = command_buffer.appendCreate(.{
+                    .damage = .{
+                        .hp = entity.turret.projectile_damage,
+                    },
+                    .transform = .{
+                        .pos = fire_pos,
+                        .angle = vel.angle() + math.pi / 2.0,
+                    },
+                    .rb = .{
+                        .vel = vel,
+                        .rotation_vel = 0,
+                        .radius = entity.turret.projectile_radius,
+                        // TODO(mason): modify math to accept 0 and inf mass
+                        .density = entity.turret.projectile_density,
+                    },
+                    .sprite = sprite,
+                    .collider = .{
+                        // Lasers gain energy when bouncing off of rocks
+                        .collision_damping = 1,
+                        .layer = .projectile,
+                    },
+                    .lifetime = .{
+                        .seconds = entity.turret.projectile_lifetime,
+                    },
+                });
             }
         }
     }
@@ -960,7 +960,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                     frame.sprite.texture,
                     null, // source rectangle
                     &dest_rect,
-                    toDegrees(entity.rb.angle + frame.angle),
+                    toDegrees(entity.transform.angle + frame.angle),
                     null, // center of angle
                     c.SDL_FLIP_NONE,
                 ));
@@ -1026,7 +1026,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                 sprite.texture,
                 null, // source rectangle
                 &dest_rect,
-                toDegrees(entity.rb.angle),
+                toDegrees(entity.transform.angle),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -1353,8 +1353,11 @@ const GrappleGun = struct {
 const Transform = struct {
     // parent: ?EntityHandle = null,
     /// pixels, relative to parent
-    pos: V = V{ .x = 0, .y = 0 },
+    pos: V = V.zero,
+    /// radians
+    angle: f32 = 0.0,
     pos_world_cached: V = undefined,
+    angle_world_cached: f32 = undefined,
 };
 
 const AnimateOnInput = struct {
@@ -1371,8 +1374,6 @@ const RigidBody = struct {
 
     /// pixels per second
     vel: V = .{ .x = 0, .y = 0 },
-    /// radians
-    angle: f32 = 0.0,
     /// radians per second
     rotation_vel: f32 = 0.0,
     radius: f32,
@@ -1561,10 +1562,10 @@ const Game = struct {
             },
             .transform = .{
                 .pos = pos,
+                .angle = angle,
             },
             .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
-                .angle = angle,
                 .radius = self.ranger_radius,
                 .rotation_vel = 0.0,
                 .density = 0.02,
@@ -1582,17 +1583,15 @@ const Game = struct {
                 .activated = self.ranger_animations.accel,
                 .deactivated = self.ranger_animations.still,
             },
-            .turrets = boundedArrayFromArray(Turret, 2, [_]Turret{
-                .{
-                    .radius = self.ranger_radius,
-                    .angle = 0,
-                    .cooldown = .{ .time = .{ .max_s = 0.1 } },
-                    .projectile_speed = 550,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 6,
-                    .projectile_radius = 8,
-                },
-            }),
+            .turret = .{
+                .angle = 0,
+                .radius = self.ranger_radius,
+                .cooldown = .{ .time = .{ .max_s = 0.1 } },
+                .projectile_speed = 550,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 6,
+                .projectile_radius = 8,
+            },
             .input = input,
         });
     }
@@ -1620,10 +1619,10 @@ const Game = struct {
             },
             .transform = .{
                 .pos = pos,
+                .angle = angle,
             },
             .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
-                .angle = angle,
                 .radius = 26,
                 .rotation_vel = 0.0,
                 .density = 0.02,
@@ -1641,17 +1640,15 @@ const Game = struct {
                 .activated = self.triangle_animations.accel,
                 .deactivated = self.triangle_animations.still,
             },
-            .turrets = boundedArrayFromArray(Turret, 2, [_]Turret{
-                .{
-                    .radius = radius,
-                    .angle = 0,
-                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                    .projectile_speed = 700,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 12,
-                    .projectile_radius = 12,
-                },
-            }),
+            .turret = .{
+                .angle = 0,
+                .radius = radius,
+                .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                .projectile_speed = 700,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 12,
+                .projectile_radius = 12,
+            },
             .input = input,
         });
     }
@@ -1677,10 +1674,10 @@ const Game = struct {
             },
             .transform = .{
                 .pos = pos,
+                .angle = angle,
             },
             .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
-                .angle = angle,
                 .rotation_vel = 0.0,
                 .radius = self.militia_radius,
                 .density = 0.06,
@@ -1720,7 +1717,8 @@ const Game = struct {
         angle: f32,
         input: Input,
     ) DeferredHandle {
-        return command_buffer.appendCreate(.{
+        const radius = 32;
+        const ship = command_buffer.appendCreate(.{
             .ship = .{
                 .class = .kevin,
                 .turn_speed = math.pi * 1.1,
@@ -1733,11 +1731,11 @@ const Game = struct {
             },
             .transform = .{
                 .pos = pos,
+                .angle = angle,
             },
             .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
-                .angle = angle,
-                .radius = 32,
+                .radius = radius,
                 .rotation_vel = 0.0,
                 .density = 0.02,
             },
@@ -1754,28 +1752,43 @@ const Game = struct {
                 .activated = self.kevin_animations.accel,
                 .deactivated = self.kevin_animations.still,
             },
-            .turrets = boundedArrayFromArray(Turret, 2, [_]Turret{
-                .{
-                    .radius = 32,
-                    .angle = math.pi * 0.1,
-                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                    .projectile_speed = 500,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 18,
-                    .projectile_radius = 18,
-                },
-                .{
-                    .radius = 32,
-                    .angle = math.pi * -0.1,
-                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                    .projectile_speed = 500,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 18,
-                    .projectile_radius = 18,
-                },
-            }),
             .input = input,
         });
+        command_buffer.appendParent(command_buffer.appendCreate(.{
+            .turret = .{
+                .radius = 32,
+                .angle = math.pi * 0.1,
+                .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                .projectile_speed = 500,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 18,
+                .projectile_radius = 18,
+            },
+            .input = input,
+            .rb = .{
+                .radius = radius,
+                .density = std.math.inf(f32),
+            },
+            .transform = .{},
+        }), ship);
+        command_buffer.appendParent(command_buffer.appendCreate(.{
+            .turret = .{
+                .radius = radius,
+                .angle = math.pi * -0.1,
+                .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                .projectile_speed = 500,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 18,
+                .projectile_radius = 18,
+            },
+            .input = input,
+            .rb = .{
+                .radius = radius,
+                .density = std.math.inf(f32),
+            },
+            .transform = .{},
+        }), ship);
+        return ship;
     }
 
     fn createWendy(
@@ -1803,7 +1816,6 @@ const Game = struct {
             },
             .rb = .{
                 .vel = .{ .x = 0, .y = 0 },
-                .angle = 0,
                 .radius = self.wendy_radius,
                 .rotation_vel = 0.0,
                 .density = 0.02,
@@ -1815,26 +1827,22 @@ const Game = struct {
             .animation = .{
                 .index = self.wendy_animations.still,
             },
-            .turrets = boundedArrayFromArray(Turret, 2, [_]Turret{
-                .{
-                    .radius = self.wendy_radius,
-                    .angle = 0,
-                    .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
-                    .projectile_speed = 0,
-                    .projectile_lifetime = 5.0,
-                    .projectile_damage = 50,
-                    .projectile_radius = 8,
-                    .projectile_density = std.math.inf(f32),
-                    .aim_opposite_movement = true,
-                },
-            }),
+            .turret = .{
+                .radius = self.wendy_radius,
+                .angle = 0,
+                .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
+                .projectile_speed = 0,
+                .projectile_lifetime = 5.0,
+                .projectile_damage = 50,
+                .projectile_radius = 8,
+                .projectile_density = std.math.inf(f32),
+                .aim_opposite_movement = true,
+            },
             .input = input,
         });
 
         command_buffer.appendParent(command_buffer.appendCreate(.{
-            .transform = .{
-                .pos = V{ .x = 0, .y = 0 },
-            },
+            .transform = .{},
             .rb = .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
@@ -1853,9 +1861,7 @@ const Game = struct {
         }), ship);
 
         command_buffer.appendParent(command_buffer.appendCreate(.{
-            .transform = .{
-                .pos = V{ .x = 0, .y = 0 },
-            },
+            .transform = .{},
             .rb = .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
@@ -1874,9 +1880,7 @@ const Game = struct {
         }), ship);
 
         command_buffer.appendParent(command_buffer.appendCreate(.{
-            .transform = .{
-                .pos = V{ .x = 0, .y = 0 },
-            },
+            .transform = .{},
             .rb = .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
@@ -1895,9 +1899,7 @@ const Game = struct {
         }), ship);
 
         command_buffer.appendParent(command_buffer.appendCreate(.{
-            .transform = .{
-                .pos = V{ .x = 0, .y = 0 },
-            },
+            .transform = .{},
             .rb = .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
@@ -2208,6 +2210,7 @@ const Game = struct {
             .deathmatch_2v2_one_rock,
             => {
                 const progression = &.{
+                    .kevin,
                     .ranger,
                     .militia,
                     .ranger,
@@ -2238,6 +2241,7 @@ const Game = struct {
 
             .deathmatch_1v1, .deathmatch_1v1_one_rock => {
                 const progression = &.{
+                    .kevin,
                     .ranger,
                     .militia,
                     .triangle,
@@ -2263,6 +2267,7 @@ const Game = struct {
 
             .royale_4p => {
                 const progression = &.{
+                    .kevin,
                     .ranger,
                     .militia,
                     .triangle,
@@ -2423,7 +2428,6 @@ const Game = struct {
                 },
                 .rb = .{
                     .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                    .angle = 0,
                     .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
                     .radius = radius,
                     .density = 0.10,
@@ -2448,10 +2452,10 @@ const Game = struct {
                 },
                 .transform = .{
                     .pos = pos,
+                    .angle = 2 * math.pi * std.crypto.random.float(f32),
                 },
                 .rb = .{
                     .vel = random_vel,
-                    .angle = 2 * math.pi * std.crypto.random.float(f32),
                     .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
                     .radius = 16,
                     .density = 0.001,
