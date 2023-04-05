@@ -619,21 +619,13 @@ fn update(
         });
         while (it.next()) |entity| {
             if (entity.input.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
-                if (entity.animate_on_input.activated) |activated| {
-                    entity.animation.* = .{
-                        .index = activated,
-                    };
-                } else {
-                    entity.animation.playing = false;
-                }
+                entity.animation.* = .{
+                    .index = entity.animate_on_input.activated,
+                };
             } else if (entity.input.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .deactivated)) {
-                if (entity.animate_on_input.deactivated) |deactivated| {
-                    entity.animation.* = .{
-                        .index = deactivated,
-                    };
-                } else {
-                    entity.animation.playing = false;
-                }
+                entity.animation.* = .{
+                    .index = entity.animate_on_input.deactivated,
+                };
             }
         }
     }
@@ -759,10 +751,8 @@ fn update(
     {
         var it = entities.iterator(.{ .animation = .{} });
         while (it.next()) |entity| {
-            if (entity.animation.playing) {
-                if (entity.animation.destroys_entity and entity.animation.index == .none) {
-                    command_buffer.appendRemove(it.handle());
-                }
+            if (entity.animation.destroys_entity and entity.animation.index == .none) {
+                command_buffer.appendRemove(it.handle());
             }
         }
     }
@@ -947,7 +937,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                 }
             }
 
-            if (entity.animation.playing) {
+            if (entity.animation.index != .none) {
                 const frame = assets.animate(entity.animation, delta_s);
                 const unscaled_sprite_size = frame.sprite.size();
                 const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
@@ -1277,7 +1267,6 @@ const Animation = struct {
     };
 
     const Playback = struct {
-        playing: bool = true,
         index: Index,
         /// number of seconds passed since Animation start.
         time_passed: f32 = 0,
@@ -1363,8 +1352,8 @@ const Transform = struct {
 const AnimateOnInput = struct {
     action: Input.Action,
     direction: Input.Direction,
-    activated: ?Animation.Index,
-    deactivated: ?Animation.Index,
+    activated: Animation.Index,
+    deactivated: Animation.Index,
 };
 
 const RigidBody = struct {
@@ -1851,11 +1840,10 @@ const Game = struct {
                 .action = .thrust_y,
                 .direction = .positive,
                 .activated = self.wendy_animations.thrusters_left.?,
-                .deactivated = null,
+                .deactivated = .none,
             },
             .animation = .{
-                .playing = false,
-                .index = self.wendy_animations.thrusters_left.?,
+                .index = .none,
             },
             .input = input,
         }), ship);
@@ -1870,11 +1858,10 @@ const Game = struct {
                 .action = .thrust_y,
                 .direction = .negative,
                 .activated = self.wendy_animations.thrusters_right.?,
-                .deactivated = null,
+                .deactivated = .none,
             },
             .animation = .{
-                .playing = false,
-                .index = self.wendy_animations.thrusters_right.?,
+                .index = .none,
             },
             .input = input,
         }), ship);
@@ -1889,11 +1876,10 @@ const Game = struct {
                 .action = .thrust_x,
                 .direction = .negative,
                 .activated = self.wendy_animations.thrusters_top.?,
-                .deactivated = null,
+                .deactivated = .none,
             },
             .animation = .{
-                .playing = false,
-                .index = self.wendy_animations.thrusters_top.?,
+                .index = .none,
             },
             .input = input,
         }), ship);
@@ -1908,11 +1894,10 @@ const Game = struct {
                 .action = .thrust_x,
                 .direction = .positive,
                 .activated = self.wendy_animations.thrusters_bottom.?,
-                .deactivated = null,
+                .deactivated = .none,
             },
             .animation = .{
-                .playing = false,
-                .index = self.wendy_animations.thrusters_bottom.?,
+                .index = .none,
             },
             .input = input,
         }), ship);
