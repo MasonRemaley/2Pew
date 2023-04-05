@@ -28,8 +28,9 @@ pub const Handle = slot_map.HandleType(slot_map.IndexType(max_entities), EntityG
 pub fn Entities(comptime registered_components: anytype) type {
     return struct {
         const Self = @This();
-        const ComponentTag = std.meta.FieldEnum(@TypeOf(registered_components));
-        const component_types = ct: {
+
+        pub const ComponentTag = std.meta.FieldEnum(@TypeOf(registered_components));
+        pub const component_types = ct: {
             const fields = @typeInfo(@TypeOf(registered_components)).Struct.fields;
             var values: [fields.len]type = undefined;
             for (fields, 0..) |field, i| {
@@ -37,7 +38,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
             break :ct &values;
         };
-        const component_names = std.meta.fieldNames(@TypeOf(registered_components));
+        pub const component_names = std.meta.fieldNames(@TypeOf(registered_components));
 
         const HandleSlotMap = SlotMap(EntityPointer(Self), max_entities, EntityGeneration);
 
@@ -147,27 +148,31 @@ pub fn Entities(comptime registered_components: anytype) type {
             const pointer = try self.handles.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
             const components_added = ComponentFlags(Self).initFromComponents(changes.add);
-            const archetype = previous_archetype.unionWith(components_added)
+            const new_archetype = previous_archetype.unionWith(components_added)
                 .differenceWith(changes.remove);
-            const components_copied = previous_archetype.intersectWith(archetype)
-                .differenceWith(components_added);
 
-            // Create the new entity location
-            const old_pointer: EntityPointer(Self) = pointer.*;
-            const archetype_list = try self.getOrPutArchetypeList(archetype);
-            const index = try archetype_list.append(self.allocator, handle);
-            errdefer archetype_list.pop();
-            pointer.* = .{
-                .archetype_list = archetype_list,
-                .index = index,
-            };
+            // If the archetype actually changed, move the data
+            if (new_archetype.int() != previous_archetype.int()) {
+                // Allocate space of the new archetype
+                const old_pointer: EntityPointer(Self) = pointer.*;
+                const archetype_list = try self.getOrPutArchetypeList(new_archetype);
+                const index = try archetype_list.append(self.allocator, handle);
+                errdefer archetype_list.pop();
+                pointer.* = .{
+                    .archetype_list = archetype_list,
+                    .index = index,
+                };
+
+                // Copy the old components that aren't being removed or overwritten over to the new location
+                const to_copy = (previous_archetype.intersectWith(new_archetype)).differenceWith(components_added);
+                copyComponents(pointer, old_pointer, to_copy);
+
+                // Delete the data fom the old location
+                old_pointer.archetype_list.swapRemove(old_pointer.index, &self.handles);
+            }
 
             // Set the component data at the new location
-            copyComponents(pointer, old_pointer, components_copied);
             setComponents(pointer, changes.add);
-
-            // Delete the old data
-            old_pointer.archetype_list.swapRemove(old_pointer.index, &self.handles);
         }
 
         pub fn getComponent(self: *Self, entity: Handle, comptime component: ComponentTag) ?*component_types[@enumToInt(component)] {
@@ -492,10 +497,6 @@ pub fn ComponentFlags(comptime T: type) type {
         pub const ShiftInt = std.math.Log2Int(Int);
 
         mask: Mask = .{},
-
-        pub fn initMask(components: Mask) Self {
-            return .{ .mask = components };
-        }
 
         pub fn initFromKinds(tuple: anytype) Self {
             var self = Self{};

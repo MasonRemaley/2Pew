@@ -7,6 +7,7 @@ const BoundedArray = std.BoundedArray;
 const math = std.math;
 const assert = std.debug.assert;
 const V = @import("Vec2d.zig");
+const ecs = @import("ecs/index.zig");
 const FieldEnum = std.meta.FieldEnum;
 const MinimumAlignmentAllocator = @import("minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
@@ -19,16 +20,17 @@ const display_center: V = .{
 };
 const display_radius = display_height / 2.0;
 
-const ecs = @import("ecs/index.zig");
 const Entities = ecs.entities.Entities(.{
+    .parent = ?EntityHandle,
     .damage = Damage,
+    .animate_on_input = AnimateOnInput,
     .ship = Ship,
     .transform = Transform,
     .rb = RigidBody,
     .input = Input,
     .lifetime = Lifetime,
     .sprite = Sprite.Index,
-    .animations = BoundedArray(Animation.Playback, 5),
+    .animation = Animation.Playback,
     .collider = Collider,
     .turrets = BoundedArray(Turret, 2),
     .grapple_gun = GrappleGun,
@@ -38,8 +40,10 @@ const Entities = ecs.entities.Entities(.{
     .front_shield = struct {},
 });
 const EntityHandle = ecs.entities.Handle;
+const DeferredHandle = ecs.command_buffer.DeferredHandle;
 const ComponentFlags = ecs.entities.ComponentFlags(Entities);
 const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
+const parenting = ecs.parenting;
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
 // screen including this, the number of live entities, etc. We also want warnings/errors to show up
@@ -106,10 +110,11 @@ pub fn main() !void {
         .create_capacity = 8192,
         .remove_capacity = 8192,
         .arch_change_capacity = 8192,
+        .parent_capacity = 8192,
     });
     defer command_buffer.deinit(allocator);
 
-    game.setupScenario(&entities, .deathmatch_2v2);
+    game.setupScenario(&command_buffer, .deathmatch_2v2);
 
     // Run sim
     var delta_s: f32 = 1.0 / 60.0;
@@ -124,11 +129,11 @@ pub fn main() !void {
     var warned_memory_usage = false;
 
     while (true) {
-        if (poll(&entities, &game)) return;
+        if (poll(&entities, &command_buffer, &game)) return;
         update(&entities, &command_buffer, &game, delta_s);
         render(assets, &entities, game, delta_s, fx_loop_s);
 
-        // TODO(mason): we also want a min frame time so we don't get supririsng floating point
+        // TODO(mason): we also want a min frame time so we don't get surprising floating point
         // results if it's too close to zero!
         // Adjust our expectd delta time a little every frame. We cap it at `max_frame_time` to
         // prevent e.g. a slow alt tab from messing things up too much.
@@ -150,7 +155,7 @@ pub fn main() !void {
     }
 }
 
-fn poll(entities: *Entities, game: *Game) bool {
+fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) != 0) {
         switch (event.type) {
@@ -165,22 +170,22 @@ fn poll(entities: *Entities, game: *Game) bool {
                     }
                 },
                 c.SDL_SCANCODE_1 => {
-                    game.setupScenario(entities, .deathmatch_2v2);
+                    game.setupScenario(command_buffer, .deathmatch_2v2);
                 },
                 c.SDL_SCANCODE_2 => {
-                    game.setupScenario(entities, .deathmatch_2v2_no_rocks);
+                    game.setupScenario(command_buffer, .deathmatch_2v2_no_rocks);
                 },
                 c.SDL_SCANCODE_3 => {
-                    game.setupScenario(entities, .deathmatch_2v2_one_rock);
+                    game.setupScenario(command_buffer, .deathmatch_2v2_one_rock);
                 },
                 c.SDL_SCANCODE_4 => {
-                    game.setupScenario(entities, .deathmatch_1v1);
+                    game.setupScenario(command_buffer, .deathmatch_1v1);
                 },
                 c.SDL_SCANCODE_5 => {
-                    game.setupScenario(entities, .deathmatch_1v1_one_rock);
+                    game.setupScenario(command_buffer, .deathmatch_1v1_one_rock);
                 },
                 c.SDL_SCANCODE_6 => {
-                    game.setupScenario(entities, .royale_4p);
+                    game.setupScenario(command_buffer, .royale_4p);
                 },
                 else => {},
             },
@@ -207,7 +212,7 @@ fn update(
 
             if (entity.health) |health| {
                 if (health.invulnerable_s > 0.0) {
-                    entity.input.state.fire.positive = .inactive;
+                    entity.input.state.getPtr(.fire).positive = .inactive;
                 }
             }
         }
@@ -317,13 +322,10 @@ fn update(
                             .radius = game.animationRadius(shrapnel_animation),
                             .density = 0.001,
                         },
-                        .animations = boundedArrayFromArray(Animation.Playback, 5, [_]Animation.Playback{
-                            .{
-                                .index = shrapnel_animation,
-                                .time_passed = 0,
-                                .destroys_entity = true,
-                            },
-                        }),
+                        .animation = .{
+                            .index = shrapnel_animation,
+                            .destroys_entity = true,
+                        },
                     });
                 }
 
@@ -490,13 +492,10 @@ fn update(
                                 .radius = game.animationRadius(shrapnel_animation),
                                 .density = 0.001,
                             },
-                            .animations = boundedArrayFromArray(Animation.Playback, 5, [_]Animation.Playback{
-                                .{
-                                    .index = shrapnel_animation,
-                                    .time_passed = 0,
-                                    .destroys_entity = true,
-                                },
-                            }),
+                            .animation = .{
+                                .index = shrapnel_animation,
+                                .destroys_entity = true,
+                            },
                         });
 
                         command_buffer.appendRemove(damage_it.handle());
@@ -536,13 +535,10 @@ fn update(
                             .radius = 32,
                             .density = 0.001,
                         },
-                        .animations = boundedArrayFromArray(Animation.Playback, 5, [_]Animation.Playback{
-                            .{
-                                .index = game.explosion_animation,
-                                .time_passed = 0,
-                                .destroys_entity = true,
-                            },
-                        }),
+                        .animation = .{
+                            .index = game.explosion_animation,
+                            .destroys_entity = true,
+                        },
                     });
                 }
 
@@ -564,7 +560,7 @@ fn update(
                             const new_angle = math.pi * 2 * std.crypto.random.float(f32);
                             const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
                             const facing_angle = new_angle + math.pi;
-                            _ = game.createShip(entities, ship.player, new_pos, facing_angle, input.*);
+                            _ = game.createShip(command_buffer, ship.player, new_pos, facing_angle, input.*);
                         }
                     }
                 }
@@ -592,7 +588,7 @@ fn update(
             .ship = .{},
             .rb = .{ .mutable = true },
             .input = .{},
-            .animations = .{ .optional = true, .mutable = true },
+            .animation = .{ .optional = true, .mutable = true },
         });
         while (it.next()) |entity| {
             if (entity.ship.omnithrusters) {
@@ -600,43 +596,6 @@ fn update(
                     .x = entity.input.getAxis(.thrust_x) * entity.ship.thrust * delta_s,
                     .y = entity.input.getAxis(.thrust_y) * entity.ship.thrust * delta_s,
                 });
-
-                if (entity.animations) |animations| {
-                    if (animations.len >= 2) {
-                        var thrusters_top = &animations.slice()[1];
-                        var thrusters_bottom = &animations.slice()[2];
-                        var thrusters_left = &animations.slice()[3];
-                        var thrusters_right = &animations.slice()[4];
-
-                        if (entity.input.isAction(.thrust_y, .positive, .activated)) {
-                            thrusters_top.playing = true;
-                            thrusters_top.time_passed = 0;
-                        } else if (entity.input.isAction(.thrust_y, .positive, .deactivated)) {
-                            thrusters_top.playing = false;
-                        }
-
-                        if (entity.input.isAction(.thrust_y, .negative, .activated)) {
-                            thrusters_bottom.playing = true;
-                            thrusters_bottom.time_passed = 0;
-                        } else if (entity.input.isAction(.thrust_y, .negative, .deactivated)) {
-                            thrusters_bottom.playing = false;
-                        }
-
-                        if (entity.input.isAction(.thrust_x, .positive, .activated)) {
-                            thrusters_left.playing = true;
-                            thrusters_left.time_passed = 0;
-                        } else if (entity.input.isAction(.thrust_x, .positive, .deactivated)) {
-                            thrusters_left.playing = false;
-                        }
-
-                        if (entity.input.isAction(.thrust_x, .negative, .activated)) {
-                            thrusters_right.playing = true;
-                            thrusters_right.time_passed = 0;
-                        } else if (entity.input.isAction(.thrust_x, .negative, .deactivated)) {
-                            thrusters_right.playing = false;
-                        }
-                    }
-                }
             } else {
                 // convert to 1.0 or 0.0
                 entity.rb.angle = @mod(
@@ -647,21 +606,33 @@ fn update(
                 const thrust_input = @intToFloat(f32, @boolToInt(entity.input.isAction(.thrust_forward, .positive, .active)));
                 const thrust = V.unit(entity.rb.angle);
                 entity.rb.vel.add(thrust.scaled(thrust_input * entity.ship.thrust * delta_s));
+            }
+        }
+    }
 
-                if (entity.animations) |animations| {
-                    if (animations.len > 0) {
-                        if (entity.input.isAction(.thrust_forward, .positive, .activated)) {
-                            animations.set(0, .{
-                                .index = entity.ship.accel,
-                                .time_passed = 0,
-                            });
-                        } else if (entity.input.isAction(.thrust_forward, .positive, .deactivated)) {
-                            animations.set(0, .{
-                                .index = entity.ship.still,
-                                .time_passed = 0,
-                            });
-                        }
-                    }
+    // Update animate on input
+    {
+        var it = entities.iterator(.{
+            .input = .{},
+            .animate_on_input = .{},
+            .animation = .{ .mutable = true },
+        });
+        while (it.next()) |entity| {
+            if (entity.input.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
+                if (entity.animate_on_input.activated) |activated| {
+                    entity.animation.* = .{
+                        .index = activated,
+                    };
+                } else {
+                    entity.animation.playing = false;
+                }
+            } else if (entity.input.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .deactivated)) {
+                if (entity.animate_on_input.deactivated) |deactivated| {
+                    entity.animation.* = .{
+                        .index = deactivated,
+                    };
+                } else {
+                    entity.animation.playing = false;
                 }
             }
         }
@@ -851,13 +822,11 @@ fn update(
 
     // Update animations
     {
-        var it = entities.iterator(.{ .animations = .{} });
+        var it = entities.iterator(.{ .animation = .{} });
         while (it.next()) |entity| {
-            for (entity.animations.slice()) |animation| {
-                if (animation.playing) {
-                    if (animation.destroys_entity and animation.index == .none) {
-                        command_buffer.appendRemove(it.handle());
-                    }
+            if (entity.animation.playing) {
+                if (entity.animation.destroys_entity and entity.animation.index == .none) {
+                    command_buffer.appendRemove(it.handle());
                 }
             }
         }
@@ -879,11 +848,13 @@ fn update(
         var it = entities.iterator(.{ .transform = .{ .mutable = true } });
         while (it.next()) |entity| {
             entity.transform.pos_world_cached = entity.transform.pos;
-            var transform = entity.transform;
 
-            while (transform.parent) |parent| {
-                transform = entities.getComponent(parent, .transform) orelse break;
-                entity.transform.pos_world_cached.add(transform.pos);
+            var curr = it.handle();
+            while (parenting.getParent(entities, curr)) |parent| {
+                if (entities.getComponent(parent, .transform)) |transform| {
+                    entity.transform.pos_world_cached.add(transform.pos);
+                    curr = parent;
+                } else break;
             }
         }
     }
@@ -891,28 +862,6 @@ fn update(
     // Apply queued deletions
     command_buffer.execute();
     command_buffer.clearRetainingCapacity();
-
-    // TODO: now depending on exists working (though wouldn't be if there was a separate execute and create step actually)
-    // Delete children of deleted entities. We do this suboptimally to avoid needing to keep parent
-    // child pointers in sync. If we ever need to store the child pointers for another reason, or
-    // we end up with large hieararchies where this is a problem, we can simplify this to just read
-    // from the command buffer and delete children directly.
-    {
-        var dirty = true;
-        while (dirty) {
-            dirty = false;
-            var it = entities.iterator(.{ .transform = .{} });
-            while (it.next()) |entity| {
-                if (entity.transform.parent) |parent| {
-                    if (!entities.exists(parent) or entities.getComponent(parent, .transform) == null) {
-                        it.swapRemove();
-                        dirty = true;
-                        continue;
-                    }
-                }
-            }
-        }
-    }
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
@@ -965,56 +914,68 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
         var it = entities.iterator(.{
             .rb = .{},
             .transform = .{},
-            .animations = .{ .mutable = true },
+            .animation = .{ .mutable = true },
             .health = .{ .optional = true },
             .ship = .{ .optional = true },
+            .parent = .{ .optional = true },
         });
-        while (it.next()) |entity| {
+        draw: while (it.next()) |entity| {
+            // Skip rendering if flashing, or if any parent is flashing.
+            //
             // We should probably make the sprites half opacity instead of turning them off when
             // flashing for a less jarring effect, but that is difficult right now.
-            if (entity.health) |health| {
-                if (health.invulnerable_s > 0.0) {
-                    var flashes_ps: f32 = 2;
-                    if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
-                        flashes_ps = 4;
+            {
+                var curr: ?EntityHandle = it.handle();
+                while (curr) |handle| {
+                    if (entities.getComponent(handle, .health)) |health| {
+                        if (health.invulnerable_s > 0.0) {
+                            var flashes_ps: f32 = 2;
+                            if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
+                                flashes_ps = 4;
+                            }
+                            if (std.math.sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
+                                continue :draw;
+                            }
+                        }
                     }
-                    if (std.math.sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
-                        continue;
+
+                    if (entities.getComponent(handle, .parent)) |parent| {
+                        curr = parent.*;
+                    } else {
+                        curr = null;
                     }
                 }
             }
 
-            for (entity.animations.slice()) |*animation| {
-                if (animation.playing) {
-                    const frame = assets.animate(animation, delta_s);
-                    const unscaled_sprite_size = frame.sprite.size();
-                    const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
-                    const size_coefficient = entity.rb.radius / sprite_radius;
-                    const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-                    var dest_rect = sdlRect(entity.transform.pos_world_cached.minus(sprite_size.scaled(0.5)), sprite_size);
+            if (entity.animation.playing) {
+                const frame = assets.animate(entity.animation, delta_s);
+                const unscaled_sprite_size = frame.sprite.size();
+                const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
+                const size_coefficient = entity.rb.radius / sprite_radius;
+                const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
+                var dest_rect = sdlRect(entity.transform.pos_world_cached.minus(sprite_size.scaled(0.5)), sprite_size);
 
+                sdlAssertZero(c.SDL_RenderCopyEx(
+                    renderer,
+                    frame.sprite.texture,
+                    null, // source rectangle
+                    &dest_rect,
+                    toDegrees(entity.rb.angle + frame.angle),
+                    null, // center of angle
+                    c.SDL_FLIP_NONE,
+                ));
+
+                if (entity.ship) |ship| {
+                    const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
                     sdlAssertZero(c.SDL_RenderCopyEx(
                         renderer,
-                        frame.sprite.texture,
+                        sprite.texture,
                         null, // source rectangle
                         &dest_rect,
-                        toDegrees(entity.rb.angle + frame.angle),
+                        0,
                         null, // center of angle
                         c.SDL_FLIP_NONE,
                     ));
-
-                    if (entity.ship) |ship| {
-                        const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
-                        sdlAssertZero(c.SDL_RenderCopyEx(
-                            renderer,
-                            sprite.texture,
-                            null, // source rectangle
-                            &dest_rect,
-                            0,
-                            null, // center of angle
-                            c.SDL_FLIP_NONE,
-                        ));
-                    }
                 }
             }
         }
@@ -1198,19 +1159,19 @@ const Input = struct {
     controller: ?*c.SDL_GameController,
     controller_map: ControllerMap,
     keyboard_map: KeyboardMap,
-    state: ActionMap(ActionState) = ActionMap(ActionState).init(.{}),
+    state: std.EnumArray(Action, ActionState) = std.EnumArray(Action, ActionState).initFill(.{}),
 
     pub fn update(self: *@This()) void {
-        inline for (@typeInfo(@TypeOf(self.state)).Struct.fields) |field| {
+        inline for (comptime std.meta.tags(Action)) |action| {
             inline for (.{ Direction.positive, Direction.negative }) |direction| {
                 // Check if the keyboard or controller control is activated
-                const keyboard_action = @field(self.keyboard_map, field.name);
+                const keyboard_action = @field(self.keyboard_map, @tagName(action));
                 const key = if (@field(keyboard_action, @tagName(direction))) |key|
                     c.SDL_GetKeyboardState(null)[key] == 1
                 else
                     false;
 
-                const controller_action = @field(self.controller_map, field.name);
+                const controller_action = @field(self.controller_map, @tagName(action));
                 const button = if (@field(controller_action.buttons, @tagName(direction))) |button|
                     c.SDL_GameControllerGetButton(self.controller, button) != 0
                 else
@@ -1225,7 +1186,7 @@ const Input = struct {
                 } else false;
 
                 // Update the current state
-                const current_state = &@field(@field(self.state, field.name), @tagName(direction));
+                const current_state = &@field(self.state.getPtr(action), @tagName(direction));
 
                 if (key or button or axis) {
                     switch (current_state.*) {
@@ -1244,14 +1205,13 @@ const Input = struct {
 
     pub fn isAction(
         self: *const @This(),
-        comptime action: Action,
+        action: Action,
         direction: Direction,
         state: DirectionState,
     ) bool {
-        const action_name = comptime std.meta.fieldNames(@TypeOf(self.state))[@enumToInt(action)];
         const current_state = switch (direction) {
-            .positive => @field(self.state, action_name).positive,
-            .negative => @field(self.state, action_name).negative,
+            .positive => self.state.get(action).positive,
+            .negative => self.state.get(action).negative,
         };
         return switch (state) {
             .active => current_state == .active or current_state == .activated,
@@ -1261,7 +1221,7 @@ const Input = struct {
         };
     }
 
-    pub fn getAxis(self: *const @This(), comptime action: Action) f32 {
+    pub fn getAxis(self: *const @This(), action: Action) f32 {
         // TODO(mason): make most recent input take precedence on keyboard?
         return @intToFloat(f32, @boolToInt(self.isAction(action, .positive, .active))) -
             @intToFloat(f32, @boolToInt(self.isAction(action, .negative, .active)));
@@ -1320,7 +1280,7 @@ const Animation = struct {
         playing: bool = true,
         index: Index,
         /// number of seconds passed since Animation start.
-        time_passed: f32,
+        time_passed: f32 = 0,
         destroys_entity: bool = false,
     };
 };
@@ -1391,10 +1351,17 @@ const GrappleGun = struct {
 };
 
 const Transform = struct {
-    parent: ?EntityHandle = null,
+    // parent: ?EntityHandle = null,
     /// pixels, relative to parent
     pos: V = V{ .x = 0, .y = 0 },
     pos_world_cached: V = undefined,
+};
+
+const AnimateOnInput = struct {
+    action: Input.Action,
+    direction: Input.Direction,
+    activated: ?Animation.Index,
+    deactivated: ?Animation.Index,
 };
 
 const RigidBody = struct {
@@ -1457,9 +1424,6 @@ const Health = struct {
 };
 
 const Ship = struct {
-    still: Animation.Index,
-    accel: Animation.Index,
-
     /// radians per second
     turn_speed: f32,
     /// pixels per second squared
@@ -1578,17 +1542,15 @@ const Game = struct {
 
     fn createRanger(
         self: *const @This(),
-        entities: *Entities,
+        command_buffer: *CommandBuffer,
         player_index: u2,
         pos: V,
         angle: f32,
         input: Input,
-    ) EntityHandle {
-        return entities.create(.{
+    ) DeferredHandle {
+        return command_buffer.appendCreate(.{
             .ship = .{
                 .class = .ranger,
-                .still = self.ranger_animations.still,
-                .accel = self.ranger_animations.accel,
                 .turn_speed = math.pi * 1.0,
                 .thrust = 160,
                 .player = player_index,
@@ -1611,12 +1573,15 @@ const Game = struct {
                 .collision_damping = 0.4,
                 .layer = .vehicle,
             },
-            .animations = boundedArrayFromArray(Animation.Playback, 5, [_]Animation.Playback{
-                .{
-                    .index = self.ranger_animations.still,
-                    .time_passed = 0,
-                },
-            }),
+            .animation = .{
+                .index = self.ranger_animations.still,
+            },
+            .animate_on_input = .{
+                .action = .thrust_forward,
+                .direction = .positive,
+                .activated = self.ranger_animations.accel,
+                .deactivated = self.ranger_animations.still,
+            },
             .turrets = boundedArrayFromArray(Turret, 2, [_]Turret{
                 .{
                     .radius = self.ranger_radius,
@@ -1634,18 +1599,16 @@ const Game = struct {
 
     fn createTriangle(
         self: *const @This(),
-        entities: *Entities,
+        command_buffer: *CommandBuffer,
         player_index: u2,
         pos: V,
         angle: f32,
         input: Input,
-    ) EntityHandle {
+    ) DeferredHandle {
         const radius = 24;
-        return entities.create(.{
+        return command_buffer.appendCreate(.{
             .ship = .{
                 .class = .triangle,
-                .still = self.triangle_animations.still,
-                .accel = self.triangle_animations.accel,
                 .turn_speed = math.pi * 0.9,
                 .thrust = 250,
                 .player = player_index,
@@ -1669,12 +1632,15 @@ const Game = struct {
                 .collision_damping = 0.4,
                 .layer = .vehicle,
             },
-            .animations = boundedArrayFromArray(Animation.Playback, 5, [_]Animation.Playback{
-                .{
-                    .index = self.triangle_animations.still,
-                    .time_passed = 0,
-                },
-            }),
+            .animation = .{
+                .index = self.triangle_animations.still,
+            },
+            .animate_on_input = .{
+                .action = .thrust_forward,
+                .direction = .positive,
+                .activated = self.triangle_animations.accel,
+                .deactivated = self.triangle_animations.still,
+            },
             .turrets = boundedArrayFromArray(Turret, 2, [_]Turret{
                 .{
                     .radius = radius,
@@ -1692,17 +1658,15 @@ const Game = struct {
 
     fn createMilitia(
         self: *const @This(),
-        entities: *Entities,
+        command_buffer: *CommandBuffer,
         player_index: u2,
         pos: V,
         angle: f32,
         input: Input,
-    ) EntityHandle {
-        return entities.create(.{
+    ) DeferredHandle {
+        return command_buffer.appendCreate(.{
             .ship = .{
                 .class = .militia,
-                .still = self.militia_animations.still,
-                .accel = self.militia_animations.accel,
                 .turn_speed = math.pi * 1.4,
                 .thrust = 400,
                 .player = player_index,
@@ -1725,12 +1689,15 @@ const Game = struct {
                 .collision_damping = 0.4,
                 .layer = .vehicle,
             },
-            .animations = boundedArrayFromArray(Animation.Playback, 5, [_]Animation.Playback{
-                .{
-                    .index = self.militia_animations.still,
-                    .time_passed = 0,
-                },
-            }),
+            .animation = .{
+                .index = self.militia_animations.still,
+            },
+            .animate_on_input = .{
+                .action = .thrust_forward,
+                .direction = .positive,
+                .activated = self.militia_animations.accel,
+                .deactivated = self.militia_animations.still,
+            },
             // .grapple_gun = .{
             //     .radius = self.ranger_radius * 10.0,
             //     .angle = 0,
@@ -1747,17 +1714,15 @@ const Game = struct {
 
     fn createKevin(
         self: *const @This(),
-        entities: *Entities,
+        command_buffer: *CommandBuffer,
         player_index: u2,
         pos: V,
         angle: f32,
         input: Input,
-    ) EntityHandle {
-        return entities.create(.{
+    ) DeferredHandle {
+        return command_buffer.appendCreate(.{
             .ship = .{
                 .class = .kevin,
-                .still = self.kevin_animations.still,
-                .accel = self.kevin_animations.accel,
                 .turn_speed = math.pi * 1.1,
                 .thrust = 300,
                 .player = player_index,
@@ -1780,12 +1745,15 @@ const Game = struct {
                 .collision_damping = 0.4,
                 .layer = .vehicle,
             },
-            .animations = boundedArrayFromArray(Animation.Playback, 5, [_]Animation.Playback{
-                .{
-                    .index = self.kevin_animations.still,
-                    .time_passed = 0,
-                },
-            }),
+            .animation = .{
+                .index = self.kevin_animations.still,
+            },
+            .animate_on_input = .{
+                .action = .thrust_forward,
+                .direction = .positive,
+                .activated = self.kevin_animations.accel,
+                .deactivated = self.kevin_animations.still,
+            },
             .turrets = boundedArrayFromArray(Turret, 2, [_]Turret{
                 .{
                     .radius = 32,
@@ -1812,17 +1780,15 @@ const Game = struct {
 
     fn createWendy(
         self: *const @This(),
-        entities: *Entities,
+        command_buffer: *CommandBuffer,
         player_index: u2,
         pos: V,
         _: f32,
         input: Input,
-    ) EntityHandle {
-        return entities.create(.{
+    ) DeferredHandle {
+        const ship = command_buffer.appendCreate(.{
             .ship = .{
                 .class = .wendy,
-                .still = self.wendy_animations.still,
-                .accel = self.wendy_animations.still,
                 .turn_speed = math.pi * 1.0,
                 .thrust = 200,
                 .player = player_index,
@@ -1846,32 +1812,9 @@ const Game = struct {
                 .collision_damping = 0.4,
                 .layer = .vehicle,
             },
-            .animations = boundedArrayFromArray(Animation.Playback, 5, [_]Animation.Playback{
-                .{
-                    .index = self.wendy_animations.still,
-                    .time_passed = 0,
-                },
-                .{
-                    .playing = false,
-                    .index = self.wendy_animations.thrusters_left.?,
-                    .time_passed = 0,
-                },
-                .{
-                    .playing = false,
-                    .index = self.wendy_animations.thrusters_right.?,
-                    .time_passed = 0,
-                },
-                .{
-                    .playing = false,
-                    .index = self.wendy_animations.thrusters_bottom.?,
-                    .time_passed = 0,
-                },
-                .{
-                    .playing = false,
-                    .index = self.wendy_animations.thrusters_top.?,
-                    .time_passed = 0,
-                },
-            }),
+            .animation = .{
+                .index = self.wendy_animations.still,
+            },
             .turrets = boundedArrayFromArray(Turret, 2, [_]Turret{
                 .{
                     .radius = self.wendy_radius,
@@ -1887,6 +1830,92 @@ const Game = struct {
             }),
             .input = input,
         });
+
+        command_buffer.appendParent(command_buffer.appendCreate(.{
+            .transform = .{
+                .pos = V{ .x = 0, .y = 0 },
+            },
+            .rb = .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            },
+            .animate_on_input = .{
+                .action = .thrust_y,
+                .direction = .positive,
+                .activated = self.wendy_animations.thrusters_left.?,
+                .deactivated = null,
+            },
+            .animation = .{
+                .playing = false,
+                .index = self.wendy_animations.thrusters_left.?,
+            },
+            .input = input,
+        }), ship);
+
+        command_buffer.appendParent(command_buffer.appendCreate(.{
+            .transform = .{
+                .pos = V{ .x = 0, .y = 0 },
+            },
+            .rb = .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            },
+            .animate_on_input = .{
+                .action = .thrust_y,
+                .direction = .negative,
+                .activated = self.wendy_animations.thrusters_right.?,
+                .deactivated = null,
+            },
+            .animation = .{
+                .playing = false,
+                .index = self.wendy_animations.thrusters_right.?,
+            },
+            .input = input,
+        }), ship);
+
+        command_buffer.appendParent(command_buffer.appendCreate(.{
+            .transform = .{
+                .pos = V{ .x = 0, .y = 0 },
+            },
+            .rb = .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            },
+            .animate_on_input = .{
+                .action = .thrust_x,
+                .direction = .negative,
+                .activated = self.wendy_animations.thrusters_top.?,
+                .deactivated = null,
+            },
+            .animation = .{
+                .playing = false,
+                .index = self.wendy_animations.thrusters_top.?,
+            },
+            .input = input,
+        }), ship);
+
+        command_buffer.appendParent(command_buffer.appendCreate(.{
+            .transform = .{
+                .pos = V{ .x = 0, .y = 0 },
+            },
+            .rb = .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            },
+            .animate_on_input = .{
+                .action = .thrust_x,
+                .direction = .positive,
+                .activated = self.wendy_animations.thrusters_bottom.?,
+                .deactivated = null,
+            },
+            .animation = .{
+                .playing = false,
+                .index = self.wendy_animations.thrusters_bottom.?,
+            },
+            .input = input,
+        }), ship);
+
+        return ship;
     }
 
     fn init(assets: *Assets) !Game {
@@ -2121,22 +2150,22 @@ const Game = struct {
 
     fn createShip(
         game: *Game,
-        entities: *Entities,
+        command_buffer: *CommandBuffer,
         player_index: u2,
         pos: V,
         angle: f32,
         input: Input,
-    ) EntityHandle {
+    ) DeferredHandle {
         const player = game.players[player_index];
         const team = &game.teams[player.team];
         const progression_index = team.ship_progression_index;
         team.ship_progression_index += 1;
         return switch (team.ship_progression[progression_index]) {
-            .ranger => game.createRanger(entities, player_index, pos, angle, input),
-            .militia => game.createMilitia(entities, player_index, pos, angle, input),
-            .triangle => game.createTriangle(entities, player_index, pos, angle, input),
-            .kevin => game.createKevin(entities, player_index, pos, angle, input),
-            .wendy => game.createWendy(entities, player_index, pos, angle, input),
+            .ranger => game.createRanger(command_buffer, player_index, pos, angle, input),
+            .militia => game.createMilitia(command_buffer, player_index, pos, angle, input),
+            .triangle => game.createTriangle(command_buffer, player_index, pos, angle, input),
+            .kevin => game.createKevin(command_buffer, player_index, pos, angle, input),
+            .wendy => game.createWendy(command_buffer, player_index, pos, angle, input),
         };
     }
 
@@ -2170,8 +2199,8 @@ const Game = struct {
         royale_4p,
     };
 
-    fn setupScenario(game: *Game, entities: *Entities, scenario: Scenario) void {
-        entities.clearRetainingCapacity();
+    fn setupScenario(game: *Game, command_buffer: *CommandBuffer, scenario: Scenario) void {
+        command_buffer.entities.clearRetainingCapacity();
 
         switch (scenario) {
             .deathmatch_2v2,
@@ -2366,7 +2395,7 @@ const Game = struct {
                 const angle = math.pi / 2.0 * @intToFloat(f32, i);
                 const pos = display_center.plus(V.unit(angle).scaled(50));
                 const player_index = @intCast(u2, i);
-                _ = game.createShip(entities, player_index, pos, angle, input);
+                _ = game.createShip(command_buffer, player_index, pos, angle, input);
             }
         }
 
@@ -2387,7 +2416,7 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, std.crypto.random.float(f32)))
                 .plus(display_center);
 
-            _ = entities.create(.{
+            _ = command_buffer.appendCreate(.{
                 .sprite = sprite,
                 .transform = .{
                     .pos = pos,

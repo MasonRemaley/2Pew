@@ -19,6 +19,10 @@ pub fn HandleType(comptime Index: type, comptime Generation: type) type {
     return struct {
         index: Index,
         generation: Generation,
+
+        pub fn eql(lhs: @This(), rhs: @This()) bool {
+            return std.meta.eql(lhs, rhs);
+        }
     };
 }
 
