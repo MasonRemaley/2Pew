@@ -48,12 +48,12 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.override_dest_dir = .prefix;
-    exe.install();
+    b.installArtifact(exe);
 
     // This *creates* a RunStep in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.
-    const run_cmd = exe.run();
+    const run_cmd = b.addRunArtifact(exe);
 
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
@@ -88,9 +88,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     bench_exe.override_dest_dir = .prefix;
-    bench_exe.install();
+    b.installArtifact(bench_exe);
     const bench_step = b.step("bench", "Run benchmarks");
-    const bench_cmd = bench_exe.run();
+    const bench_cmd = b.addRunArtifact(bench_exe);
     bench_step.dependOn(&bench_cmd.step);
 
     // Similar to creating the run step earlier, this exposes a `test` step to

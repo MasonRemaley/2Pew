@@ -515,13 +515,13 @@ pub fn ComponentFlags(comptime T: type) type {
                     }
                 }
                 return self;
-            } else comptime {
+            } else return comptime blk: {
                 var self = Self{};
                 for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
                     self.setName(field.name);
                 }
-                return self;
-            }
+                break :blk self;
+            };
         }
 
         pub fn initFromIteratorDescriptorRequired(descriptor: IteratorDescriptor(T)) Self {
