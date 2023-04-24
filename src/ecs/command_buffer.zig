@@ -19,7 +19,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
             parent_capacity: usize,
         };
 
-        const Prefab = ecs.entities.Prefab(Entities);
+        const PrefabEntity = ecs.entities.PrefabEntity(Entities);
         const ArchetypeChange = ecs.entities.ArchetypeChange(Entities);
         const ArchetypeChangeCommand = struct {
             handle: Handle,
@@ -31,7 +31,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
         };
 
         entities: *Entities,
-        create: BoundedArrayList(Prefab),
+        create: BoundedArrayList(PrefabEntity),
         remove: BoundedArrayList(Handle),
         arch_change: BoundedArrayList(ArchetypeChangeCommand),
         parent: BoundedArrayList(ParentCommand),
@@ -39,7 +39,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
         created: BoundedArrayList(Handle),
 
         pub fn init(allocator: Allocator, entities: *Entities, desc: Descriptor) Allocator.Error!@This() {
-            var create = try BoundedArrayList(Prefab).init(allocator, desc.create_capacity);
+            var create = try BoundedArrayList(PrefabEntity).init(allocator, desc.create_capacity);
             errdefer create.deinit(allocator);
 
             var remove = try BoundedArrayList(Handle).init(allocator, desc.remove_capacity);
@@ -79,12 +79,12 @@ pub fn CommandBuffer(comptime Entities: type) type {
             self.parent.clearRetainingCapacity();
         }
 
-        pub fn appendCreate(self: *@This(), prefab: Prefab) DeferredHandle {
+        pub fn appendCreate(self: *@This(), prefab: PrefabEntity) DeferredHandle {
             return self.appendCreateChecked(prefab) catch |err|
                 std.debug.panic("append create failed: {}", .{err});
         }
 
-        pub fn appendCreateChecked(self: *@This(), prefab: Prefab) Allocator.Error!DeferredHandle {
+        pub fn appendCreateChecked(self: *@This(), prefab: PrefabEntity) Allocator.Error!DeferredHandle {
             const handle = DeferredHandle{ .index = self.create.items.len };
             try self.create.append(prefab);
             return handle;

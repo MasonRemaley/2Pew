@@ -235,7 +235,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         fn setComponents(pointer: *const EntityPointer(Self), components: anytype) void {
             inline for (@typeInfo(@TypeOf(components)).Struct.fields) |f| {
-                if (@TypeOf(components) == Prefab(Self)) {
+                if (@TypeOf(components) == PrefabEntity(Self)) {
                     if (@field(components, f.name)) |component| {
                         pointer.archetype_list.getComponentUnchecked(pointer.index, componentTag(f.name)).* = component;
                     }
@@ -507,7 +507,7 @@ pub fn ComponentFlags(comptime T: type) type {
         }
 
         pub fn initFromComponents(components: anytype) Self {
-            if (@TypeOf(components) == Prefab(T)) {
+            if (@TypeOf(components) == PrefabEntity(T)) {
                 var self = Self{};
                 inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
                     if (@field(components, field.name) != null) {
@@ -609,7 +609,7 @@ test "basic" {
     try std.testing.expect(iter.next() == null);
 }
 
-pub fn Prefab(comptime T: type) type {
+pub fn PrefabEntity(comptime T: type) type {
     return ComponentMap(T, .Auto, struct {
         fn FieldType(comptime _: T.ComponentTag, comptime C: type) type {
             return ?C;
@@ -627,7 +627,7 @@ pub fn Prefab(comptime T: type) type {
 
 pub fn ArchetypeChange(comptime T: type) type {
     return struct {
-        add: Prefab(T),
+        add: PrefabEntity(T),
         remove: ComponentFlags(T),
     };
 }
@@ -1652,20 +1652,20 @@ test "minimal iter test" {
     }
 }
 
-test "prefabs" {
+test "prefab entities" {
     var allocator = std.testing.allocator;
 
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
     defer entities.deinit();
 
-    var prefab: Prefab(@TypeOf(entities)) = .{ .y = 10, .z = 20 };
+    var prefab: PrefabEntity(@TypeOf(entities)) = .{ .y = 10, .z = 20 };
     var instance = entities.create(prefab);
 
     try std.testing.expect(entities.getComponent(instance, .x) == null);
     try std.testing.expect(entities.getComponent(instance, .y).?.* == 10);
     try std.testing.expect(entities.getComponent(instance, .z).?.* == 20);
 
-    entities.addComponents(instance, Prefab(@TypeOf(entities)){ .x = 30 });
+    entities.addComponents(instance, PrefabEntity(@TypeOf(entities)){ .x = 30 });
     try std.testing.expect(entities.getComponent(instance, .x).?.* == 30);
     try std.testing.expect(entities.getComponent(instance, .y).?.* == 10);
     try std.testing.expect(entities.getComponent(instance, .z).?.* == 20);
