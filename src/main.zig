@@ -42,6 +42,7 @@ const Entities = ecs.entities.Entities(.{
 const PrefabEntity = ecs.entities.PrefabEntity(Entities);
 const EntityHandle = ecs.entities.Handle;
 const DeferredHandle = ecs.command_buffer.DeferredHandle;
+const PrefabHandle = ecs.prefab.PrefabHandle;
 const ComponentFlags = ecs.entities.ComponentFlags(Entities);
 const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
 const parenting = ecs.parenting;
@@ -109,11 +110,8 @@ pub fn main() !void {
 
     var command_buffer = try CommandBuffer.init(allocator, &entities, .{
         .prefab_entity_capacity = 8192,
-        .prefab_capacity = 8192,
-        .create_capacity = 8192,
         .remove_capacity = 8192,
         .arch_change_capacity = 8192,
-        .parent_capacity = 8192,
     });
     defer command_buffer.deinit(allocator);
 
@@ -315,23 +313,25 @@ fn update(
                     const base_vel = if (std.crypto.random.boolean()) entity.rb.vel else other.rb.vel;
                     const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
-                    _ = command_buffer.appendCreate(.{
-                        .lifetime = .{
-                            .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
-                        },
-                        .transform = .{
-                            .pos = shrapnel_center.plus(random_offset),
-                            .angle = 2 * math.pi * std.crypto.random.float(f32),
-                        },
-                        .rb = .{
-                            .vel = avg_vel.plus(random_vel),
-                            .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                            .radius = game.animationRadius(shrapnel_animation),
-                            .density = 0.001,
-                        },
-                        .animation = .{
-                            .index = shrapnel_animation,
-                            .destroys_entity = true,
+                    _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+                        .{
+                            .lifetime = .{
+                                .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
+                            },
+                            .transform = .{
+                                .pos = shrapnel_center.plus(random_offset),
+                                .angle = 2 * math.pi * std.crypto.random.float(f32),
+                            },
+                            .rb = .{
+                                .vel = avg_vel.plus(random_vel),
+                                .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                                .radius = game.animationRadius(shrapnel_animation),
+                                .density = 0.001,
+                            },
+                            .animation = .{
+                                .index = shrapnel_animation,
+                                .destroys_entity = true,
+                            },
                         },
                     });
                 }
@@ -485,23 +485,25 @@ fn update(
                         ];
                         const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
-                        _ = command_buffer.appendCreate(.{
-                            .lifetime = .{
-                                .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
-                            },
-                            .transform = .{
-                                .pos = health_entity.transform.pos,
-                                .angle = 2 * math.pi * std.crypto.random.float(f32),
-                            },
-                            .rb = .{
-                                .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
-                                .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                                .radius = game.animationRadius(shrapnel_animation),
-                                .density = 0.001,
-                            },
-                            .animation = .{
-                                .index = shrapnel_animation,
-                                .destroys_entity = true,
+                        _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+                            .{
+                                .lifetime = .{
+                                    .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
+                                },
+                                .transform = .{
+                                    .pos = health_entity.transform.pos,
+                                    .angle = 2 * math.pi * std.crypto.random.float(f32),
+                                },
+                                .rb = .{
+                                    .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
+                                    .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                                    .radius = game.animationRadius(shrapnel_animation),
+                                    .density = 0.001,
+                                },
+                                .animation = .{
+                                    .index = shrapnel_animation,
+                                    .destroys_entity = true,
+                                },
                             },
                         });
 
@@ -528,22 +530,24 @@ fn update(
             if (entity.health.hp <= 0) {
                 // spawn explosion here
                 if (entity.transform) |trans| {
-                    _ = command_buffer.appendCreate(.{
-                        .lifetime = .{
-                            .seconds = 100,
-                        },
-                        .transform = .{
-                            .pos = trans.pos,
-                        },
-                        .rb = .{
-                            .vel = if (entity.rb) |rb| rb.vel else .{ .x = 0, .y = 0 },
-                            .rotation_vel = 0,
-                            .radius = 32,
-                            .density = 0.001,
-                        },
-                        .animation = .{
-                            .index = game.explosion_animation,
-                            .destroys_entity = true,
+                    _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+                        .{
+                            .lifetime = .{
+                                .seconds = 100,
+                            },
+                            .transform = .{
+                                .pos = trans.pos,
+                            },
+                            .rb = .{
+                                .vel = if (entity.rb) |rb| rb.vel else .{ .x = 0, .y = 0 },
+                                .rotation_vel = 0,
+                                .radius = 32,
+                                .density = 0.001,
+                            },
+                            .animation = .{
+                                .index = game.explosion_animation,
+                                .destroys_entity = true,
+                            },
                         },
                     });
                 }
@@ -826,7 +830,7 @@ fn update(
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                command_buffer.appendInstantiate(&[_]PrefabEntity{
+                _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
                     .{
                         .damage = .{
                             .hp = entity.turret.projectile_damage,
@@ -1545,51 +1549,53 @@ const Game = struct {
         pos: V,
         angle: f32,
         input: Input,
-    ) DeferredHandle {
-        return command_buffer.appendCreate(.{
-            .ship = .{
-                .class = .ranger,
-                .turn_speed = math.pi * 1.0,
-                .thrust = 160,
-                .player = player_index,
+    ) PrefabHandle {
+        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+            .{
+                .ship = .{
+                    .class = .ranger,
+                    .turn_speed = math.pi * 1.0,
+                    .thrust = 160,
+                    .player = player_index,
+                },
+                .health = .{
+                    .hp = 80,
+                    .max_hp = 80,
+                },
+                .transform = .{
+                    .pos = pos,
+                    .angle = angle,
+                },
+                .rb = .{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .radius = self.ranger_radius,
+                    .rotation_vel = 0.0,
+                    .density = 0.02,
+                },
+                .collider = .{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                .animation = .{
+                    .index = self.ranger_animations.still,
+                },
+                .animate_on_input = .{
+                    .action = .thrust_forward,
+                    .direction = .positive,
+                    .activated = self.ranger_animations.accel,
+                    .deactivated = self.ranger_animations.still,
+                },
+                .turret = .{
+                    .angle = 0,
+                    .radius = self.ranger_radius,
+                    .cooldown = .{ .time = .{ .max_s = 0.1 } },
+                    .projectile_speed = 550,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 6,
+                    .projectile_radius = 8,
+                },
+                .input = input,
             },
-            .health = .{
-                .hp = 80,
-                .max_hp = 80,
-            },
-            .transform = .{
-                .pos = pos,
-                .angle = angle,
-            },
-            .rb = .{
-                .vel = .{ .x = 0, .y = 0 },
-                .radius = self.ranger_radius,
-                .rotation_vel = 0.0,
-                .density = 0.02,
-            },
-            .collider = .{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            .animation = .{
-                .index = self.ranger_animations.still,
-            },
-            .animate_on_input = .{
-                .action = .thrust_forward,
-                .direction = .positive,
-                .activated = self.ranger_animations.accel,
-                .deactivated = self.ranger_animations.still,
-            },
-            .turret = .{
-                .angle = 0,
-                .radius = self.ranger_radius,
-                .cooldown = .{ .time = .{ .max_s = 0.1 } },
-                .projectile_speed = 550,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 6,
-                .projectile_radius = 8,
-            },
-            .input = input,
         });
     }
 
@@ -1600,53 +1606,55 @@ const Game = struct {
         pos: V,
         angle: f32,
         input: Input,
-    ) DeferredHandle {
+    ) PrefabHandle {
         const radius = 24;
-        return command_buffer.appendCreate(.{
-            .ship = .{
-                .class = .triangle,
-                .turn_speed = math.pi * 0.9,
-                .thrust = 250,
-                .player = player_index,
+        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+            .{
+                .ship = .{
+                    .class = .triangle,
+                    .turn_speed = math.pi * 0.9,
+                    .thrust = 250,
+                    .player = player_index,
+                },
+                .health = .{
+                    .hp = 100,
+                    .max_hp = 100,
+                    .regen_ratio = 0.5,
+                },
+                .transform = .{
+                    .pos = pos,
+                    .angle = angle,
+                },
+                .rb = .{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .radius = 26,
+                    .rotation_vel = 0.0,
+                    .density = 0.02,
+                },
+                .collider = .{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                .animation = .{
+                    .index = self.triangle_animations.still,
+                },
+                .animate_on_input = .{
+                    .action = .thrust_forward,
+                    .direction = .positive,
+                    .activated = self.triangle_animations.accel,
+                    .deactivated = self.triangle_animations.still,
+                },
+                .turret = .{
+                    .angle = 0,
+                    .radius = radius,
+                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                    .projectile_speed = 700,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 12,
+                    .projectile_radius = 12,
+                },
+                .input = input,
             },
-            .health = .{
-                .hp = 100,
-                .max_hp = 100,
-                .regen_ratio = 0.5,
-            },
-            .transform = .{
-                .pos = pos,
-                .angle = angle,
-            },
-            .rb = .{
-                .vel = .{ .x = 0, .y = 0 },
-                .radius = 26,
-                .rotation_vel = 0.0,
-                .density = 0.02,
-            },
-            .collider = .{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            .animation = .{
-                .index = self.triangle_animations.still,
-            },
-            .animate_on_input = .{
-                .action = .thrust_forward,
-                .direction = .positive,
-                .activated = self.triangle_animations.accel,
-                .deactivated = self.triangle_animations.still,
-            },
-            .turret = .{
-                .angle = 0,
-                .radius = radius,
-                .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                .projectile_speed = 700,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 12,
-                .projectile_radius = 12,
-            },
-            .input = input,
         });
     }
 
@@ -1657,52 +1665,54 @@ const Game = struct {
         pos: V,
         angle: f32,
         input: Input,
-    ) DeferredHandle {
-        return command_buffer.appendCreate(.{
-            .ship = .{
-                .class = .militia,
-                .turn_speed = math.pi * 1.4,
-                .thrust = 400,
-                .player = player_index,
+    ) PrefabHandle {
+        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+            .{
+                .ship = .{
+                    .class = .militia,
+                    .turn_speed = math.pi * 1.4,
+                    .thrust = 400,
+                    .player = player_index,
+                },
+                .health = .{
+                    .hp = 80,
+                    .max_hp = 80,
+                },
+                .transform = .{
+                    .pos = pos,
+                    .angle = angle,
+                },
+                .rb = .{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .rotation_vel = 0.0,
+                    .radius = self.militia_radius,
+                    .density = 0.06,
+                },
+                .collider = .{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                .animation = .{
+                    .index = self.militia_animations.still,
+                },
+                .animate_on_input = .{
+                    .action = .thrust_forward,
+                    .direction = .positive,
+                    .activated = self.militia_animations.accel,
+                    .deactivated = self.militia_animations.still,
+                },
+                // .grapple_gun = .{
+                //     .radius = self.ranger_radius * 10.0,
+                //     .angle = 0,
+                //     .cooldown_s = 0,
+                //     .max_cooldown_s = 0.2,
+                //     // TODO: when nonzero, causes the ship to move. wouldn't happen if there was equal
+                //     // kickback!
+                //     .projectile_speed = 0,
+                // },
+                .input = input,
+                .front_shield = .{},
             },
-            .health = .{
-                .hp = 80,
-                .max_hp = 80,
-            },
-            .transform = .{
-                .pos = pos,
-                .angle = angle,
-            },
-            .rb = .{
-                .vel = .{ .x = 0, .y = 0 },
-                .rotation_vel = 0.0,
-                .radius = self.militia_radius,
-                .density = 0.06,
-            },
-            .collider = .{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            .animation = .{
-                .index = self.militia_animations.still,
-            },
-            .animate_on_input = .{
-                .action = .thrust_forward,
-                .direction = .positive,
-                .activated = self.militia_animations.accel,
-                .deactivated = self.militia_animations.still,
-            },
-            // .grapple_gun = .{
-            //     .radius = self.ranger_radius * 10.0,
-            //     .angle = 0,
-            //     .cooldown_s = 0,
-            //     .max_cooldown_s = 0.2,
-            //     // TODO: when nonzero, causes the ship to move. wouldn't happen if there was equal
-            //     // kickback!
-            //     .projectile_speed = 0,
-            // },
-            .input = input,
-            .front_shield = .{},
         });
     }
 
@@ -1713,79 +1723,84 @@ const Game = struct {
         pos: V,
         angle: f32,
         input: Input,
-    ) DeferredHandle {
+    ) PrefabHandle {
+        const ship_handle = ecs.prefab.createHandle(@intCast(u20, command_buffer.prefab_entities.items.len));
+
         const radius = 32;
-        const ship = command_buffer.appendCreate(.{
-            .ship = .{
-                .class = .kevin,
-                .turn_speed = math.pi * 1.1,
-                .thrust = 300,
-                .player = player_index,
+        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+            .{
+                .ship = .{
+                    .class = .kevin,
+                    .turn_speed = math.pi * 1.1,
+                    .thrust = 300,
+                    .player = player_index,
+                },
+                .health = .{
+                    .hp = 300,
+                    .max_hp = 300,
+                },
+                .transform = .{
+                    .pos = pos,
+                    .angle = angle,
+                },
+                .rb = .{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .radius = radius,
+                    .rotation_vel = 0.0,
+                    .density = 0.02,
+                },
+                .collider = .{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                .animation = .{
+                    .index = self.kevin_animations.still,
+                },
+                .animate_on_input = .{
+                    .action = .thrust_forward,
+                    .direction = .positive,
+                    .activated = self.kevin_animations.accel,
+                    .deactivated = self.kevin_animations.still,
+                },
+                .input = input,
             },
-            .health = .{
-                .hp = 300,
-                .max_hp = 300,
+            .{
+                .parent = ship_handle.relative,
+                .turret = .{
+                    .radius = 32,
+                    .angle = math.pi * 0.1,
+                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                    .projectile_speed = 500,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 18,
+                    .projectile_radius = 18,
+                },
+                .input = input,
+                .rb = .{
+                    .radius = radius,
+                    .density = std.math.inf(f32),
+                },
+                .transform = .{},
             },
-            .transform = .{
-                .pos = pos,
-                .angle = angle,
+            .{
+                .parent = ship_handle.relative,
+                .turret = .{
+                    .radius = radius,
+                    .angle = math.pi * -0.1,
+                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                    .projectile_speed = 500,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 18,
+                    .projectile_radius = 18,
+                },
+                .input = input,
+                .rb = .{
+                    .radius = radius,
+                    .density = std.math.inf(f32),
+                },
+                .transform = .{},
             },
-            .rb = .{
-                .vel = .{ .x = 0, .y = 0 },
-                .radius = radius,
-                .rotation_vel = 0.0,
-                .density = 0.02,
-            },
-            .collider = .{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            .animation = .{
-                .index = self.kevin_animations.still,
-            },
-            .animate_on_input = .{
-                .action = .thrust_forward,
-                .direction = .positive,
-                .activated = self.kevin_animations.accel,
-                .deactivated = self.kevin_animations.still,
-            },
-            .input = input,
         });
-        command_buffer.appendParent(command_buffer.appendCreate(.{
-            .turret = .{
-                .radius = 32,
-                .angle = math.pi * 0.1,
-                .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                .projectile_speed = 500,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 18,
-                .projectile_radius = 18,
-            },
-            .input = input,
-            .rb = .{
-                .radius = radius,
-                .density = std.math.inf(f32),
-            },
-            .transform = .{},
-        }), ship);
-        command_buffer.appendParent(command_buffer.appendCreate(.{
-            .turret = .{
-                .radius = radius,
-                .angle = math.pi * -0.1,
-                .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                .projectile_speed = 500,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 18,
-                .projectile_radius = 18,
-            },
-            .input = input,
-            .rb = .{
-                .radius = radius,
-                .density = std.math.inf(f32),
-            },
-            .transform = .{},
-        }), ship);
-        return ship;
     }
 
     fn createWendy(
@@ -1795,13 +1810,16 @@ const Game = struct {
         pos: V,
         _: f32,
         input: Input,
-    ) DeferredHandle {
+    ) PrefabHandle {
+        // XXX: don't let us instantiate prefabs that create infinite loops of entities somehow? or at least catch it
+        // and crash or break the loop etc
         // XXX: make a fancier helper that lets us like, spawn a bunch of handles, and then set each one at
         // a time, to avoid getting handles mixed up? Or any other nice way to do this? There may also be some
         // comptime transformation we can do that makes this possible with a less error prone sytnax etc. The data
         // doesn't have ot be comptime just the transformation of pointers or whatever idk.
-        const ship = ecs.prefab.createHandle(0);
-        command_buffer.appendInstantiate(&[_]PrefabEntity{
+        // XXX: cast...
+        const ship_handle = ecs.prefab.createHandle(@intCast(u20, command_buffer.prefab_entities.items.len));
+        return command_buffer.appendInstantiate(&[_]PrefabEntity{
             .{
                 .ship = .{
                     .class = .wendy,
@@ -1844,7 +1862,7 @@ const Game = struct {
                 .input = input,
             },
             .{
-                .parent = ship,
+                .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
                     .radius = self.wendy_radius,
@@ -1862,7 +1880,7 @@ const Game = struct {
                 .input = input,
             },
             .{
-                .parent = ship,
+                .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
                     .radius = self.wendy_radius,
@@ -1880,7 +1898,7 @@ const Game = struct {
                 .input = input,
             },
             .{
-                .parent = ship,
+                .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
                     .radius = self.wendy_radius,
@@ -1898,7 +1916,7 @@ const Game = struct {
                 .input = input,
             },
             .{
-                .parent = ship,
+                .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
                     .radius = self.wendy_radius,
@@ -1916,8 +1934,6 @@ const Game = struct {
                 .input = input,
             },
         });
-        // XXX: ...
-        return undefined;
     }
 
     fn init(assets: *Assets) !Game {
@@ -2157,7 +2173,7 @@ const Game = struct {
         pos: V,
         angle: f32,
         input: Input,
-    ) DeferredHandle {
+    ) PrefabHandle {
         const player = game.players[player_index];
         const team = &game.teams[player.team];
         const progression_index = team.ship_progression_index;
@@ -2421,20 +2437,22 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, std.crypto.random.float(f32)))
                 .plus(display_center);
 
-            _ = command_buffer.appendCreate(.{
-                .sprite = sprite,
-                .transform = .{
-                    .pos = pos,
-                },
-                .rb = .{
-                    .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                    .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
-                    .radius = radius,
-                    .density = 0.10,
-                },
-                .collider = .{
-                    .collision_damping = 1,
-                    .layer = .hazard,
+            _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+                .{
+                    .sprite = sprite,
+                    .transform = .{
+                        .pos = pos,
+                    },
+                    .rb = .{
+                        .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
+                        .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+                        .radius = radius,
+                        .density = 0.10,
+                    },
+                    .collider = .{
+                        .collision_damping = 1,
+                        .layer = .hazard,
+                    },
                 },
             });
         }
