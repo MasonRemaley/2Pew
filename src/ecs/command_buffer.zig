@@ -14,6 +14,8 @@ pub const DeferredHandle = union(enum) {
 pub fn CommandBuffer(comptime Entities: type) type {
     return struct {
         pub const Descriptor = struct {
+            prefab_entity_capacity: usize,
+            prefab_capacity: usize,
             create_capacity: usize,
             remove_capacity: usize,
             arch_change_capacity: usize,
@@ -32,6 +34,11 @@ pub fn CommandBuffer(comptime Entities: type) type {
         };
 
         entities: *Entities,
+        prefab_entities: ArrayListUnmanaged(PrefabEntity),
+        prefab_lens: ArrayListUnmanaged(usize),
+        // XXX: remove all references to create once all moved to new system!
+        // XXX: remove all deferred handle stuff too then (can defer appending the prefab len if we really need
+        // that to work.)
         create: ArrayListUnmanaged(PrefabEntity),
         remove: ArrayListUnmanaged(Handle),
         arch_change: ArrayListUnmanaged(ArchetypeChangeCommand),
@@ -40,6 +47,12 @@ pub fn CommandBuffer(comptime Entities: type) type {
         created: ArrayListUnmanaged(Handle),
 
         pub fn init(allocator: Allocator, entities: *Entities, desc: Descriptor) Allocator.Error!@This() {
+            var prefab_entities = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, desc.prefab_entity_capacity);
+            errdefer prefab_entities.deinit(allocator);
+
+            var prefab_lens = try ArrayListUnmanaged(usize).initCapacity(allocator, desc.prefab_capacity);
+            errdefer prefab_lens.deinit(allocator);
+
             var create = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, desc.create_capacity);
             errdefer create.deinit(allocator);
 
@@ -57,6 +70,8 @@ pub fn CommandBuffer(comptime Entities: type) type {
 
             return .{
                 .entities = entities,
+                .prefab_entities = prefab_entities,
+                .prefab_lens = prefab_lens,
                 .create = create,
                 .remove = remove,
                 .arch_change = arch_change,
@@ -66,6 +81,8 @@ pub fn CommandBuffer(comptime Entities: type) type {
         }
 
         pub fn deinit(self: *@This(), allocator: Allocator) void {
+            self.prefab_entities.deinit(allocator);
+            self.prefab_lens.deinit(allocator);
             self.create.deinit(allocator);
             self.remove.deinit(allocator);
             self.arch_change.deinit(allocator);
@@ -74,10 +91,24 @@ pub fn CommandBuffer(comptime Entities: type) type {
         }
 
         pub fn clearRetainingCapacity(self: *@This()) void {
+            self.prefab_entities.clearRetainingCapacity();
+            self.prefab_lens.clearRetainingCapacity();
             self.create.clearRetainingCapacity();
             self.remove.clearRetainingCapacity();
             self.arch_change.clearRetainingCapacity();
             self.parent.clearRetainingCapacity();
+        }
+
+        // XXX: make fancier lower level interface that lets you append sizes and individual prefab entities
+        // seprately, and call that from here? or can just access the fields directly for that..?
+        pub fn appendInstantiate(self: *@This(), prefab: []const PrefabEntity) void {
+            self.appendInstantiateChecked(prefab) catch |err|
+                std.debug.panic("append instantiate failed: {}", .{err});
+        }
+
+        pub fn appendInstantiateChecked(self: *@This(), prefab: []const PrefabEntity) Allocator.Error!void {
+            try self.prefab_entities.appendSlice(NoAlloc, prefab);
+            try self.prefab_lens.append(NoAlloc, prefab.len);
         }
 
         pub fn appendCreate(self: *@This(), prefab: PrefabEntity) DeferredHandle {
@@ -178,6 +209,20 @@ pub fn CommandBuffer(comptime Entities: type) type {
                     // We still want to report out of memory errors!
                     error.OutOfMemory => return error.OutOfMemory,
                 };
+            }
+
+            // Instantiate prefabs
+            {
+                // XXX: temp gpa...
+                var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+                defer _ = gpa.deinit();
+
+                var end: usize = 0;
+                for (self.prefab_lens.items) |len| {
+                    const start = end;
+                    end += len;
+                    try ecs.prefab.instantiateChecked(gpa.allocator(), self.entities, self.prefab_entities.items[start..end]);
+                }
             }
 
             // Execute creations

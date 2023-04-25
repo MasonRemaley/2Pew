@@ -108,6 +108,8 @@ pub fn main() !void {
     defer entities.deinit();
 
     var command_buffer = try CommandBuffer.init(allocator, &entities, .{
+        .prefab_entity_capacity = 8192,
+        .prefab_capacity = 8192,
         .create_capacity = 8192,
         .remove_capacity = 8192,
         .arch_change_capacity = 8192,
@@ -824,37 +826,7 @@ fn update(
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                // _ = command_buffer.appendCreate(.{
-                //     .damage = .{
-                //         .hp = entity.turret.projectile_damage,
-                //     },
-                //     .transform = .{
-                //         .pos = fire_pos,
-                //         .angle = vel.angle() + math.pi / 2.0,
-                //     },
-                //     .rb = .{
-                //         .vel = vel,
-                //         .rotation_vel = 0,
-                //         .radius = entity.turret.projectile_radius,
-                //         // TODO(mason): modify math to accept 0 and inf mass
-                //         .density = entity.turret.projectile_density,
-                //     },
-                //     .sprite = sprite,
-                //     .collider = .{
-                //         // Lasers gain energy when bouncing off of rocks
-                //         .collision_damping = 1,
-                //         .layer = .projectile,
-                //     },
-                //     .lifetime = .{
-                //         .seconds = entity.turret.projectile_lifetime,
-                //     },
-                // });
-                // XXX: call with tempo allocator...
-                var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-                defer _ = gpa.deinit();
-                // XXX: can i use Prefab alias here or no?
-                // XXX: error handling...
-                ecs.prefab.instantiate(gpa.allocator(), entities, &[_]PrefabEntity{
+                command_buffer.appendInstantiate(&[_]PrefabEntity{
                     .{
                         .damage = .{
                             .hp = entity.turret.projectile_damage,
@@ -1824,249 +1796,126 @@ const Game = struct {
         _: f32,
         input: Input,
     ) DeferredHandle {
-        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        defer _ = gpa.deinit();
-        // XXX: can i use Prefab alias here or no?
-        // XXX: error handling...
-        {
-            // XXX: generate indices with function that sets generation?
-            // XXX: make a fancier helper that lets us like, spawn a bunch of handles, and then set each one at
-            // a time, to avoid getting handles mixed up? Or any other nice way to do this? There may also be some
-            // comptime transformation we can do that makes this possible with a less error prone sytnax etc. The data
-            // doesn't have ot be comptime just the transformation of pointers or whatever idk.
-            const ship = ecs.prefab.createHandle(0);
-            ecs.prefab.instantiate(gpa.allocator(), command_buffer.entities, &[_]PrefabEntity{
-                .{
-                    .ship = .{
-                        .class = .wendy,
-                        .turn_speed = math.pi * 1.0,
-                        .thrust = 200,
-                        .player = player_index,
-                        .omnithrusters = true,
-                    },
-                    .health = .{
-                        .hp = 400,
-                        .max_hp = 400,
-                    },
-                    .transform = .{
-                        .pos = pos,
-                    },
-                    .rb = .{
-                        .vel = .{ .x = 0, .y = 0 },
-                        .radius = self.wendy_radius,
-                        .rotation_vel = 0.0,
-                        .density = 0.02,
-                    },
-                    .collider = .{
-                        .collision_damping = 0.4,
-                        .layer = .vehicle,
-                    },
-                    .animation = .{
-                        .index = self.wendy_animations.still,
-                    },
-                    .turret = .{
-                        .radius = self.wendy_radius,
-                        .angle = 0,
-                        .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
-                        .projectile_speed = 0,
-                        .projectile_lifetime = 5.0,
-                        .projectile_damage = 50,
-                        .projectile_radius = 8,
-                        .projectile_density = std.math.inf(f32),
-                        .aim_opposite_movement = true,
-                    },
-                    .input = input,
+        // XXX: make a fancier helper that lets us like, spawn a bunch of handles, and then set each one at
+        // a time, to avoid getting handles mixed up? Or any other nice way to do this? There may also be some
+        // comptime transformation we can do that makes this possible with a less error prone sytnax etc. The data
+        // doesn't have ot be comptime just the transformation of pointers or whatever idk.
+        const ship = ecs.prefab.createHandle(0);
+        command_buffer.appendInstantiate(&[_]PrefabEntity{
+            .{
+                .ship = .{
+                    .class = .wendy,
+                    .turn_speed = math.pi * 1.0,
+                    .thrust = 200,
+                    .player = player_index,
+                    .omnithrusters = true,
                 },
-                .{
-                    .parent = ship,
-                    .transform = .{},
-                    .rb = .{
-                        .radius = self.wendy_radius,
-                        .density = std.math.inf(f32),
-                    },
-                    .animate_on_input = .{
-                        .action = .thrust_y,
-                        .direction = .positive,
-                        .activated = self.wendy_animations.thrusters_left.?,
-                        .deactivated = .none,
-                    },
-                    .animation = .{
-                        .index = .none,
-                    },
-                    .input = input,
+                .health = .{
+                    .hp = 400,
+                    .max_hp = 400,
                 },
-                .{
-                    .parent = ship,
-                    .transform = .{},
-                    .rb = .{
-                        .radius = self.wendy_radius,
-                        .density = std.math.inf(f32),
-                    },
-                    .animate_on_input = .{
-                        .action = .thrust_y,
-                        .direction = .negative,
-                        .activated = self.wendy_animations.thrusters_right.?,
-                        .deactivated = .none,
-                    },
-                    .animation = .{
-                        .index = .none,
-                    },
-                    .input = input,
+                .transform = .{
+                    .pos = pos,
                 },
-                .{
-                    .parent = ship,
-                    .transform = .{},
-                    .rb = .{
-                        .radius = self.wendy_radius,
-                        .density = std.math.inf(f32),
-                    },
-                    .animate_on_input = .{
-                        .action = .thrust_x,
-                        .direction = .negative,
-                        .activated = self.wendy_animations.thrusters_top.?,
-                        .deactivated = .none,
-                    },
-                    .animation = .{
-                        .index = .none,
-                    },
-                    .input = input,
+                .rb = .{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .radius = self.wendy_radius,
+                    .rotation_vel = 0.0,
+                    .density = 0.02,
                 },
-                .{
-                    .parent = ship,
-                    .transform = .{},
-                    .rb = .{
-                        .radius = self.wendy_radius,
-                        .density = std.math.inf(f32),
-                    },
-                    .animate_on_input = .{
-                        .action = .thrust_x,
-                        .direction = .positive,
-                        .activated = self.wendy_animations.thrusters_bottom.?,
-                        .deactivated = .none,
-                    },
-                    .animation = .{
-                        .index = .none,
-                    },
-                    .input = input,
+                .collider = .{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
                 },
-            });
-        }
-
-        // const ship = command_buffer.appendCreate(.{
-        //     .ship = .{
-        //         .class = .wendy,
-        //         .turn_speed = math.pi * 1.0,
-        //         .thrust = 200,
-        //         .player = player_index,
-        //         .omnithrusters = true,
-        //     },
-        //     .health = .{
-        //         .hp = 400,
-        //         .max_hp = 400,
-        //     },
-        //     .transform = .{
-        //         .pos = pos,
-        //     },
-        //     .rb = .{
-        //         .vel = .{ .x = 0, .y = 0 },
-        //         .radius = self.wendy_radius,
-        //         .rotation_vel = 0.0,
-        //         .density = 0.02,
-        //     },
-        //     .collider = .{
-        //         .collision_damping = 0.4,
-        //         .layer = .vehicle,
-        //     },
-        //     .animation = .{
-        //         .index = self.wendy_animations.still,
-        //     },
-        //     .turret = .{
-        //         .radius = self.wendy_radius,
-        //         .angle = 0,
-        //         .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
-        //         .projectile_speed = 0,
-        //         .projectile_lifetime = 5.0,
-        //         .projectile_damage = 50,
-        //         .projectile_radius = 8,
-        //         .projectile_density = std.math.inf(f32),
-        //         .aim_opposite_movement = true,
-        //     },
-        //     .input = input,
-        // });
-
-        // command_buffer.appendParent(command_buffer.appendCreate(.{
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.wendy_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_y,
-        //         .direction = .positive,
-        //         .activated = self.wendy_animations.thrusters_left.?,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .input = input,
-        // }), ship);
-
-        // command_buffer.appendParent(command_buffer.appendCreate(.{
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.wendy_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_y,
-        //         .direction = .negative,
-        //         .activated = self.wendy_animations.thrusters_right.?,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .input = input,
-        // }), ship);
-
-        // command_buffer.appendParent(command_buffer.appendCreate(.{
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.wendy_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_x,
-        //         .direction = .negative,
-        //         .activated = self.wendy_animations.thrusters_top.?,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .input = input,
-        // }), ship);
-
-        // command_buffer.appendParent(command_buffer.appendCreate(.{
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.wendy_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_x,
-        //         .direction = .positive,
-        //         .activated = self.wendy_animations.thrusters_bottom.?,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .input = input,
-        // }), ship);
-
-        // return ship;
+                .animation = .{
+                    .index = self.wendy_animations.still,
+                },
+                .turret = .{
+                    .radius = self.wendy_radius,
+                    .angle = 0,
+                    .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
+                    .projectile_speed = 0,
+                    .projectile_lifetime = 5.0,
+                    .projectile_damage = 50,
+                    .projectile_radius = 8,
+                    .projectile_density = std.math.inf(f32),
+                    .aim_opposite_movement = true,
+                },
+                .input = input,
+            },
+            .{
+                .parent = ship,
+                .transform = .{},
+                .rb = .{
+                    .radius = self.wendy_radius,
+                    .density = std.math.inf(f32),
+                },
+                .animate_on_input = .{
+                    .action = .thrust_y,
+                    .direction = .positive,
+                    .activated = self.wendy_animations.thrusters_left.?,
+                    .deactivated = .none,
+                },
+                .animation = .{
+                    .index = .none,
+                },
+                .input = input,
+            },
+            .{
+                .parent = ship,
+                .transform = .{},
+                .rb = .{
+                    .radius = self.wendy_radius,
+                    .density = std.math.inf(f32),
+                },
+                .animate_on_input = .{
+                    .action = .thrust_y,
+                    .direction = .negative,
+                    .activated = self.wendy_animations.thrusters_right.?,
+                    .deactivated = .none,
+                },
+                .animation = .{
+                    .index = .none,
+                },
+                .input = input,
+            },
+            .{
+                .parent = ship,
+                .transform = .{},
+                .rb = .{
+                    .radius = self.wendy_radius,
+                    .density = std.math.inf(f32),
+                },
+                .animate_on_input = .{
+                    .action = .thrust_x,
+                    .direction = .negative,
+                    .activated = self.wendy_animations.thrusters_top.?,
+                    .deactivated = .none,
+                },
+                .animation = .{
+                    .index = .none,
+                },
+                .input = input,
+            },
+            .{
+                .parent = ship,
+                .transform = .{},
+                .rb = .{
+                    .radius = self.wendy_radius,
+                    .density = std.math.inf(f32),
+                },
+                .animate_on_input = .{
+                    .action = .thrust_x,
+                    .direction = .positive,
+                    .activated = self.wendy_animations.thrusters_bottom.?,
+                    .deactivated = .none,
+                },
+                .animation = .{
+                    .index = .none,
+                },
+                .input = input,
+            },
+        });
         // XXX: ...
         return undefined;
     }
