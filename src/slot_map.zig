@@ -1,10 +1,12 @@
 const std = @import("std");
 
-const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const testing = std.testing;
 const log2_int_ceil = std.math.log2_int_ceil;
-const BoundedArrayList = @import("bounded_array_list.zig").BoundedArrayList;
+
+const Allocator = std.mem.Allocator;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const NoAlloc = @import("no_alloc.zig").NoAlloc;
 
 pub fn IndexType(comptime capacity: usize) type {
     return @Type(std.builtin.Type{
@@ -36,11 +38,11 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             generation: Generation,
         };
 
-        slots: BoundedArrayList(Slot),
-        free_list: BoundedArrayList(Index),
+        slots: ArrayListUnmanaged(Slot),
+        free_list: ArrayListUnmanaged(Index),
 
         pub fn init(allocator: Allocator) Allocator.Error!@This() {
-            var slots = try BoundedArrayList(Slot).init(allocator, capacity);
+            var slots = try ArrayListUnmanaged(Slot).initCapacity(allocator, capacity);
             errdefer slots.deinit(allocator);
             // TODO: if this makes startup slower we can compare to just zeroing the whole thing
             for (slots.items.ptr[0..slots.capacity]) |*slot| {
@@ -50,7 +52,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
                 };
             }
 
-            var free_list = try BoundedArrayList(Index).init(allocator, capacity);
+            var free_list = try ArrayListUnmanaged(Index).initCapacity(allocator, capacity);
             errdefer free_list.deinit(allocator);
 
             return .{
@@ -70,7 +72,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
                 return index;
             }
             const index = @intCast(Index, self.slots.items.len);
-            _ = try self.slots.addOne();
+            _ = try self.slots.addOne(NoAlloc);
             return index;
         }
 
@@ -96,7 +98,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
                 return error.DoubleFree;
             }
 
-            self.free_list.append(handle.index) catch |err| switch (err) {
+            self.free_list.append(NoAlloc, handle.index) catch |err| switch (err) {
                 // This could happen if the generation counter fails to prevent a double free due to
                 // being wrapped (most likely if we've turned off that safety by setting it to a u0.)
                 error.OutOfMemory => return error.DoubleFree,

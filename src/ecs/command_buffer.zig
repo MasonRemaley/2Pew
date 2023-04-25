@@ -1,9 +1,10 @@
 const std = @import("std");
 const ecs = @import("index.zig");
+const NoAlloc = @import("../no_alloc.zig").NoAlloc;
 const Handle = ecs.entities.Handle;
 const Allocator = std.mem.Allocator;
-const BoundedArrayList = @import("../bounded_array_list.zig").BoundedArrayList;
 const parenting = ecs.parenting;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 pub const DeferredHandle = union(enum) {
     handle: Handle,
@@ -31,27 +32,27 @@ pub fn CommandBuffer(comptime Entities: type) type {
         };
 
         entities: *Entities,
-        create: BoundedArrayList(PrefabEntity),
-        remove: BoundedArrayList(Handle),
-        arch_change: BoundedArrayList(ArchetypeChangeCommand),
-        parent: BoundedArrayList(ParentCommand),
+        create: ArrayListUnmanaged(PrefabEntity),
+        remove: ArrayListUnmanaged(Handle),
+        arch_change: ArrayListUnmanaged(ArchetypeChangeCommand),
+        parent: ArrayListUnmanaged(ParentCommand),
 
-        created: BoundedArrayList(Handle),
+        created: ArrayListUnmanaged(Handle),
 
         pub fn init(allocator: Allocator, entities: *Entities, desc: Descriptor) Allocator.Error!@This() {
-            var create = try BoundedArrayList(PrefabEntity).init(allocator, desc.create_capacity);
+            var create = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, desc.create_capacity);
             errdefer create.deinit(allocator);
 
-            var remove = try BoundedArrayList(Handle).init(allocator, desc.remove_capacity);
+            var remove = try ArrayListUnmanaged(Handle).initCapacity(allocator, desc.remove_capacity);
             errdefer remove.deinit(allocator);
 
-            var arch_change = try BoundedArrayList(ArchetypeChangeCommand).init(allocator, desc.arch_change_capacity);
+            var arch_change = try ArrayListUnmanaged(ArchetypeChangeCommand).initCapacity(allocator, desc.arch_change_capacity);
             errdefer arch_change.deinit(allocator);
 
-            var parent = try BoundedArrayList(ParentCommand).init(allocator, desc.arch_change_capacity);
+            var parent = try ArrayListUnmanaged(ParentCommand).initCapacity(allocator, desc.arch_change_capacity);
             errdefer arch_change.deinit(allocator);
 
-            var created = try BoundedArrayList(Handle).init(allocator, desc.create_capacity);
+            var created = try ArrayListUnmanaged(Handle).initCapacity(allocator, desc.create_capacity);
             errdefer created.deinit(allocator);
 
             return .{
@@ -86,7 +87,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
 
         pub fn appendCreateChecked(self: *@This(), prefab: PrefabEntity) Allocator.Error!DeferredHandle {
             const handle = DeferredHandle{ .index = self.create.items.len };
-            try self.create.append(prefab);
+            try self.create.append(NoAlloc, prefab);
             return handle;
         }
 
@@ -99,7 +100,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
             if (!self.entities.exists(handle)) {
                 return error.DoubleFree;
             }
-            try self.remove.append(handle);
+            try self.remove.append(NoAlloc, handle);
         }
 
         pub fn appendArchChange(self: *@This(), handle: Handle, change: ArchetypeChange) void {
@@ -111,7 +112,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
             if (!self.entities.exists(handle)) {
                 return error.UseAfterFree;
             }
-            try self.arch_change.append(.{
+            try self.arch_change.append(NoAlloc, .{
                 .handle = handle,
                 .change = change,
             });
@@ -149,7 +150,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
                 self.create.items[child.index].parent = @as(?Handle, null);
             }
 
-            try self.parent.append(.{
+            try self.parent.append(NoAlloc, .{
                 .child = child,
                 .parent = parent,
             });
@@ -181,7 +182,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
 
             // Execute creations
             for (self.create.items) |prefab| {
-                self.created.append(try self.entities.createChecked(prefab)) catch unreachable;
+                self.created.append(NoAlloc, try self.entities.createChecked(prefab)) catch unreachable;
             }
 
             // Execute parenting
