@@ -110,6 +110,7 @@ pub fn main() !void {
 
     var command_buffer = try CommandBuffer.init(allocator, &entities, .{
         .prefab_entity_capacity = 8192,
+        .prefab_capacity = 8192,
         .remove_capacity = 8192,
         .arch_change_capacity = 8192,
     });
@@ -313,7 +314,7 @@ fn update(
                     const base_vel = if (std.crypto.random.boolean()) entity.rb.vel else other.rb.vel;
                     const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
-                    _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+                    _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
                         .{
                             .lifetime = .{
                                 .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
@@ -485,7 +486,7 @@ fn update(
                         ];
                         const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
-                        _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+                        _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
                             .{
                                 .lifetime = .{
                                     .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
@@ -530,7 +531,7 @@ fn update(
             if (entity.health.hp <= 0) {
                 // spawn explosion here
                 if (entity.transform) |trans| {
-                    _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+                    _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
                         .{
                             .lifetime = .{
                                 .seconds = 100,
@@ -830,7 +831,7 @@ fn update(
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+                _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
                     .{
                         .damage = .{
                             .hp = entity.turret.projectile_damage,
@@ -1550,7 +1551,7 @@ const Game = struct {
         angle: f32,
         input: Input,
     ) PrefabHandle {
-        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
             .{
                 .ship = .{
                     .class = .ranger,
@@ -1608,7 +1609,7 @@ const Game = struct {
         input: Input,
     ) PrefabHandle {
         const radius = 24;
-        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
             .{
                 .ship = .{
                     .class = .triangle,
@@ -1666,7 +1667,7 @@ const Game = struct {
         angle: f32,
         input: Input,
     ) PrefabHandle {
-        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
             .{
                 .ship = .{
                     .class = .militia,
@@ -1716,6 +1717,7 @@ const Game = struct {
         });
     }
 
+    // XXX: make sure this still works!
     fn createKevin(
         self: *const @This(),
         command_buffer: *CommandBuffer,
@@ -1724,10 +1726,10 @@ const Game = struct {
         angle: f32,
         input: Input,
     ) PrefabHandle {
-        const ship_handle = PrefabHandle.init(@intCast(u20, command_buffer.prefab_entities.items.len));
+        const ship_handle = PrefabHandle.init(0);
 
         const radius = 32;
-        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
             .{
                 .ship = .{
                     .class = .kevin,
@@ -1818,8 +1820,9 @@ const Game = struct {
         // comptime transformation we can do that makes this possible with a less error prone sytnax etc. The data
         // doesn't have ot be comptime just the transformation of pointers or whatever idk.
         // XXX: cast...
-        const ship_handle = PrefabHandle.init(@intCast(u20, command_buffer.prefab_entities.items.len));
-        return command_buffer.appendInstantiate(&[_]PrefabEntity{
+        // const ship_handle = PrefabHandle.init(@intCast(u20, command_buffer.prefab_entities.items.len));
+        const ship_handle = PrefabHandle.init(0);
+        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
             .{
                 .ship = .{
                     .class = .wendy,
@@ -2437,7 +2440,7 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, std.crypto.random.float(f32)))
                 .plus(display_center);
 
-            _ = command_buffer.appendInstantiate(&[_]PrefabEntity{
+            _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
                 .{
                     .sprite = sprite,
                     .transform = .{

@@ -2,6 +2,7 @@ const std = @import("std");
 const ecs = @import("index.zig");
 const slot_map = @import("../slot_map.zig");
 
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const EntityHandle = ecs.entities.Handle;
 
@@ -23,16 +24,58 @@ pub const Handle = struct {
     }
 };
 
+/// A piece of a prefab.
+pub const Span = struct {
+    /// The number of prefab entities in this span.
+    len: usize,
+
+    /// True if handles are relative to the start of this span, false if they're relative to the
+    /// start of this prefab.
+    self_contained: bool,
+};
+
+pub fn instantiate(temporary: Allocator, entities: anytype, self_contained: bool, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*))) void {
+    return instantiateSpans(
+        temporary,
+        entities,
+        prefab,
+        &[_]Span{.{
+            .len = prefab.len,
+            .self_contained = self_contained,
+        }},
+    );
+}
+
+pub fn instantiateChecked(temporary: Allocator, entities: anytype, self_contained: bool, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*))) Allocator.Error!void {
+    return instantiateSpansChecked(
+        temporary,
+        entities,
+        prefab,
+        &[_]Span{.{
+            .len = prefab.len,
+            .self_contained = self_contained,
+        }},
+    );
+}
+
 /// Instantiate a prefab. Handles are assumed to be relative to the start of the prefab, and will be
-/// patched.
-pub fn instantiate(temporary: Allocator, entities: anytype, prefabs: []ecs.entities.PrefabEntity(@TypeOf(entities.*))) void {
-    instantiateChecked(temporary, entities, prefabs) catch |err|
+/// patched. Asserts that spans covers all entities.
+pub fn instantiateSpans(temporary: Allocator, entities: anytype, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*)), spans: []Span) void {
+    instantiateSpansChecked(temporary, entities, prefab, spans) catch |err|
         std.debug.panic("failed to instantiate prefab: {}", .{err});
 }
 
-pub fn instantiateChecked(temporary: Allocator, entities: anytype, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*))) Allocator.Error!void {
+// XXX: actually assert spans end at the right place...
+// XXX: support entities that are live via a reserved generation? kinda weird coupling between prefabs
+// and this system though. e.g. if we reserve a none value whose to say the game logic doesn't actually
+// want a none value sometimes? we could use invalid or something but like, how to document when it's appropriate
+// to use it? i guess just like, never in game only for out of game data then there's no conflicts..sort of?
+// we do want some way to do this--it'll be an annoying restriction if we can't!
+// XXX: do we need component_names when we can just use @tagName?
+pub fn instantiateSpansChecked(temporary: Allocator, entities: anytype, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*)), spans: []Span) Allocator.Error!void {
     const Entities = @TypeOf(entities.*);
-    // Instantiate the prefabs
+
+    // Instantiate the entities
     var live_handles = try temporary.alloc(EntityHandle, prefab.len);
     defer temporary.free(live_handles);
     for (prefab, 0..) |prefab_entity, i| {
@@ -40,68 +83,34 @@ pub fn instantiateChecked(temporary: Allocator, entities: anytype, prefab: []ecs
     }
 
     // Patch the handles
-    for (live_handles) |live_handle| {
-        inline for (Entities.component_names, 0..) |component_name, i| {
-            const componentTag = @intToEnum(Entities.ComponentTag, i);
-            if (entities.getComponent(live_handle, componentTag)) |component| {
-                visitHandles(
-                    live_handles,
-                    component,
-                    component_name,
-                    struct {
-                        // XXX: support entities that are live via a reserved generation? kinda weird coupling between prefabs
-                        // and this system though. e.g. if we reserve a none value whose to say the game logic doesn't actually
-                        // want a none value sometimes? we could use invalid or something but like, how to document when it's appropriate
-                        // to use it? i guess just like, never in game only for out of game data then there's no conflicts..sort of?
-                        // we do want some way to do this--it'll be an annoying restriction if we can't!
-                        fn patchHandle(live: []const EntityHandle, handle: *EntityHandle) void {
-                            if (handle.generation != dummy_generation) std.debug.panic("bad generation", .{});
-                            if (handle.index > live.len) std.debug.panic("bad index", .{});
-                            // XXX: we're doing the bounds checking above becuase doing it here would only happen in debug mode, right?
-                            // Also see the one other place we do this!
-                            handle.* = live.ptr[handle.index];
-                        }
-                    }.patchHandle,
-                );
+    var i: ecs.entities.Index = 0; // XXX: type?
+    for (spans) |span| {
+        const span_live_handles = live_handles[i .. i + span.len]; // XXX: make sure this arithmetic can't out of bounds or overflow in release mode here either!
+        for (span_live_handles) |live_handle| {
+            inline for (comptime std.meta.tags(Entities.ComponentTag)) |component_tag| {
+                if (entities.getComponent(live_handle, component_tag)) |component| {
+                    const context = if (span.self_contained)
+                        span_live_handles
+                    else
+                        live_handles;
+                    visitHandles(context, component, @tagName(component_tag), patchHandle);
+                }
             }
         }
+        i += @intCast(u20, span.len); // XXX: cast...
     }
+    assert(i == prefab.len);
+}
+
+fn patchHandle(live_handles: []const EntityHandle, handle: *EntityHandle) void {
+    if (handle.generation != dummy_generation) {
+        std.debug.panic("bad generation", .{});
+    }
+    // XXX: this is bounds checked even in release mode right?
+    handle.* = live_handles[handle.index];
 }
 
 // XXX: having this be a module that takes entities and returns a struct would be nice here...
-// XXX: we could do this while instantiating them, but, I'd need to find a way to store the list of
-// ranges to sandbox etc. this IS annoying though, because it means that we need the data to be
-// mutable. At the very least just have an optional sandbox flag to instntiate or an
-// instantiateSandboxed or such that does this streaming?
-// Offsets all handles in the prefab by the given amount, and asserts that none point outside of
-// the prefab. This allows composing prefabs stored as constants or in files.
-pub fn sandbox(prefab: anytype, offset: ecs.entities.Index) void {
-    const Sandbox = struct {
-        offset: ecs.entities.Index,
-        len: usize,
-    };
-
-    for (prefab) |*prefab_entity| {
-        inline for (@typeInfo(@TypeOf(prefab_entity.*)).Struct.fields) |field| {
-            if (@field(prefab_entity, field.name)) |*component| {
-                visitHandles(
-                    .{ .offset = offset, .len = prefab.len },
-                    component,
-                    field.name,
-                    struct {
-                        fn sandboxHandle(sb: Sandbox, handle: *EntityHandle) void {
-                            if (handle.generation != dummy_generation) std.debug.panic("bad generation", .{});
-                            // XXX: is this the right way to check for out of bounds including in release mode?
-                            handle.index +|= sb.offset;
-                            if (handle.index >= sb.len) std.debug.panic("bad index", .{});
-                        }
-                    }.sandboxHandle,
-                );
-            }
-        }
-    }
-}
-
 // XXX: make an easy way to generate the handles to fill this in with, can just be a struct called
 // PrefabHandles or something that keeps returning new handles
 fn visitHandles(context: anytype, value: anytype, comptime componentName: []const u8, visitHandle: fn (@TypeOf(context), *EntityHandle) void) void {
