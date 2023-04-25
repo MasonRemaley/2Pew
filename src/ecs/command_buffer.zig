@@ -2,7 +2,7 @@ const std = @import("std");
 const ecs = @import("index.zig");
 const NoAlloc = @import("../no_alloc.zig").NoAlloc;
 const Handle = ecs.entities.Handle;
-const PrefabHandle = ecs.prefab.PrefabHandle;
+const PrefabHandle = ecs.prefab.Handle;
 const Allocator = std.mem.Allocator;
 const parenting = ecs.parenting;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
@@ -69,7 +69,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
 
         pub fn appendInstantiateChecked(self: *@This(), prefab: []const PrefabEntity) Allocator.Error!PrefabHandle {
             // XXX: make helper, use here and outside...avoid explciit u20 cast etc. used multiple places outside.
-            const handle = ecs.prefab.createHandle(@intCast(u20, self.prefab_entities.items.len));
+            const handle = PrefabHandle.init(@intCast(u20, self.prefab_entities.items.len));
             try self.prefab_entities.appendSlice(NoAlloc, prefab);
             return handle;
         }
@@ -130,6 +130,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
                 try ecs.prefab.instantiateChecked(gpa.allocator(), self.entities, self.prefab_entities.items);
             }
 
+            // XXX: Do we still wanna do this here?
             // Execute parenting
             if (parenting.supported(Entities) and self.remove.items.len > 0) {
                 parenting.removeOrphans(self.entities);

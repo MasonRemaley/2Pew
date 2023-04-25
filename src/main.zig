@@ -42,7 +42,7 @@ const Entities = ecs.entities.Entities(.{
 const PrefabEntity = ecs.entities.PrefabEntity(Entities);
 const EntityHandle = ecs.entities.Handle;
 const DeferredHandle = ecs.command_buffer.DeferredHandle;
-const PrefabHandle = ecs.prefab.PrefabHandle;
+const PrefabHandle = ecs.prefab.Handle;
 const ComponentFlags = ecs.entities.ComponentFlags(Entities);
 const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
 const parenting = ecs.parenting;
@@ -1724,7 +1724,7 @@ const Game = struct {
         angle: f32,
         input: Input,
     ) PrefabHandle {
-        const ship_handle = ecs.prefab.createHandle(@intCast(u20, command_buffer.prefab_entities.items.len));
+        const ship_handle = PrefabHandle.init(@intCast(u20, command_buffer.prefab_entities.items.len));
 
         const radius = 32;
         return command_buffer.appendInstantiate(&[_]PrefabEntity{
@@ -1818,7 +1818,7 @@ const Game = struct {
         // comptime transformation we can do that makes this possible with a less error prone sytnax etc. The data
         // doesn't have ot be comptime just the transformation of pointers or whatever idk.
         // XXX: cast...
-        const ship_handle = ecs.prefab.createHandle(@intCast(u20, command_buffer.prefab_entities.items.len));
+        const ship_handle = PrefabHandle.init(@intCast(u20, command_buffer.prefab_entities.items.len));
         return command_buffer.appendInstantiate(&[_]PrefabEntity{
             .{
                 .ship = .{
