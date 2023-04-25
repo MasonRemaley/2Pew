@@ -11,11 +11,6 @@ const FieldEnum = std.meta.FieldEnum;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const Type = std.builtin.Type;
 
-const EntityGeneration = switch (builtin.mode) {
-    .Debug, .ReleaseSafe => u32,
-    .ReleaseSmall, .ReleaseFast => u0,
-};
-
 pub const max_entities: u32 = 1000000;
 const page_size = 4096;
 
@@ -23,7 +18,12 @@ const max_pages = max_entities / 32;
 const max_archetypes = 40000;
 const first_shelf_count = 8;
 
-pub const Handle = slot_map.HandleType(slot_map.IndexType(max_entities), EntityGeneration);
+pub const Generation = switch (builtin.mode) {
+    .Debug, .ReleaseSafe => u32,
+    .ReleaseSmall, .ReleaseFast => u0,
+};
+pub const Index = slot_map.IndexType(max_entities);
+pub const Handle = slot_map.HandleType(Index, Generation);
 
 pub fn Entities(comptime registered_components: anytype) type {
     return struct {
@@ -40,7 +40,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         };
         pub const component_names = std.meta.fieldNames(@TypeOf(registered_components));
 
-        const HandleSlotMap = SlotMap(EntityPointer(Self), max_entities, EntityGeneration);
+        const HandleSlotMap = SlotMap(EntityPointer(Self), max_entities, Generation);
 
         allocator: Allocator,
         handles: HandleSlotMap,
@@ -1274,11 +1274,11 @@ test "limits" {
     // TODO: update this test or no since we have it externally?
     // // Wrap a generation counter
     // {
-    //     const entity = Handle{ .index = 0, .generation = std.math.maxInt(EntityGeneration) };
+    //     const entity = Handle{ .index = 0, .generation = std.math.maxInt(Generation) };
     //     entities.slots[entity.index].generation = entity.generation;
     //     entities.swapRemove(entity);
     //     try std.testing.expectEqual(
-    //         Handle{ .index = 0, .generation = @intCast(EntityGeneration, 0) },
+    //         Handle{ .index = 0, .generation = @intCast(Generation, 0) },
     //         entities.create(.{}),
     //     );
     // }

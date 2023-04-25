@@ -1,24 +1,55 @@
 const std = @import("std");
 const ecs = @import("index.zig");
+const slot_map = @import("../slot_map.zig");
 
 const Allocator = std.mem.Allocator;
-const AutoArrayHashMap = std.AutoArrayHashMap;
 const Handle = ecs.entities.Handle;
 
-pub fn Item(comptime Entities: type) type {
-    return struct {
-        handle: Handle,
-        entity: ecs.entities.PrefabEntity(Entities),
+// XXX: better to use 0 and initialize them to 1, so that changing the generation size doesn't mess with save data..?
+pub const dummy_generation = std.math.maxInt(ecs.entities.Generation);
+
+pub fn createHandle(index: ecs.entities.Index) Handle {
+    return Handle{
+        .index = index,
+        .generation = dummy_generation,
     };
+}
+
+// XXX: make possible with command buffer!! can store a list of all the individual items, and a separate list
+// - command buffer only kind of needs to know about parenting now? We could apply from game logic instead
+// of prefab sizes (or store in a multiarray) and then should be able to just slice it and pass into here!
+// and simplify a lot!
+// See `instantiate`.
+pub fn instantiateChecked(temporary: Allocator, entities: anytype, prefabs: []ecs.entities.PrefabEntity(@TypeOf(entities.*))) Allocator.Error!void {
+    const Entities = @TypeOf(entities.*);
+    // Instantiate the prefabs
+    var live_handles = try temporary.alloc(Handle, prefabs.len);
+    defer temporary.free(live_handles);
+    for (prefabs, 0..) |prefab, i| {
+        live_handles[i] = try entities.createChecked(prefab);
+    }
+
+    // Patch the handles
+    for (live_handles) |live_handle| {
+        inline for (Entities.component_names, 0..) |component_name, i| {
+            const componentTag = @intToEnum(Entities.ComponentTag, i);
+            if (entities.getComponent(live_handle, componentTag)) |component| {
+                visitHandles(live_handles, component, component_name, patchHandle);
+            }
+        }
+    }
+}
+
+// Instantiates a list of prefabs. If the component data contains handles, the generations must be
+// set to `dummy_generation`, and the indices are assumed to be indexes into the prefabs slice.
+pub fn instantiate(temporary: Allocator, entities: anytype, prefabs: []ecs.entities.PrefabEntity(@TypeOf(entities.*))) void {
+    instantiateChecked(temporary, entities, prefabs) catch |err|
+        std.debug.panic("failed to instantiate prefab: {}", .{err});
 }
 
 // XXX: make an easy way to generate the handles to fill this in with, can just be a struct called
 // PrefabHandles or something that keeps returning new handles
-pub fn Prefab(comptime Entities: type) type {
-    return []Item(Entities);
-}
-
-pub fn visitHandles(context: anytype, value: anytype, comptime componentName: []const u8, visitHandle: fn (@TypeOf(context), *Handle) void) void {
+fn visitHandles(context: anytype, value: anytype, comptime componentName: []const u8, visitHandle: fn (@TypeOf(context), *Handle) void) void {
     if (@TypeOf(value.*) == Handle) {
         visitHandle(context, value);
         return;
@@ -68,55 +99,14 @@ pub fn visitHandles(context: anytype, value: anytype, comptime componentName: []
     }
 }
 
-fn patchHandle(handle_map: *const AutoArrayHashMap(Handle, Handle), handle: *Handle) void {
-    if (handle_map.get(handle.*)) |live| {
-        handle.* = live;
-    }
-}
-
-// XXX: consider again making this whole module a function that returns the sepcialized module
-// XXX: make possible with command buffer!! can store a list of all the individual items, and a separate list
-// of prefab sizes (or store in a multiarray) and then should be able to just slice it and pass into here!
-// XXX: return errors or no?
-// XXX: make the fact that we ALLOW missing handles (missing from prefab AND from entities potentially)
-// more robust by making a specific generation for prefab handles?
-// XXX: assert that entities is a pointer?
-// XXX: flip this around to only put the stuff that's needed into the hashmap? then again
-// we need the list of instnatiated entities to iterate over at the end right?? but if so like can we skip
-// anything that doesn't hae a handle there? or can we skip if none do? etc, don't wanna pay for this unless
-// using it...
-// XXX: OMG we don't need a hashmap lol, it's contiguous numbers, just store them that way. When making a save file
-// that does require renumbering then..or going through and finding the max so we can leave holes. We can figure that out
-// when we get there. Honestly if loading a save file can just load everything into the exact same handles or something
-// and skip all the patching etc. Problem is building the free list but like we could build or just save that lol.
-// that is more fragile of course cause it requires everything stay the same but yeah. We could make a mode that
-// uses a hashmap if needed for that. We could also just renumber it's probably not a big deal? Can check perf of various
-// options then--it's not as if the hashmap is free, even just renumbering during load is probably equiavlent to hashmap but can
-// be done on save OR load depending on preference.
-pub fn instantiate(temporary: Allocator, entities: anytype, prefabs: Prefab(@TypeOf(entities.*))) !void {
-    const Entities = @TypeOf(entities.*);
-
-    // XXX: array hashmap vs just hashmap?
-    // XXX: also consider a simpler hashing function or no? Or use arrays, prealloc somehow?
-    // XXX: prealloc to be big enough
-    // Create the scratch data
-    var handle_map = AutoArrayHashMap(Handle, Handle).init(temporary);
-    defer handle_map.deinit();
-    try handle_map.ensureTotalCapacity(prefabs.len);
-
-    // Create the entities
-    for (prefabs) |prefab_item| {
-        var live_handle = entities.create(prefab_item.entity);
-        handle_map.putAssumeCapacity(prefab_item.handle, live_handle);
-    }
-
-    // Patch the handles
-    for (handle_map.values()) |live_handle| {
-        inline for (Entities.component_names, 0..) |component_name, i| {
-            const componentTag = @intToEnum(Entities.ComponentTag, i);
-            if (entities.getComponent(live_handle, componentTag)) |component| {
-                visitHandles(&handle_map, component, component_name, patchHandle);
-            }
-        }
-    }
+// XXX: support entities that are live via a reserved generation? kinda weird coupling between prefabs
+// and this system though. e.g. if we reserve a none value whose to say the game logic doesn't actually
+// want a none value sometimes? we could use invalid or something but like, how to document when it's appropriate
+// to use it? i guess just like, never in game only for out of game data then there's no conflicts..sort of?
+// we do want some way to do this--it'll be an annoying restriction if we can't!
+fn patchHandle(live_handles: []const Handle, handle: *Handle) void {
+    if (handle.generation != dummy_generation) std.debug.panic("bad generation", .{});
+    if (handle.index > live_handles.len) std.debug.panic("bad index", .{});
+    // XXX: we're doing the bounds checking above becuase doing it here would only happen in debug mode, right?
+    handle.* = live_handles.ptr[handle.index];
 }
