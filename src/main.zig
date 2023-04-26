@@ -210,7 +210,7 @@ fn update(
             .health = .{ .optional = true },
         });
         while (it.next()) |entity| {
-            entity.input.update();
+            entity.input.update(&game.controllers);
 
             var parent_it = parenting.iterator(entities, it.handle());
             while (parent_it.next()) |current| {
@@ -1159,12 +1159,12 @@ const Input = struct {
         negative: DirectionState = .inactive,
     };
 
-    controller: ?*c.SDL_GameController,
+    controller_index: usize,
     controller_map: ControllerMap,
     keyboard_map: KeyboardMap,
     state: std.EnumArray(Action, ActionState) = std.EnumArray(Action, ActionState).initFill(.{}),
 
-    pub fn update(self: *@This()) void {
+    pub fn update(self: *@This(), controllers: []?*c.SDL_GameController) void {
         inline for (comptime std.meta.tags(Action)) |action| {
             inline for (.{ Direction.positive, Direction.negative }) |direction| {
                 // Check if the keyboard or controller control is activated
@@ -1176,12 +1176,12 @@ const Input = struct {
 
                 const controller_action = @field(self.controller_map, @tagName(action));
                 const button = if (@field(controller_action.buttons, @tagName(direction))) |button|
-                    c.SDL_GameControllerGetButton(self.controller, button) != 0
+                    c.SDL_GameControllerGetButton(controllers[self.controller_index], button) != 0
                 else
                     false;
 
                 const axis = if (controller_action.axis) |axis| a: {
-                    const v = c.SDL_GameControllerGetAxis(self.controller, axis);
+                    const v = c.SDL_GameControllerGetAxis(controllers[self.controller_index], axis);
                     switch (direction) {
                         .positive => break :a v > controller_action.dead_zone,
                         .negative => break :a v < -controller_action.dead_zone,
@@ -1487,6 +1487,7 @@ const Game = struct {
     assets: *Assets,
 
     players_buffer: [4]Player,
+    controllers: [4]?*c.SDL_GameController = [_]?*c.SDL_GameController{ null, null, null, null },
     players: []Player,
     teams_buffer: [4]Team,
     teams: []Team,
@@ -2315,7 +2316,6 @@ const Game = struct {
 
         // Set up players
         {
-            var controllers = [4]?*c.SDL_GameController{ null, null, null, null };
             {
                 var player_index: u32 = 0;
                 for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
@@ -2325,9 +2325,9 @@ const Game = struct {
                             panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
                         };
                         if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
-                            controllers[i] = sdl_controller;
+                            game.controllers[i] = sdl_controller;
                             player_index += 1;
-                            if (player_index >= controllers.len) break;
+                            if (player_index >= game.controllers.len) break;
                         } else {
                             c.SDL_GameControllerClose(sdl_controller);
                         }
@@ -2394,22 +2394,22 @@ const Game = struct {
 
             var input_devices = [_]Input{
                 .{
-                    .controller = controllers[0],
+                    .controller_index = 0,
                     .controller_map = controller_default,
                     .keyboard_map = keyboard_wasd,
                 },
                 .{
-                    .controller = controllers[1],
+                    .controller_index = 1,
                     .controller_map = controller_default,
                     .keyboard_map = keyboard_arrows,
                 },
                 .{
-                    .controller = controllers[2],
+                    .controller_index = 2,
                     .controller_map = controller_default,
                     .keyboard_map = keyboard_none,
                 },
                 .{
-                    .controller = controllers[3],
+                    .controller_index = 3,
                     .controller_map = controller_default,
                     .keyboard_map = keyboard_none,
                 },

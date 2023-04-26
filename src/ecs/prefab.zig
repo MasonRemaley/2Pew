@@ -75,7 +75,9 @@ pub fn instantiateSpansChecked(temporary: Allocator, entities: anytype, prefab: 
     // Patch the handles
     var i: usize = 0;
     for (spans) |span| {
-        // XXX: make sure this arithmetic can't out of bounds or overflow in release mode here either! or at least that file can't cause that?
+        if (std.math.maxInt(@TypeOf(i)) -| span.len < i) {
+            std.debug.panic("prefab span overflow", .{});
+        }
         const span_live_handles = live_handles[i .. i + span.len];
         for (span_live_handles) |live_handle| {
             inline for (comptime std.meta.tags(Entities.ComponentTag)) |component_tag| {
@@ -113,11 +115,6 @@ fn visitHandles(context: anytype, value: anytype, comptime componentName: []cons
         return;
     }
 
-    // XXX: handled by the above right?
-    // if (@typeInfo(@TypeOf(value)) != .Pointer) {
-    //     @compileError("expected pointer to value");
-    // }
-
     switch (@typeInfo(@TypeOf(value.*))) {
         // Ignore
         .Type,
@@ -145,14 +142,12 @@ fn visitHandles(context: anytype, value: anytype, comptime componentName: []cons
 
         // Give up
         // XXX: better message?
-        .AnyFrame, .Frame, .Fn, .Opaque => @compileError("component " ++ componentName ++ " contains unsupported type " ++ @typeName(@TypeOf(value.*))),
-        // XXX: ...
-        .Pointer => {},
+        .AnyFrame, .Frame, .Fn, .Opaque, .Pointer => @compileError("component `" ++ componentName ++ "` contains unsupported type " ++ @typeName(@TypeOf(value.*))),
         // XXX: ...implement, make sure to check all variants comptime
         .Union => {},
         .Vector => |vector| switch (vector.child) {
             .Int, .Float => {},
-            _ => @compileError("component " ++ componentName ++ " contains unsupported type " ++ @typeName(@TypeOf(value.*))),
+            _ => @compileError("component `" ++ componentName ++ "` contains unsupported type " ++ @typeName(@TypeOf(value.*))),
         },
     }
 }
