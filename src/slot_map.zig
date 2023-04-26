@@ -2,25 +2,56 @@ const std = @import("std");
 
 const assert = std.debug.assert;
 const testing = std.testing;
-const log2_int_ceil = std.math.log2_int_ceil;
 
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const NoAlloc = @import("no_alloc.zig").NoAlloc;
 
-pub fn IndexType(comptime capacity: usize) type {
-    return @Type(std.builtin.Type{
+pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type {
+    const IndexT = @Type(std.builtin.Type{
         .Int = .{
             .signedness = .unsigned,
-            .bits = if (capacity == 0) 0 else log2_int_ceil(usize, capacity),
+            .bits = if (exact_capacity == 0) 0 else std.math.log2_int_ceil(usize, exact_capacity),
         },
     });
-}
+    const GenerationT = enum(GenerationTag) {
+        const Self = @This();
 
-pub fn HandleType(comptime Index: type, comptime Generation: type) type {
+        /// An invalid generation.
+        invalid = std.math.maxInt(GenerationTag),
+        /// A valid geneartion that will never be used.
+        none = std.math.maxInt(GenerationTag) - 1,
+        /// All other generations.
+        _,
+
+        // TODO: support throwing it out when it wraps as well
+        fn increment(self: *Self) void {
+            comptime assert(@enumToInt(Self.invalid) > 1);
+            assert(self.* != .none);
+            assert(self.* != .invalid);
+
+            self.* = @intToEnum(Self, @enumToInt(self.*) + 1);
+            if (self.* == .none) {
+                self.* = @intToEnum(Self, 0);
+            }
+        }
+    };
+
     return struct {
+        const Self = @This();
+
+        pub const Index = IndexT;
+        pub const Generation = GenerationT;
+        pub const capacity = exact_capacity;
+
         index: Index,
         generation: Generation,
+
+        /// A handle that never exists.
+        pub const none = Self{
+            .index = 0,
+            .generation = .none,
+        };
 
         pub fn eql(lhs: @This(), rhs: @This()) bool {
             return std.meta.eql(lhs, rhs);
@@ -28,18 +59,18 @@ pub fn HandleType(comptime Index: type, comptime Generation: type) type {
     };
 }
 
-pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generation: type) type {
+pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
     return struct {
-        pub const Handle = HandleType(Index, Generation);
-
-        const Index = IndexType(capacity);
+        const capacity = HandleT.capacity;
+        const Index = HandleT.Index;
+        const Generation = HandleT.Generation;
         const Slot = struct {
             item: Item,
-            generation: Generation,
+            generation: HandleT.Generation,
         };
 
         slots: ArrayListUnmanaged(Slot),
-        free_list: ArrayListUnmanaged(Index),
+        free: ArrayListUnmanaged(Index),
 
         pub fn init(allocator: Allocator) Allocator.Error!@This() {
             var slots = try ArrayListUnmanaged(Slot).initCapacity(allocator, capacity);
@@ -48,27 +79,27 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             for (slots.items.ptr[0..slots.capacity]) |*slot| {
                 slot.* = .{
                     .item = undefined,
-                    .generation = 0,
+                    .generation = @intToEnum(Generation, 0),
                 };
             }
 
-            var free_list = try ArrayListUnmanaged(Index).initCapacity(allocator, capacity);
-            errdefer free_list.deinit(allocator);
+            var free = try ArrayListUnmanaged(Index).initCapacity(allocator, capacity);
+            errdefer free.deinit(allocator);
 
             return .{
                 .slots = slots,
-                .free_list = free_list,
+                .free = free,
             };
         }
 
         pub fn deinit(self: *@This(), allocator: Allocator) void {
             self.slots.deinit(allocator);
-            self.free_list.deinit(allocator);
+            self.free.deinit(allocator);
         }
 
         // Adds a new slot, leaving its item undefined.
         fn addOne(self: *@This()) Allocator.Error!Index {
-            if (self.free_list.popOrNull()) |index| {
+            if (self.free.popOrNull()) |index| {
                 return index;
             }
             const index = @intCast(Index, self.slots.items.len);
@@ -76,7 +107,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             return index;
         }
 
-        pub fn create(self: *@This(), item: Item) !Handle {
+        pub fn create(self: *@This(), item: Item) !HandleT {
             const index = try self.addOne();
             const slot = &self.slots.items[index];
             slot.item = item;
@@ -86,30 +117,23 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             };
         }
 
-        fn incrementGeneration(self: *@This(), index: Index) void {
-            if (Generation != u0) {
-                // TODO: support throwing it out when it wraps as well
-                self.slots.items[index].generation +%= 1;
-            }
-        }
-
-        pub fn remove(self: *@This(), handle: Handle) error{DoubleFree}!Item {
+        pub fn remove(self: *@This(), handle: HandleT) error{DoubleFree}!Item {
             if (!self.exists(handle)) {
                 return error.DoubleFree;
             }
 
-            self.free_list.append(NoAlloc, handle.index) catch |err| switch (err) {
+            self.free.append(NoAlloc, handle.index) catch |err| switch (err) {
                 // This could happen if the generation counter fails to prevent a double free due to
                 // being wrapped (most likely if we've turned off that safety by setting it to a u0.)
                 error.OutOfMemory => return error.DoubleFree,
             };
 
-            self.incrementGeneration(handle.index);
+            self.slots.items[handle.index].generation.increment();
 
             return self.slots.items[handle.index].item;
         }
 
-        pub fn exists(self: *const @This(), handle: Handle) bool {
+        pub fn exists(self: *const @This(), handle: HandleT) bool {
             if (handle.index >= self.slots.items.len) {
                 // This can occur if we cleared the slot map previously.
                 return false;
@@ -118,7 +142,7 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             return self.slots.items[handle.index].generation == handle.generation;
         }
 
-        pub fn get(self: *const @This(), handle: Handle) error{UseAfterFree}!*Item {
+        pub fn get(self: *const @This(), handle: HandleT) error{UseAfterFree}!*Item {
             if (!self.exists(handle)) {
                 return error.UseAfterFree;
             }
@@ -126,31 +150,30 @@ pub fn SlotMap(comptime Item: type, comptime capacity: usize, comptime Generatio
             return self.getUnchecked(handle);
         }
 
-        pub fn getUnchecked(self: *const @This(), handle: Handle) *Item {
+        pub fn getUnchecked(self: *const @This(), handle: HandleT) *Item {
             return &self.slots.items[handle.index].item;
         }
 
         pub fn clearRetainingCapacity(self: *@This()) void {
             for (0..self.slots.items.len) |i| {
-                self.incrementGeneration(@intCast(Index, i));
+                self.slots.items[@intCast(Index, i)].generation.increment();
             }
-            self.free_list.clearRetainingCapacity();
+            self.free.clearRetainingCapacity();
             self.slots.clearRetainingCapacity();
         }
     };
 }
 
 test "slot map" {
-    var sm = try SlotMap(u8, 5, u8).init(testing.allocator);
+    const H = Handle(5, u8);
+    var sm = try SlotMap(u8, H).init(testing.allocator);
     defer sm.deinit(testing.allocator);
 
-    const H = @TypeOf(sm).Handle;
-
-    try testing.expect(sm.get(H{ .index = 0, .generation = 0 }) == error.UseAfterFree);
+    try testing.expect(sm.get(H{ .index = 0, .generation = @intToEnum(H.Generation, 0) }) == error.UseAfterFree);
 
     const a = try sm.create('a');
     const b = try sm.create('b');
-    try testing.expect(sm.get(H{ .index = 4, .generation = 0 }) == error.UseAfterFree);
+    try testing.expect(sm.get(H{ .index = 4, .generation = @intToEnum(H.Generation, 0) }) == error.UseAfterFree);
     const c = try sm.create('c');
     const d = try sm.create('d');
     const e = try sm.create('e');
@@ -194,20 +217,20 @@ test "slot map" {
     try testing.expect((try sm.get(f)).* == 'f');
     try testing.expect((try sm.get(g)).* == 'g');
 
-    try testing.expectEqual(H{ .index = 0, .generation = 0 }, a);
-    try testing.expectEqual(H{ .index = 1, .generation = 0 }, b);
-    try testing.expectEqual(H{ .index = 2, .generation = 0 }, c);
-    try testing.expectEqual(H{ .index = 3, .generation = 0 }, d);
-    try testing.expectEqual(H{ .index = 4, .generation = 0 }, e);
-    try testing.expectEqual(H{ .index = 3, .generation = 1 }, f);
-    try testing.expectEqual(H{ .index = 2, .generation = 1 }, g);
+    try testing.expectEqual(H{ .index = 0, .generation = @intToEnum(H.Generation, 0) }, a);
+    try testing.expectEqual(H{ .index = 1, .generation = @intToEnum(H.Generation, 0) }, b);
+    try testing.expectEqual(H{ .index = 2, .generation = @intToEnum(H.Generation, 0) }, c);
+    try testing.expectEqual(H{ .index = 3, .generation = @intToEnum(H.Generation, 0) }, d);
+    try testing.expectEqual(H{ .index = 4, .generation = @intToEnum(H.Generation, 0) }, e);
+    try testing.expectEqual(H{ .index = 3, .generation = @intToEnum(H.Generation, 1) }, f);
+    try testing.expectEqual(H{ .index = 2, .generation = @intToEnum(H.Generation, 1) }, g);
 
     var temp = g;
-    for (0..255) |_| {
+    for (0..253) |_| {
         try testing.expect(try sm.remove(temp) == 'g');
         temp = try sm.create('g');
     }
-    try testing.expectEqual(H{ .index = g.index, .generation = 0 }, temp);
+    try testing.expectEqual(H{ .index = g.index, .generation = @intToEnum(H.Generation, 0) }, temp);
 
     try testing.expect(sm.create('h') == error.OutOfMemory);
 
@@ -228,11 +251,11 @@ test "slot map" {
     const k = try sm.create('k');
     const l = try sm.create('l');
 
-    try testing.expectEqual(H{ .index = 0, .generation = 1 }, h);
-    try testing.expectEqual(H{ .index = 1, .generation = 1 }, i);
-    try testing.expectEqual(H{ .index = 2, .generation = 1 }, j);
-    try testing.expectEqual(H{ .index = 3, .generation = 2 }, k);
-    try testing.expectEqual(H{ .index = 4, .generation = 1 }, l);
+    try testing.expectEqual(H{ .index = 0, .generation = @intToEnum(H.Generation, 1) }, h);
+    try testing.expectEqual(H{ .index = 1, .generation = @intToEnum(H.Generation, 1) }, i);
+    try testing.expectEqual(H{ .index = 2, .generation = @intToEnum(H.Generation, 1) }, j);
+    try testing.expectEqual(H{ .index = 3, .generation = @intToEnum(H.Generation, 2) }, k);
+    try testing.expectEqual(H{ .index = 4, .generation = @intToEnum(H.Generation, 1) }, l);
 
     try testing.expect(sm.get(a) == error.UseAfterFree);
     try testing.expect(sm.get(b) == error.UseAfterFree);
@@ -247,4 +270,7 @@ test "slot map" {
     try testing.expect((try sm.get(j)).* == 'j');
     try testing.expect((try sm.get(k)).* == 'k');
     try testing.expect((try sm.get(l)).* == 'l');
+
+    try testing.expect(!sm.exists(H.none));
+    try testing.expect(!sm.exists(H{ .index = 1, .generation = .none }));
 }

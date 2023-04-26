@@ -18,12 +18,7 @@ const max_pages = max_entities / 32;
 const max_archetypes = 40000;
 const first_shelf_count = 8;
 
-pub const Generation = switch (builtin.mode) {
-    .Debug, .ReleaseSafe => u32,
-    .ReleaseSmall, .ReleaseFast => u0,
-};
-pub const Index = slot_map.IndexType(max_entities);
-pub const Handle = slot_map.HandleType(Index, Generation);
+pub const Handle = slot_map.Handle(max_entities, u32);
 
 pub fn Entities(comptime registered_components: anytype) type {
     return struct {
@@ -40,7 +35,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         };
         pub const component_names = std.meta.fieldNames(@TypeOf(registered_components));
 
-        const HandleSlotMap = SlotMap(EntityPointer(Self), max_entities, Generation);
+        const HandleSlotMap = SlotMap(EntityPointer(Self), Handle);
 
         allocator: Allocator,
         handles: HandleSlotMap,
@@ -1132,7 +1127,7 @@ test "clear retaining capacity" {
 
         for (first_batch, second_batch) |first, second| {
             var expected = first;
-            expected.generation += 1;
+            expected.generation = @intToEnum(Handle.Generation, @enumToInt(expected.generation) + 1);
             try std.testing.expectEqual(expected, second);
         }
 
@@ -1244,7 +1239,7 @@ test "limits" {
     // Add the max number of entities
     for (0..max_entities) |i| {
         const entity = entities.create(.{});
-        try std.testing.expectEqual(Handle{ .index = @intCast(u20, i), .generation = 0 }, entity);
+        try std.testing.expectEqual(Handle{ .index = @intCast(Handle.Index, i), .generation = @intToEnum(Handle.Generation, 0) }, entity);
         try created.append(entity);
     }
     try std.testing.expectError(error.OutOfMemory, entities.createChecked(.{}));
@@ -1265,7 +1260,7 @@ test "limits" {
     // Create a bunch of entities again
     for (0..max_entities) |i| {
         try std.testing.expectEqual(
-            Handle{ .index = @intCast(u20, i), .generation = 1 },
+            Handle{ .index = @intCast(Handle.Index, i), .generation = @intToEnum(Handle.Generation, 1) },
             entities.create(.{}),
         );
     }
@@ -1274,11 +1269,11 @@ test "limits" {
     // TODO: update this test or no since we have it externally?
     // // Wrap a generation counter
     // {
-    //     const entity = Handle{ .index = 0, .generation = std.math.maxInt(Generation) };
+    //     const entity = Handle{ .index = 0, .generation = std.math.maxInt(Handle.Generation) };
     //     entities.slots[entity.index].generation = entity.generation;
     //     entities.swapRemove(entity);
     //     try std.testing.expectEqual(
-    //         Handle{ .index = 0, .generation = @intCast(Generation, 0) },
+    //         Handle{ .index = 0, .generation = @intCast(Handle.Generation, 0) },
     //         entities.create(.{}),
     //     );
     // }
@@ -1294,7 +1289,7 @@ test "safety" {
     try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(entity));
     try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(Handle{
         .index = 1,
-        .generation = 0,
+        .generation = @intToEnum(Handle.Generation, 0),
     }));
 }
 

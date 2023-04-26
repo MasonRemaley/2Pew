@@ -6,19 +6,16 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const EntityHandle = ecs.entities.Handle;
 
-// XXX: better to use 0 and initialize them to 1, so that changing the generation size doesn't mess with save data..?
-pub const dummy_generation = std.math.maxInt(ecs.entities.Generation);
-
-/// A handle whose generation is `dummy_generation` and whose index is relative to the start of the
+/// A handle whose generation is invalid and whose index is relative to the start of the
 /// prefab.
 pub const Handle = struct {
     relative: EntityHandle,
 
-    pub fn init(index: ecs.entities.Index) Handle {
+    pub fn init(index: EntityHandle.Index) Handle {
         return .{
             .relative = .{
                 .index = index,
-                .generation = dummy_generation,
+                .generation = .invalid,
             },
         };
     }
@@ -65,13 +62,6 @@ pub fn instantiateSpans(temporary: Allocator, entities: anytype, prefab: []ecs.e
         std.debug.panic("failed to instantiate prefab: {}", .{err});
 }
 
-// XXX: actually assert spans end at the right place...
-// XXX: support entities that are live via a reserved generation? kinda weird coupling between prefabs
-// and this system though. e.g. if we reserve a none value whose to say the game logic doesn't actually
-// want a none value sometimes? we could use invalid or something but like, how to document when it's appropriate
-// to use it? i guess just like, never in game only for out of game data then there's no conflicts..sort of?
-// we do want some way to do this--it'll be an annoying restriction if we can't!
-// XXX: do we need component_names when we can just use @tagName?
 pub fn instantiateSpansChecked(temporary: Allocator, entities: anytype, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*)), spans: []Span) Allocator.Error!void {
     const Entities = @TypeOf(entities.*);
 
@@ -83,9 +73,10 @@ pub fn instantiateSpansChecked(temporary: Allocator, entities: anytype, prefab: 
     }
 
     // Patch the handles
-    var i: ecs.entities.Index = 0; // XXX: type?
+    var i: usize = 0;
     for (spans) |span| {
-        const span_live_handles = live_handles[i .. i + span.len]; // XXX: make sure this arithmetic can't out of bounds or overflow in release mode here either!
+        // XXX: make sure this arithmetic can't out of bounds or overflow in release mode here either! or at least that file can't cause that?
+        const span_live_handles = live_handles[i .. i + span.len];
         for (span_live_handles) |live_handle| {
             inline for (comptime std.meta.tags(Entities.ComponentTag)) |component_tag| {
                 if (entities.getComponent(live_handle, component_tag)) |component| {
@@ -97,22 +88,25 @@ pub fn instantiateSpansChecked(temporary: Allocator, entities: anytype, prefab: 
                 }
             }
         }
-        i += @intCast(u20, span.len); // XXX: cast...
+        i += span.len;
     }
     assert(i == prefab.len);
 }
 
 fn patchHandle(live_handles: []const EntityHandle, handle: *EntityHandle) void {
-    if (handle.generation != dummy_generation) {
-        std.debug.panic("bad generation", .{});
+    // Early out if we have a valid handle
+    if (handle.generation != .invalid) return;
+
+    // Panic if we're out of bounds
+    if (handle.index >= live_handles.len) {
+        std.debug.panic("bad index", .{});
     }
-    // XXX: this is bounds checked even in release mode right?
-    handle.* = live_handles[handle.index];
+
+    // Apply the patch
+    handle.* = live_handles.ptr[handle.index];
 }
 
 // XXX: having this be a module that takes entities and returns a struct would be nice here...
-// XXX: make an easy way to generate the handles to fill this in with, can just be a struct called
-// PrefabHandles or something that keeps returning new handles
 fn visitHandles(context: anytype, value: anytype, comptime componentName: []const u8, visitHandle: fn (@TypeOf(context), *EntityHandle) void) void {
     if (@TypeOf(value.*) == EntityHandle) {
         visitHandle(context, value);
