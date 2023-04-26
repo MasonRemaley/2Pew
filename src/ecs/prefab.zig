@@ -108,10 +108,24 @@ fn patchHandle(live_handles: []const EntityHandle, handle: *EntityHandle) void {
     handle.* = live_handles.ptr[handle.index];
 }
 
+fn unsupportedType(
+    comptime componentName: []const u8,
+    comptime ty: type,
+    comptime desc: []const u8,
+) noreturn {
+    @compileError("prefabs do not support " ++ desc ++ ", but component `" ++ componentName ++ "` contains `" ++ @typeName(ty) ++ "`");
+}
+
 // XXX: having this be a module that takes entities and returns a struct would be nice here...
-fn visitHandles(context: anytype, value: anytype, comptime componentName: []const u8, visitHandle: fn (@TypeOf(context), *EntityHandle) void) void {
+// XXX: reference notes, consider supporting an escape hatch for components with unsupported types
+fn visitHandles(
+    context: anytype,
+    value: anytype,
+    comptime componentName: []const u8,
+    cb: fn (@TypeOf(context), *EntityHandle) void,
+) void {
     if (@TypeOf(value.*) == EntityHandle) {
-        visitHandle(context, value);
+        cb(context, value);
         return;
     }
 
@@ -134,20 +148,33 @@ fn visitHandles(context: anytype, value: anytype, comptime componentName: []cons
         => {},
 
         // Recurse
-        .Optional => if (value.*) |*inner| visitHandles(context, inner, componentName, visitHandle),
-        .Array => for (value) |*item| visitHandles(context, item, componentName, visitHandle),
+        .Optional => if (value.*) |*inner| visitHandles(context, inner, componentName, cb),
+        .Array => for (value) |*item| visitHandles(context, item, componentName, cb),
         .Struct => |s| inline for (s.fields) |field| {
-            visitHandles(context, &@field(value.*, field.name), componentName, visitHandle);
+            visitHandles(context, &@field(value.*, field.name), componentName, cb);
+        },
+        .Union => |u| if (u.tag_type) |Tag| {
+            inline for (u.fields) |field| {
+                if (@field(Tag, field.name) == @as(Tag, value.*)) {
+                    visitHandles(context, &@field(value.*, field.name), componentName, cb);
+                }
+            }
+        } else {
+            unsupportedType(componentName, @TypeOf(value.*), "untagged unions");
         },
 
         // Give up
-        // XXX: better message?
-        .AnyFrame, .Frame, .Fn, .Opaque, .Pointer => @compileError("component `" ++ componentName ++ "` contains unsupported type " ++ @typeName(@TypeOf(value.*))),
-        // XXX: ...implement, make sure to check all variants comptime
-        .Union => {},
+        .AnyFrame,
+        .Frame,
+        .Fn,
+        .Opaque,
+        .Pointer,
+        => unsupportedType(componentName, @TypeOf(value.*), "pointers"),
+
+        // We only support numerical vectors
         .Vector => |vector| switch (vector.child) {
             .Int, .Float => {},
-            _ => @compileError("component `" ++ componentName ++ "` contains unsupported type " ++ @typeName(@TypeOf(value.*))),
+            _ => unsupportedType(componentName, @TypeOf(value.*), "pointers"),
         },
     }
 }
