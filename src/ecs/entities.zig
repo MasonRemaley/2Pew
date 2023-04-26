@@ -604,6 +604,7 @@ test "basic" {
     try std.testing.expect(iter.next() == null);
 }
 
+// XXX: make member of entities? others like this too?
 pub fn PrefabEntity(comptime T: type) type {
     return ComponentMap(T, .Auto, struct {
         fn FieldType(comptime _: T.ComponentTag, comptime C: type) type {

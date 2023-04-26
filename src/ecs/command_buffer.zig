@@ -2,13 +2,20 @@ const std = @import("std");
 const ecs = @import("index.zig");
 const NoAlloc = @import("../no_alloc.zig").NoAlloc;
 const Handle = ecs.entities.Handle;
-const PrefabHandle = ecs.prefab.Handle;
-const PrefabSpan = ecs.prefab.Span;
 const Allocator = std.mem.Allocator;
 const parenting = ecs.parenting;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 pub fn CommandBuffer(comptime Entities: type) type {
+    const prefabs = ecs.prefabs.init(Entities);
+    const PrefabHandle = prefabs.Handle;
+    const PrefabEntity = ecs.entities.PrefabEntity(Entities);
+    const ArchetypeChange = ecs.entities.ArchetypeChange(Entities);
+    const ArchetypeChangeCommand = struct {
+        handle: Handle,
+        change: ArchetypeChange,
+    };
+
     return struct {
         pub const Descriptor = struct {
             prefab_capacity: usize,
@@ -16,13 +23,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
             remove_capacity: usize,
             arch_change_capacity: usize,
         };
-
-        const PrefabEntity = ecs.entities.PrefabEntity(Entities);
-        const ArchetypeChange = ecs.entities.ArchetypeChange(Entities);
-        const ArchetypeChangeCommand = struct {
-            handle: Handle,
-            change: ArchetypeChange,
-        };
+        pub const PrefabSpan = prefabs.Span;
 
         entities: *Entities,
         prefab_spans: ArrayListUnmanaged(PrefabSpan),
@@ -137,7 +138,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
                 // XXX: temp gpa...
                 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
                 defer _ = gpa.deinit();
-                try ecs.prefab.instantiateSpansChecked(gpa.allocator(), self.entities, self.prefab_entities.items, self.prefab_spans.items);
+                try prefabs.instantiateSpansChecked(gpa.allocator(), self.entities, self.prefab_entities.items, self.prefab_spans.items);
             }
 
             // XXX: Do we still wanna do this here?

@@ -39,10 +39,11 @@ const Entities = ecs.entities.Entities(.{
     .hook = Hook,
     .front_shield = struct {},
 });
+const prefabs = ecs.prefabs.init(Entities);
+const PrefabHandle = prefabs.Handle;
 const PrefabEntity = ecs.entities.PrefabEntity(Entities);
 const EntityHandle = ecs.entities.Handle;
 const DeferredHandle = ecs.command_buffer.DeferredHandle;
-const PrefabHandle = ecs.prefab.Handle;
 const ComponentFlags = ecs.entities.ComponentFlags(Entities);
 const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
 const parenting = ecs.parenting;
