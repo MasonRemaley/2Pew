@@ -605,6 +605,7 @@ test "basic" {
 }
 
 // XXX: make member of entities? others like this too?
+// XXX: naming..?
 pub fn PrefabEntity(comptime T: type) type {
     return ComponentMap(T, .Auto, struct {
         fn FieldType(comptime _: T.ComponentTag, comptime C: type) type {
@@ -635,7 +636,8 @@ pub fn EntityPointer(comptime T: type) type {
     };
 }
 
-fn ComponentMap(
+// XXX: public? make part of entities? or just make part of ecs but not public outside?
+pub fn ComponentMap(
     comptime T: type,
     comptime layout: std.builtin.Type.ContainerLayout,
     comptime Map: type,

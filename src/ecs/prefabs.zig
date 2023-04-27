@@ -9,7 +9,19 @@ const EntityHandle = ecs.entities.Handle;
 // XXX: add tests? what about for command buffer?
 // XXX: reference notes, clean up diffs before merging
 // XXX: consider supporting an escape hatch for components with unsupported types
-pub fn init(comptime Entities: type) type {
+// - could this work easily if we had both parent and child and sibling pointers to do a fix up where
+// all you need in the data is parent since that's easiest? that'd work I think!!
+// - consider that this changes the type of prefab since some types would be substituted out or removed
+// etc
+// - we could either allow subbing out components, or individual types. we also might wanna do this
+// logic in a separate serialization namespace that allows us to input a serialized prefab and get
+// out a live one. i think we should sub out whole components, at least for now--that's simplest,
+// and types doesn't necessarily handle this since a component may not have a unique type and we
+// might wanna do logic e.g. adding the sibling pointers and such?
+// XXX: also could just init the entire ecs namespace instead of individual parts? doesn't even
+// necessarily require changing other code since we can alias stuff etc...then again does that add
+// coupling or no?
+pub fn init(comptime Entities: type, comptime ComponentMapper: type) type {
     return struct {
         /// A handle whose generation is invalid and whose index is relative to the start of the
         /// prefab.
@@ -112,17 +124,17 @@ pub fn init(comptime Entities: type) type {
         }
 
         fn unsupportedType(
-            comptime componentName: []const u8,
+            comptime component_name: []const u8,
             comptime ty: type,
             comptime desc: []const u8,
         ) noreturn {
-            @compileError("prefabs do not support " ++ desc ++ ", but component `" ++ componentName ++ "` contains `" ++ @typeName(ty) ++ "`");
+            @compileError("prefabs do not support " ++ desc ++ ", but component `" ++ component_name ++ "` contains `" ++ @typeName(ty) ++ "`");
         }
 
         fn visitHandles(
             context: anytype,
             value: anytype,
-            comptime componentName: []const u8,
+            comptime component_name: []const u8,
             cb: fn (@TypeOf(context), *EntityHandle) void,
         ) void {
             if (@TypeOf(value.*) == EntityHandle) {
@@ -149,19 +161,19 @@ pub fn init(comptime Entities: type) type {
                 => {},
 
                 // Recurse
-                .Optional => if (value.*) |*inner| visitHandles(context, inner, componentName, cb),
-                .Array => for (value) |*item| visitHandles(context, item, componentName, cb),
+                .Optional => if (value.*) |*inner| visitHandles(context, inner, component_name, cb),
+                .Array => for (value) |*item| visitHandles(context, item, component_name, cb),
                 .Struct => |s| inline for (s.fields) |field| {
-                    visitHandles(context, &@field(value.*, field.name), componentName, cb);
+                    visitHandles(context, &@field(value.*, field.name), component_name, cb);
                 },
                 .Union => |u| if (u.tag_type) |Tag| {
                     inline for (u.fields) |field| {
                         if (@field(Tag, field.name) == @as(Tag, value.*)) {
-                            visitHandles(context, &@field(value.*, field.name), componentName, cb);
+                            visitHandles(context, &@field(value.*, field.name), component_name, cb);
                         }
                     }
                 } else {
-                    unsupportedType(componentName, @TypeOf(value.*), "untagged unions");
+                    unsupportedType(component_name, @TypeOf(value.*), "untagged unions");
                 },
 
                 // Give up
@@ -170,12 +182,12 @@ pub fn init(comptime Entities: type) type {
                 .Fn,
                 .Opaque,
                 .Pointer,
-                => unsupportedType(componentName, @TypeOf(value.*), "pointers"),
+                => unsupportedType(component_name, @TypeOf(value.*), "pointers"),
 
                 // We only support numerical vectors
                 .Vector => |vector| switch (vector.child) {
                     .Int, .Float => {},
-                    _ => unsupportedType(componentName, @TypeOf(value.*), "pointers"),
+                    _ => unsupportedType(component_name, @TypeOf(value.*), "pointers"),
                 },
             }
         }
