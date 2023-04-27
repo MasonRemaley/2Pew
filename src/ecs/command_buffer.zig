@@ -6,8 +6,8 @@ const Allocator = std.mem.Allocator;
 const parenting = ecs.parenting;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
-pub fn CommandBuffer(comptime Entities: type, comptime PrefabComponentMapper: type) type {
-    const prefabs = ecs.prefabs.init(Entities, PrefabComponentMapper);
+pub fn CommandBuffer(comptime Entities: type, comptime Serializer: type) type {
+    const prefabs = ecs.prefabs.init(Entities, Serializer);
     const PrefabEntity = ecs.entities.PrefabEntity(Entities);
     const ArchetypeChange = ecs.entities.ArchetypeChange(Entities);
     const ArchetypeChangeCommand = struct {

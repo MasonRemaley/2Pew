@@ -21,7 +21,8 @@ const EntityHandle = ecs.entities.Handle;
 // XXX: also could just init the entire ecs namespace instead of individual parts? doesn't even
 // necessarily require changing other code since we can alias stuff etc...then again does that add
 // coupling or no?
-pub fn init(comptime Entities: type, comptime ComponentMapper: type) type {
+pub fn init(comptime Entities: type, comptime Serializer: type) type {
+    _ = Serializer; // XXX: ...
     return struct {
         /// A handle whose generation is invalid and whose index is relative to the start of the
         /// prefab.

@@ -39,7 +39,19 @@ const Entities = ecs.entities.Entities(.{
     .hook = Hook,
     .front_shield = struct {},
 });
-const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities, struct {});
+const Serializer = ecs.serializer.Serializer(Entities, .{
+    // XXX: just a test...
+    .damage = struct {
+        pub fn serialize(d: Damage) f32 {
+            return d.hp;
+        }
+
+        pub fn deserialize(hp: f32) f32 {
+            return .{ .hp = hp };
+        }
+    },
+});
+const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities, Serializer);
 const PrefabEntity = ecs.entities.PrefabEntity(Entities);
 const EntityHandle = ecs.entities.Handle;
 const DeferredHandle = ecs.command_buffer.DeferredHandle;
@@ -56,23 +68,6 @@ const parenting = ecs.parenting;
 const profile = false;
 
 pub fn main() !void {
-    // XXX: ...
-    const E = ecs.serializer.Serializer(Entities, struct {
-        pub const damage = struct {
-            pub fn serialize(d: Damage) f32 {
-                return d.hp;
-            }
-
-            pub fn deserialize(hp: f32) f32 {
-                return .{ .hp = hp };
-            }
-        };
-    });
-    const e = E.Entity{
-        .damage = 0.0,
-    };
-    std.debug.print("{}\n", .{e});
-
     const gpa = std.heap.c_allocator;
 
     // Init SDL

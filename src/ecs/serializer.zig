@@ -1,22 +1,21 @@
 const std = @import("std");
 const ecs = @import("index.zig");
 
-// XXX: replace Substitutions with tuple struct
 // XXX: maybe move the renumbering code here too but allow streaming it? does that make any sense? do
 // we need to renumber when saving from inside of the ecs? I guess so? how does that work?
-pub fn Serializer(comptime Entities: type, comptime Substitutions: type) type {
+// XXX: we probably SHOULD actually implement serialization here to make sure we understand the problem
+// space (even if that just means feeding to the builtin json serializer or whatever for now! it should
+// be decoupled for that so tbh that's a better test than writing out own where we could make it special
+// or something.)
+pub fn Serializer(comptime Entities: type, comptime Substitutions: anytype) type {
     // Make sure the component mapper does not have any unused maps
-    inline for (@typeInfo(Substitutions).Struct.decls) |decl| {
-        if (!decl.is_pub) {
-            @compileError("`Substitutions` contains private decl `" ++ decl.name ++ "`");
-        }
-
+    inline for (@typeInfo(@TypeOf(Substitutions)).Struct.fields) |field| {
         inline for (Entities.component_names) |component_name| {
-            if (std.mem.eql(u8, decl.name, component_name)) {
+            if (std.mem.eql(u8, field.name, component_name)) {
                 break;
             }
         } else {
-            @compileError("`Substitutions` contains decl for non-existent component `" ++ decl.name ++ "`");
+            @compileError("`Substitutions` contains field for non-existent component `" ++ field.name ++ "`");
         }
     }
 
@@ -71,8 +70,8 @@ pub fn Serializer(comptime Entities: type, comptime Substitutions: type) type {
         }
 
         fn findMap(comptime componentTag: Entities.ComponentTag) ?type {
-            inline for (@typeInfo(Substitutions).Struct.decls) |decl| {
-                if (std.mem.eql(u8, decl.name, @tagName(componentTag))) {
+            inline for (@typeInfo(@TypeOf(Substitutions)).Struct.fields) |field| {
+                if (std.mem.eql(u8, field.name, @tagName(componentTag))) {
                     return @field(Substitutions, @tagName(componentTag));
                 }
             }
