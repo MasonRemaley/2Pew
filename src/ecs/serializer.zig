@@ -8,6 +8,9 @@ const ecs = @import("index.zig");
 // be decoupled for that so tbh that's a better test than writing out own where we could make it special
 // or something.)
 pub fn Serializer(comptime Entities: type, comptime Substitutions: anytype) type {
+    const ComponentTag = Entities.ComponentTag;
+    const PrefabEntity = ecs.entities.PrefabEntity(Entities); // XXX: ... naming?
+
     // Make sure the component mapper does not have any unused maps
     inline for (@typeInfo(@TypeOf(Substitutions)).Struct.fields) |field| {
         inline for (Entities.component_names) |component_name| {
@@ -22,7 +25,7 @@ pub fn Serializer(comptime Entities: type, comptime Substitutions: anytype) type
     // Create the serializer
     return struct {
         pub const Entity = ecs.entities.ComponentMap(Entities, .Auto, struct {
-            pub fn FieldType(comptime tag: Entities.ComponentTag, comptime Type: type) type {
+            pub fn FieldType(comptime tag: ComponentTag, comptime Type: type) type {
                 if (findMap(tag)) |map| {
                     return ?@typeInfo(@TypeOf(map.serialize)).Fn.return_type.?;
                 } else {
@@ -30,17 +33,36 @@ pub fn Serializer(comptime Entities: type, comptime Substitutions: anytype) type
                 }
             }
 
-            pub fn default_value(comptime _: Entities.ComponentTag, comptime _: type) ?*const anyopaque {
+            pub fn default_value(comptime _: ComponentTag, comptime _: type) ?*const anyopaque {
                 return &null;
             }
 
-            pub fn skip(comptime _: Entities.ComponentTag) bool {
+            pub fn skip(comptime _: ComponentTag) bool {
                 return false;
             }
         });
 
-        pub fn serializeComponent(
-            comptime componentTag: Entities.ComponentTag,
+        // XXX: naming, if we allow doing multiple then it makes sense I think, otherwise just name deserialize
+        // XXX: make the reverse, and allow doing for ALL entities and renumbering or whatever? individual
+        // ones do no renumbering? should they visit handles and set valid or anything? or always done
+        // seprately in loop etc? document too!
+        // XXX: right now we call this on instantation. alternatively, we could call it when queuing up the
+        // prefab. think about the tradeoffs at some point.
+        pub fn deserializeEntity(entity: Entity) PrefabEntity {
+            var result: PrefabEntity = undefined;
+            inline for (Entities.component_names, 0..) |component_name, i| {
+                const component_tag = @intToEnum(ComponentTag, i);
+                const component = @field(entity, component_name);
+                @field(result, component_name) = if (component) |comp|
+                    serializeComponent(component_tag, comp)
+                else
+                    null;
+            }
+            return result;
+        }
+
+        fn serializeComponent(
+            comptime componentTag: ComponentTag,
             component: ComponentType(componentTag),
         ) SerializedComponentType(componentTag) {
             if (findMap(componentTag)) |map| {
@@ -50,8 +72,8 @@ pub fn Serializer(comptime Entities: type, comptime Substitutions: anytype) type
             }
         }
 
-        pub fn deserializeComponent(
-            comptime componentTag: Entities.ComponentTag,
+        fn deserializeComponent(
+            comptime componentTag: ComponentTag,
             serializedComponent: SerializedComponentType(componentTag),
         ) ComponentType(componentTag) {
             if (findMap(componentTag)) |map| {
@@ -61,15 +83,15 @@ pub fn Serializer(comptime Entities: type, comptime Substitutions: anytype) type
             }
         }
 
-        fn ComponentType(componentTag: Entities.ComponentTag) type {
-            return @typeInfo(@field(ecs.entities.PrefabEntity, @tagName(componentTag))).Optional.child;
+        fn ComponentType(comptime componentTag: ComponentTag) type {
+            return @typeInfo(@TypeOf(@field(PrefabEntity{}, @tagName(componentTag)))).Optional.child;
         }
 
-        fn SerializedComponentType(componentTag: Entities.ComponentTag) type {
-            return @typeInfo(@field(Entity, @tagName(componentTag))).Optional.child;
+        fn SerializedComponentType(comptime componentTag: ComponentTag) type {
+            return @typeInfo(@TypeOf(@field(Entity{}, @tagName(componentTag)))).Optional.child;
         }
 
-        fn findMap(comptime componentTag: Entities.ComponentTag) ?type {
+        fn findMap(comptime componentTag: ComponentTag) ?type {
             inline for (@typeInfo(@TypeOf(Substitutions)).Struct.fields) |field| {
                 if (std.mem.eql(u8, field.name, @tagName(componentTag))) {
                     return @field(Substitutions, @tagName(componentTag));

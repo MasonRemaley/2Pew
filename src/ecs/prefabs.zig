@@ -22,7 +22,6 @@ const EntityHandle = ecs.entities.Handle;
 // necessarily require changing other code since we can alias stuff etc...then again does that add
 // coupling or no?
 pub fn init(comptime Entities: type, comptime Serializer: type) type {
-    _ = Serializer; // XXX: ...
     return struct {
         /// A handle whose generation is invalid and whose index is relative to the start of the
         /// prefab.
@@ -49,7 +48,7 @@ pub fn init(comptime Entities: type, comptime Serializer: type) type {
             self_contained: bool,
         };
 
-        pub fn instantiate(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*))) void {
+        pub fn instantiate(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []Serializer.Entity) void {
             return instantiateSpans(
                 temporary,
                 entities,
@@ -61,7 +60,7 @@ pub fn init(comptime Entities: type, comptime Serializer: type) type {
             );
         }
 
-        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*))) Allocator.Error!void {
+        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []Serializer.Entity) Allocator.Error!void {
             return instantiateSpansChecked(
                 temporary,
                 entities,
@@ -75,17 +74,19 @@ pub fn init(comptime Entities: type, comptime Serializer: type) type {
 
         /// Instantiate a prefab. Handles are assumed to be relative to the start of the prefab, and will be
         /// patched. Asserts that spans covers all entities.
-        pub fn instantiateSpans(temporary: Allocator, entities: *Entities, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*)), spans: []Span) void {
+        pub fn instantiateSpans(temporary: Allocator, entities: *Entities, prefab: []Serializer.Entity, spans: []Span) void {
             instantiateSpansChecked(temporary, entities, prefab, spans) catch |err|
                 std.debug.panic("failed to instantiate prefab: {}", .{err});
         }
 
-        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []ecs.entities.PrefabEntity(@TypeOf(entities.*)), spans: []Span) Allocator.Error!void {
+        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []Serializer.Entity, spans: []Span) Allocator.Error!void {
             // Instantiate the entities
             var live_handles = try temporary.alloc(EntityHandle, prefab.len);
             defer temporary.free(live_handles);
             for (prefab, 0..) |prefab_entity, i| {
-                live_handles[i] = try entities.createChecked(prefab_entity);
+                // XXX: why does skipping deserialzie result in type that's double escaped..?
+                const deserialized = Serializer.deserializeEntity(prefab_entity);
+                live_handles[i] = try entities.createChecked(deserialized);
             }
 
             // Patch the handles

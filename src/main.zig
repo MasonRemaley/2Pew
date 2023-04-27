@@ -41,18 +41,17 @@ const Entities = ecs.entities.Entities(.{
 });
 const Serializer = ecs.serializer.Serializer(Entities, .{
     // XXX: just a test...
-    .damage = struct {
-        pub fn serialize(d: Damage) f32 {
-            return d.hp;
-        }
+    // .damage = struct {
+    //     pub fn serialize(d: Damage) f32 {
+    //         return d.hp;
+    //     }
 
-        pub fn deserialize(hp: f32) f32 {
-            return .{ .hp = hp };
-        }
-    },
+    //     pub fn deserialize(hp: f32) f32 {
+    //         return .{ .hp = hp };
+    //     }
+    // },
 });
 const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities, Serializer);
-const PrefabEntity = ecs.entities.PrefabEntity(Entities);
 const EntityHandle = ecs.entities.Handle;
 const DeferredHandle = ecs.command_buffer.DeferredHandle;
 const ComponentFlags = ecs.entities.ComponentFlags(Entities);
@@ -328,7 +327,7 @@ fn update(
                     const base_vel = if (std.crypto.random.boolean()) entity.rb.vel else other.rb.vel;
                     const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
-                    _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+                    _ = command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
                         .{
                             .lifetime = .{
                                 .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
@@ -500,7 +499,7 @@ fn update(
                         ];
                         const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
-                        _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+                        _ = command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
                             .{
                                 .lifetime = .{
                                     .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
@@ -545,7 +544,7 @@ fn update(
             if (entity.health.hp <= 0) {
                 // spawn explosion here
                 if (entity.transform) |trans| {
-                    _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+                    _ = command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
                         .{
                             .lifetime = .{
                                 .seconds = 100,
@@ -845,7 +844,7 @@ fn update(
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+                _ = command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
                     .{
                         .damage = .{
                             .hp = entity.turret.projectile_damage,
@@ -1566,7 +1565,7 @@ const Game = struct {
         angle: f32,
         input: Input,
     ) PrefabHandle {
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
             .{
                 .ship = .{
                     .class = .ranger,
@@ -1624,7 +1623,7 @@ const Game = struct {
         input: Input,
     ) PrefabHandle {
         const radius = 24;
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
             .{
                 .ship = .{
                     .class = .triangle,
@@ -1682,7 +1681,7 @@ const Game = struct {
         angle: f32,
         input: Input,
     ) PrefabHandle {
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
             .{
                 .ship = .{
                     .class = .militia,
@@ -1744,7 +1743,7 @@ const Game = struct {
         const ship_handle = PrefabHandle.init(0);
 
         const radius = 32;
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
             .{
                 .ship = .{
                     .class = .kevin,
@@ -1837,7 +1836,7 @@ const Game = struct {
         // XXX: cast...
         // const ship_handle = PrefabHandle.init(@intCast(u20, command_buffer.prefab_entities.items.len));
         const ship_handle = PrefabHandle.init(0);
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
             .{
                 .ship = .{
                     .class = .wendy,
@@ -2454,7 +2453,7 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, std.crypto.random.float(f32)))
                 .plus(display_center);
 
-            _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+            _ = command_buffer.appendInstantiate(true, &[_]Serializer.Entity{
                 .{
                     .sprite = sprite,
                     .transform = .{
