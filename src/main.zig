@@ -223,7 +223,7 @@ fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
                     // XXX: temp allocator...
                     // XXX: error handling...
                     const gpa = std.heap.c_allocator;
-                    const serialized = prefabs.serialize(gpa, entities) catch unreachable;
+                    const serialized = prefabs.serialize(gpa, entities);
                     defer gpa.free(serialized);
 
                     // XXX: error hadnling
@@ -244,8 +244,6 @@ fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
                     // XXX: temp allocator...
                     // XXX: error handling...
                     const gpa = std.heap.c_allocator;
-                    const serialized = prefabs.serialize(gpa, entities) catch unreachable;
-                    defer gpa.free(serialized);
 
                     // XXX: error hadnling
                     // XXX: error handling

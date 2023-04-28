@@ -111,13 +111,16 @@ pub fn init(comptime Entities: type) type {
             assert(i == prefab.len);
         }
 
-        // XXX: do we also need a temporary allocator? or can we like allocate both and then free the
-        // last one and have that work if it's a fixed buffer allocator? But we might wanna reserve
-        // that space up front, etc. We'll figure it out once we get the basics working!
-        // XXX: checked and unchecked variants?
-        // XXX: make this take a const pointer to entiteis (iterator doesn't allow it yet, but should
+        // XXX: make this and checked take a const pointer to entities (iterator doesn't allow it yet, but should
         // if mutable is always false!)
-        pub fn serialize(allocator: Allocator, entities: *Entities) Allocator.Error![]PrefabEntity {
+        // XXX: document how much memory it needs on top of the memory for the result so we can preallocate
+        // it?
+        pub fn serialize(allocator: Allocator, entities: *Entities) []PrefabEntity {
+            return serializeChecked(allocator, entities) catch |err|
+                std.debug.panic("serialize failed: {}", .{err});
+        }
+
+        pub fn serializeChecked(allocator: Allocator, entities: *Entities) Allocator.Error![]PrefabEntity {
             var serialized = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, entities.len());
             errdefer serialized.deinit(allocator);
 
@@ -150,8 +153,6 @@ pub fn init(comptime Entities: type) type {
                 .entities = entities,
             };
             for (serialized.items) |*serialized_entity| {
-                // XXX: use this instead of component_names? Or is there a less weird way that
-                // doesn't support types we don't need it to?
                 inline for (comptime std.meta.tags(Entities.ComponentTag)) |component_tag| {
                     if (@field(serialized_entity, @tagName(component_tag))) |*component| {
                         visitHandles(
