@@ -68,6 +68,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 archetype_list.deinit(self.allocator);
             }
             self.archetype_lists.deinit(self.allocator);
+            self.* = undefined;
         }
 
         pub fn create(self: *Self, entity: anytype) Handle {
@@ -170,11 +171,11 @@ pub fn Entities(comptime registered_components: anytype) type {
             setComponents(pointer, changes.add);
         }
 
-        pub fn getComponent(self: *Self, entity: Handle, comptime component: ComponentTag) ?*component_types[@enumToInt(component)] {
+        pub fn getComponent(self: *const Self, entity: Handle, comptime component: ComponentTag) ?*component_types[@enumToInt(component)] {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
-        pub fn getComponentChecked(self: *Self, entity: Handle, comptime component: ComponentTag) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
+        pub fn getComponentChecked(self: *const Self, entity: Handle, comptime component: ComponentTag) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
             const entity_pointer = try self.handles.get(entity);
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
@@ -188,8 +189,12 @@ pub fn Entities(comptime registered_components: anytype) type {
             self.handles.clearRetainingCapacity();
         }
 
-        pub fn iterator(self: *Self, comptime components: IteratorDescriptor(Self)) Iterator(Self, components) {
-            return Iterator(Self, components).init(self);
+        pub fn iterator(self: *Self, comptime components: IteratorDescriptor(Self)) Iterator(Self, true, components) {
+            return Iterator(Self, true, components).init(self);
+        }
+
+        pub fn constIterator(self: *const Self, comptime components: IteratorDescriptor(Self)) Iterator(Self, false, components) {
+            return Iterator(Self, false, components).init(self);
         }
 
         pub fn len(self: *const Self) Handle.Index {
@@ -264,7 +269,7 @@ fn ArchetypeList(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        pub const HandleIterator = SegmentedListFirstShelfCount(Handle, first_shelf_count, false).Iterator;
+        pub const HandleIterator = SegmentedListFirstShelfCount(Handle, first_shelf_count, false).ConstIterator;
 
         archetype: ComponentFlags(T),
         handles: SegmentedListFirstShelfCount(Handle, first_shelf_count, false) = .{},
@@ -279,6 +284,7 @@ fn ArchetypeList(comptime T: type) type {
                 @field(self.comps, comp_name).deinit(allocator);
             }
             self.handles.deinit(allocator);
+            self.* = undefined;
         }
 
         // TODO: could return a set of optional pointers to avoid recalculating them, could
@@ -295,7 +301,7 @@ fn ArchetypeList(comptime T: type) type {
             return @intCast(u32, index);
         }
 
-        pub fn swapRemove(self: *Self, index: u32, handles: *T.HandleSlotMap) void {
+        pub fn swapRemove(self: *Self, index: u32, handles: *const T.HandleSlotMap) void {
             assert(index < self.handles.len);
             inline for (T.component_names) |name| {
                 if (self.archetype.isNameSet(name)) {
@@ -311,8 +317,8 @@ fn ArchetypeList(comptime T: type) type {
             }
         }
 
-        pub fn handleIterator(self: *Self) HandleIterator {
-            return self.handles.iterator(0);
+        pub fn handleIterator(self: *const Self) HandleIterator {
+            return self.handles.constIterator(0);
         }
 
         pub fn getComponent(self: *Self, index: u32, comptime component: T.ComponentTag) ?*T.component_types[@enumToInt(component)] {
@@ -356,12 +362,13 @@ pub fn IteratorDescriptor(comptime T: type) type {
     });
 }
 
-pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) type {
+pub fn Iterator(comptime EntitiesT: type, comptime mutable: bool, comptime descriptor: IteratorDescriptor(EntitiesT)) type {
     return struct {
-        const required_components = ComponentFlags(T).initFromIteratorDescriptorRequired(descriptor);
-        const Item = ComponentMap(T, .Auto, struct {
-            fn FieldType(comptime component: T.ComponentTag, comptime C: type) type {
-                const name = T.component_names[@enumToInt(component)];
+        const Self = @This();
+        const required_components = ComponentFlags(EntitiesT).initFromIteratorDescriptorRequired(descriptor);
+        const Item = ComponentMap(EntitiesT, .Auto, struct {
+            fn FieldType(comptime component: EntitiesT.ComponentTag, comptime C: type) type {
+                const name = EntitiesT.component_names[@enumToInt(component)];
 
                 var Result = C;
 
@@ -378,7 +385,7 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
                 return Result;
             }
 
-            fn default_value(comptime component: T.ComponentTag, comptime _: type) ?*const anyopaque {
+            fn default_value(comptime component: EntitiesT.ComponentTag, comptime _: type) ?*const anyopaque {
                 if (!required_components.isSet(component)) {
                     return null;
                 } else {
@@ -386,21 +393,21 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
                 }
             }
 
-            fn skip(comptime component: T.ComponentTag) bool {
-                return @field(descriptor, T.component_names[@enumToInt(component)]) == null;
+            fn skip(comptime component: EntitiesT.ComponentTag) bool {
+                return @field(descriptor, EntitiesT.component_names[@enumToInt(component)]) == null;
             }
         });
 
-        entities: *T,
+        entities: if (mutable) *EntitiesT else *const EntitiesT,
         // It's measurably faster to use the iterator rather than index (less indirection), removing
         // indirection by storing pointer to array is equiavlent in release mode and faster in debug
         // mode.
-        archetype_lists: AutoArrayHashMapUnmanaged(ComponentFlags(T), ArchetypeList(T)).Iterator,
-        archetype_list: ?*ArchetypeList(T),
-        handle_iterator: ArchetypeList(T).HandleIterator,
+        archetype_lists: AutoArrayHashMapUnmanaged(ComponentFlags(EntitiesT), ArchetypeList(EntitiesT)).Iterator,
+        archetype_list: ?*ArchetypeList(EntitiesT),
+        handle_iterator: ArchetypeList(EntitiesT).HandleIterator,
         current_handle: Handle,
 
-        pub fn next(self: *@This()) ?Item {
+        pub fn next(self: *Self) ?Item {
             while (true) {
                 // If we don't have a page list, find the next compatible archetype's page
                 // list
@@ -423,8 +430,8 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
                         comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).prealloc_count == 0);
                         comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);
 
-                        comptime var component = T.componentTag(field.name);
-                        comptime var ComponentType = T.component_types[@enumToInt(component)];
+                        comptime var component = EntitiesT.componentTag(field.name);
+                        comptime var ComponentType = EntitiesT.component_types[@enumToInt(component)];
 
                         const required = @field(descriptor, field.name) != null and !@field(descriptor, field.name).?.optional;
                         const exists = required or self.archetype_list.?.archetype.isNameSet(field.name);
@@ -449,22 +456,25 @@ pub fn Iterator(comptime T: type, comptime descriptor: IteratorDescriptor(T)) ty
         }
 
         // TODO: test coverage
-        pub fn handle(self: *const @This()) Handle {
+        pub fn handle(self: *const Self) Handle {
             assert(self.archetype_list != null);
             return self.current_handle;
         }
 
-        pub fn swapRemove(self: *@This()) void {
+        pub fn swapRemove(self: *Self) void {
             self.swapRemoveChecked() catch unreachable;
         }
 
-        fn swapRemoveChecked(self: *@This()) error{NothingToRemove}!void {
+        fn swapRemoveChecked(self: *Self) error{NothingToRemove}!void {
+            if (!mutable) {
+                @compileError("remove not supported on constant iterator");
+            }
             if (self.archetype_list == null) return error.NothingToRemove;
             _ = self.handle_iterator.prev();
             self.entities.swapRemoveChecked(self.handle_iterator.peek().?.*) catch unreachable;
         }
 
-        fn init(entities: *T) @This() {
+        fn init(entities: anytype) Self {
             return .{
                 .entities = entities,
                 .archetype_lists = entities.archetype_lists.iterator(),

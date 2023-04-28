@@ -40,7 +40,7 @@ pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type
 
         // XXX: annoying that i need to do this..but it's fine?
         pub fn jsonStringify(
-            self: @This(),
+            self: Self,
             options: std.json.StringifyOptions,
             out_stream: anytype,
         ) !void {
@@ -67,7 +67,7 @@ pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type
             .generation = .none,
         };
 
-        pub fn eql(lhs: @This(), rhs: @This()) bool {
+        pub fn eql(lhs: Self, rhs: Self) bool {
             return std.meta.eql(lhs, rhs);
         }
     };
@@ -75,6 +75,7 @@ pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type
 
 pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
     return struct {
+        const Self = @This();
         const capacity = HandleT.capacity;
         const Index = HandleT.Index;
         const Generation = HandleT.Generation;
@@ -86,7 +87,7 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
         slots: ArrayListUnmanaged(Slot),
         free: ArrayListUnmanaged(Index),
 
-        pub fn init(allocator: Allocator) Allocator.Error!@This() {
+        pub fn init(allocator: Allocator) Allocator.Error!Self {
             var slots = try ArrayListUnmanaged(Slot).initCapacity(allocator, capacity);
             errdefer slots.deinit(allocator);
             // TODO: if this makes startup slower we can compare to just zeroing the whole thing
@@ -106,13 +107,14 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             };
         }
 
-        pub fn deinit(self: *@This(), allocator: Allocator) void {
+        pub fn deinit(self: *Self, allocator: Allocator) void {
             self.slots.deinit(allocator);
             self.free.deinit(allocator);
+            self.* = undefined;
         }
 
         // Adds a new slot, leaving its item undefined.
-        fn addOne(self: *@This()) Allocator.Error!Index {
+        fn addOne(self: *Self) Allocator.Error!Index {
             if (self.free.popOrNull()) |index| {
                 return index;
             }
@@ -121,7 +123,7 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             return index;
         }
 
-        pub fn create(self: *@This(), item: Item) !HandleT {
+        pub fn create(self: *Self, item: Item) !HandleT {
             const index = try self.addOne();
             const slot = &self.slots.items[index];
             slot.item = item;
@@ -131,7 +133,7 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             };
         }
 
-        pub fn remove(self: *@This(), handle: HandleT) error{DoubleFree}!Item {
+        pub fn remove(self: *Self, handle: HandleT) error{DoubleFree}!Item {
             if (!self.exists(handle)) {
                 return error.DoubleFree;
             }
@@ -147,7 +149,7 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             return self.slots.items[handle.index].item;
         }
 
-        pub fn exists(self: *const @This(), handle: HandleT) bool {
+        pub fn exists(self: *const Self, handle: HandleT) bool {
             if (handle.index >= self.slots.items.len) {
                 // This can occur if we cleared the slot map previously.
                 return false;
@@ -156,7 +158,7 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             return self.slots.items[handle.index].generation == handle.generation;
         }
 
-        pub fn get(self: *const @This(), handle: HandleT) error{UseAfterFree}!*Item {
+        pub fn get(self: *const Self, handle: HandleT) error{UseAfterFree}!*Item {
             if (!self.exists(handle)) {
                 return error.UseAfterFree;
             }
@@ -164,11 +166,11 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             return self.getUnchecked(handle);
         }
 
-        pub fn getUnchecked(self: *const @This(), handle: HandleT) *Item {
+        pub fn getUnchecked(self: *const Self, handle: HandleT) *Item {
             return &self.slots.items[handle.index].item;
         }
 
-        pub fn clearRetainingCapacity(self: *@This()) void {
+        pub fn clearRetainingCapacity(self: *Self) void {
             for (0..self.slots.items.len) |i| {
                 self.slots.items[@intCast(Index, i)].generation.increment();
             }
@@ -177,7 +179,7 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
         }
 
         // XXX: test this
-        pub fn len(self: *const @This()) Index {
+        pub fn len(self: *const Self) Index {
             return @intCast(Index, self.slots.items.len - self.free.items.len);
         }
     };

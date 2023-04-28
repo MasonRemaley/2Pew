@@ -111,16 +111,14 @@ pub fn init(comptime Entities: type) type {
             assert(i == prefab.len);
         }
 
-        // XXX: make this and checked take a const pointer to entities (iterator doesn't allow it yet, but should
-        // if mutable is always false!)
         // XXX: document how much memory it needs on top of the memory for the result so we can preallocate
         // it?
-        pub fn serialize(allocator: Allocator, entities: *Entities) []PrefabEntity {
+        pub fn serialize(allocator: Allocator, entities: *const Entities) []PrefabEntity {
             return serializeChecked(allocator, entities) catch |err|
                 std.debug.panic("serialize failed: {}", .{err});
         }
 
-        pub fn serializeChecked(allocator: Allocator, entities: *Entities) Allocator.Error![]PrefabEntity {
+        pub fn serializeChecked(allocator: Allocator, entities: *const Entities) Allocator.Error![]PrefabEntity {
             var serialized = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, entities.len());
             errdefer serialized.deinit(allocator);
 
@@ -133,7 +131,7 @@ pub fn init(comptime Entities: type) type {
                 inline for (Entities.component_names) |comp_name| {
                     @field(descriptor, comp_name) = .{ .optional = true };
                 }
-                var iter = entities.iterator(descriptor);
+                var iter = entities.constIterator(descriptor);
                 while (iter.next()) |entity| {
                     var serialized_entity: PrefabEntity = undefined;
                     inline for (Entities.component_names) |comp_name| {
