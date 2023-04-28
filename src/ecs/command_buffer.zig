@@ -6,13 +6,14 @@ const Allocator = std.mem.Allocator;
 const parenting = ecs.parenting;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
-pub fn CommandBuffer(comptime Entities: type, comptime Serializer: type) type {
-    const prefabs = ecs.prefabs.init(Entities, Serializer);
+pub fn CommandBuffer(comptime Entities: type) type {
+    const prefabs = ecs.prefabs.init(Entities);
     const ArchetypeChange = ecs.entities.ArchetypeChange(Entities);
     const ArchetypeChangeCommand = struct {
         handle: Handle,
         change: ArchetypeChange,
     };
+    const PrefabEntity = ecs.entities.PrefabEntity(Entities);
 
     return struct {
         pub const PrefabHandle = prefabs.Handle;
@@ -26,12 +27,12 @@ pub fn CommandBuffer(comptime Entities: type, comptime Serializer: type) type {
 
         entities: *Entities,
         prefab_spans: ArrayListUnmanaged(PrefabSpan),
-        prefab_entities: ArrayListUnmanaged(Serializer.Entity),
+        prefab_entities: ArrayListUnmanaged(PrefabEntity),
         remove: ArrayListUnmanaged(Handle),
         arch_change: ArrayListUnmanaged(ArchetypeChangeCommand),
 
         pub fn init(allocator: Allocator, entities: *Entities, desc: Descriptor) Allocator.Error!@This() {
-            var prefab_entities = try ArrayListUnmanaged(Serializer.Entity).initCapacity(allocator, desc.prefab_entity_capacity);
+            var prefab_entities = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, desc.prefab_entity_capacity);
             errdefer prefab_entities.deinit(allocator);
 
             var prefab_spans = try ArrayListUnmanaged(PrefabSpan).initCapacity(allocator, desc.prefab_capacity);
@@ -71,12 +72,12 @@ pub fn CommandBuffer(comptime Entities: type, comptime Serializer: type) type {
         // seprately, and call that from here? or can just access the fields directly for that..?
         // XXX: a little weird that it returns a handle to the first one, could just say you gotta do that from the
         // outside.
-        pub fn appendInstantiate(self: *@This(), self_contained: bool, prefab: []const Serializer.Entity) PrefabHandle {
+        pub fn appendInstantiate(self: *@This(), self_contained: bool, prefab: []const PrefabEntity) PrefabHandle {
             return self.appendInstantiateChecked(self_contained, prefab) catch |err|
                 std.debug.panic("append instantiate failed: {}", .{err});
         }
 
-        pub fn appendInstantiateChecked(self: *@This(), self_contained: bool, prefab: []const Serializer.Entity) Allocator.Error!PrefabHandle {
+        pub fn appendInstantiateChecked(self: *@This(), self_contained: bool, prefab: []const PrefabEntity) Allocator.Error!PrefabHandle {
             // XXX: make helper, use here and outside...avoid explciit u20 cast etc. used multiple places outside.
             const handle = PrefabHandle.init(@intCast(u20, self.prefab_entities.items.len));
             try self.prefab_entities.appendSlice(NoAlloc, prefab);

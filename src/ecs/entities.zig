@@ -192,6 +192,10 @@ pub fn Entities(comptime registered_components: anytype) type {
             return Iterator(Self, components).init(self);
         }
 
+        pub fn len(self: *const Self) Handle.Index {
+            return self.handles.len();
+        }
+
         fn componentTag(comptime name: []const u8) ComponentTag {
             const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
             if (maybe_index) |index| {

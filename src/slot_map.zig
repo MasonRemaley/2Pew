@@ -17,6 +17,8 @@ pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type
     const GenerationT = enum(GenerationTag) {
         const Self = @This();
 
+        // XXX: could i represent invalud efficeintly as absence of a generation? that'd be less
+        // weird in serialized data...
         /// An invalid generation.
         invalid = std.math.maxInt(GenerationTag),
         /// A valid geneartion that will never be used.
@@ -33,6 +35,18 @@ pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type
             self.* = @intToEnum(Self, @enumToInt(self.*) + 1);
             if (self.* == .none) {
                 self.* = @intToEnum(Self, 0);
+            }
+        }
+
+        // XXX: annoying that i need to do this..but it's fine?
+        pub fn jsonStringify(
+            self: @This(),
+            options: std.json.StringifyOptions,
+            out_stream: anytype,
+        ) !void {
+            switch (self) {
+                .invalid, .none => try std.json.stringify(@tagName(self), options, out_stream),
+                _ => try std.json.stringify(@enumToInt(self), options, out_stream),
             }
         }
     };
@@ -160,6 +174,11 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             }
             self.free.clearRetainingCapacity();
             self.slots.clearRetainingCapacity();
+        }
+
+        // XXX: test this
+        pub fn len(self: *const @This()) Index {
+            return @intCast(Index, self.slots.items.len - self.free.items.len);
         }
     };
 }

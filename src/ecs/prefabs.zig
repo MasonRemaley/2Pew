@@ -5,6 +5,7 @@ const slot_map = @import("../slot_map.zig");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const EntityHandle = ecs.entities.Handle;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 // XXX: add tests? what about for command buffer?
 // XXX: reference notes, clean up diffs before merging
@@ -21,7 +22,9 @@ const EntityHandle = ecs.entities.Handle;
 // XXX: also could just init the entire ecs namespace instead of individual parts? doesn't even
 // necessarily require changing other code since we can alias stuff etc...then again does that add
 // coupling or no?
-pub fn init(comptime Entities: type, comptime Serializer: type) type {
+pub fn init(comptime Entities: type) type {
+    const PrefabEntity = ecs.entities.PrefabEntity(Entities);
+
     return struct {
         /// A handle whose generation is invalid and whose index is relative to the start of the
         /// prefab.
@@ -48,7 +51,7 @@ pub fn init(comptime Entities: type, comptime Serializer: type) type {
             self_contained: bool,
         };
 
-        pub fn instantiate(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []Serializer.Entity) void {
+        pub fn instantiate(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []PrefabEntity) void {
             return instantiateSpans(
                 temporary,
                 entities,
@@ -60,7 +63,7 @@ pub fn init(comptime Entities: type, comptime Serializer: type) type {
             );
         }
 
-        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []Serializer.Entity) Allocator.Error!void {
+        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []PrefabEntity) Allocator.Error!void {
             return instantiateSpansChecked(
                 temporary,
                 entities,
@@ -74,19 +77,18 @@ pub fn init(comptime Entities: type, comptime Serializer: type) type {
 
         /// Instantiate a prefab. Handles are assumed to be relative to the start of the prefab, and will be
         /// patched. Asserts that spans covers all entities.
-        pub fn instantiateSpans(temporary: Allocator, entities: *Entities, prefab: []Serializer.Entity, spans: []Span) void {
+        pub fn instantiateSpans(temporary: Allocator, entities: *Entities, prefab: []PrefabEntity, spans: []Span) void {
             instantiateSpansChecked(temporary, entities, prefab, spans) catch |err|
                 std.debug.panic("failed to instantiate prefab: {}", .{err});
         }
 
-        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []Serializer.Entity, spans: []Span) Allocator.Error!void {
+        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []PrefabEntity, spans: []Span) Allocator.Error!void {
             // Instantiate the entities
             var live_handles = try temporary.alloc(EntityHandle, prefab.len);
             defer temporary.free(live_handles);
             for (prefab, 0..) |prefab_entity, i| {
                 // XXX: why does skipping deserialzie result in type that's double escaped..?
-                const deserialized = Serializer.deserializeEntity(prefab_entity);
-                live_handles[i] = try entities.createChecked(deserialized);
+                live_handles[i] = try entities.createChecked(prefab_entity);
             }
 
             // Patch the handles
@@ -103,7 +105,12 @@ pub fn init(comptime Entities: type, comptime Serializer: type) type {
                                 span_live_handles
                             else
                                 live_handles;
-                            visitHandles(context, component, @tagName(component_tag), patchHandle);
+                            visitHandles(
+                                context,
+                                component,
+                                @tagName(component_tag),
+                                deserializeHandle,
+                            );
                         }
                     }
                 }
@@ -112,7 +119,66 @@ pub fn init(comptime Entities: type, comptime Serializer: type) type {
             assert(i == prefab.len);
         }
 
-        fn patchHandle(live_handles: []const EntityHandle, handle: *EntityHandle) void {
+        // XXX: do we also need a temporary allocator? or can we like allocate both and then free the
+        // last one and have that work if it's a fixed buffer allocator? But we might wanna reserve
+        // that space up front, etc. We'll figure it out once we get the basics working!
+        // XXX: checked and unchecked variants?
+        // XXX: make this take a const pointer to entiteis (iterator doesn't allow it yet, but should
+        // if mutable is always false!)
+        pub fn serialize(allocator: Allocator, entities: *Entities) Allocator.Error![]PrefabEntity {
+            var serialized = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, entities.len());
+            errdefer serialized.deinit(allocator);
+
+            var index_map = try allocator.alloc(EntityHandle.Index, entities.handles.slots.items.len);
+            defer allocator.free(index_map);
+
+            // Serialize each entity
+            {
+                comptime var descriptor = ecs.entities.IteratorDescriptor(Entities){};
+                inline for (Entities.component_names) |comp_name| {
+                    @field(descriptor, comp_name) = .{ .optional = true };
+                }
+                var iter = entities.iterator(descriptor);
+                while (iter.next()) |entity| {
+                    var serialized_entity: PrefabEntity = undefined;
+                    inline for (Entities.component_names) |comp_name| {
+                        @field(serialized_entity, comp_name) = if (@field(entity, comp_name)) |comp|
+                            comp.*
+                        else
+                            null;
+                    }
+                    index_map[iter.handle().index] = @intCast(EntityHandle.Index, serialized.items.len);
+                    serialized.appendAssumeCapacity(serialized_entity);
+                }
+            }
+
+            // Patch the handles
+            for (serialized.items) |*serialized_entity| {
+                // XXX: use this instead of component_names? Or is there a less weird way that
+                // doesn't support types we don't need it to?
+                inline for (comptime std.meta.tags(Entities.ComponentTag)) |component_tag| {
+                    if (@field(serialized_entity, @tagName(component_tag))) |*component| {
+                        visitHandles(
+                            index_map,
+                            component,
+                            @tagName(component_tag),
+                            serializeHandle,
+                        );
+                    }
+                }
+            }
+
+            // Return the result
+            return serialized.items;
+        }
+
+        fn serializeHandle(index_map: []const EntityHandle.Index, handle: *EntityHandle) void {
+            handle.index = index_map[handle.index];
+            handle.generation = .invalid;
+        }
+
+        fn deserializeHandle(live_handles: []const EntityHandle, handle: *EntityHandle) void {
+            // XXX: this should be an error if we're in self contained mode!
             // Early out if we have a valid handle
             if (handle.generation != .invalid) return;
 
