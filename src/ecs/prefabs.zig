@@ -9,16 +9,6 @@ const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 // XXX: add tests? what about for command buffer?
 // XXX: reference notes, clean up diffs before merging
-// XXX: consider supporting an escape hatch for components with unsupported types
-// - could this work easily if we had both parent and child and sibling pointers to do a fix up where
-// all you need in the data is parent since that's easiest? that'd work I think!!
-// - consider that this changes the type of prefab since some types would be substituted out or removed
-// etc
-// - we could either allow subbing out components, or individual types. we also might wanna do this
-// logic in a separate serialization namespace that allows us to input a serialized prefab and get
-// out a live one. i think we should sub out whole components, at least for now--that's simplest,
-// and types doesn't necessarily handle this since a component may not have a unique type and we
-// might wanna do logic e.g. adding the sibling pointers and such?
 // XXX: also could just init the entire ecs namespace instead of individual parts? doesn't even
 // necessarily require changing other code since we can alias stuff etc...then again does that add
 // coupling or no?
@@ -87,7 +77,6 @@ pub fn init(comptime Entities: type) type {
             var live_handles = try temporary.alloc(EntityHandle, prefab.len);
             defer temporary.free(live_handles);
             for (prefab, 0..) |prefab_entity, i| {
-                // XXX: why does skipping deserialzie result in type that's double escaped..?
                 live_handles[i] = try entities.createChecked(prefab_entity);
             }
 
@@ -101,10 +90,13 @@ pub fn init(comptime Entities: type) type {
                 for (span_live_handles) |live_handle| {
                     inline for (comptime std.meta.tags(Entities.ComponentTag)) |component_tag| {
                         if (entities.getComponent(live_handle, component_tag)) |component| {
-                            const context = if (span.self_contained)
-                                span_live_handles
-                            else
-                                live_handles;
+                            const context = DeserializeContext{
+                                .live_handles = if (span.self_contained)
+                                    span_live_handles
+                                else
+                                    live_handles,
+                                .self_contained = span.self_contained,
+                            };
                             visitHandles(
                                 context,
                                 component,
@@ -153,13 +145,17 @@ pub fn init(comptime Entities: type) type {
             }
 
             // Patch the handles
+            const context = SerializeContext{
+                .index_map = index_map,
+                .entities = entities,
+            };
             for (serialized.items) |*serialized_entity| {
                 // XXX: use this instead of component_names? Or is there a less weird way that
                 // doesn't support types we don't need it to?
                 inline for (comptime std.meta.tags(Entities.ComponentTag)) |component_tag| {
                     if (@field(serialized_entity, @tagName(component_tag))) |*component| {
                         visitHandles(
-                            index_map,
+                            context,
                             component,
                             @tagName(component_tag),
                             serializeHandle,
@@ -172,23 +168,47 @@ pub fn init(comptime Entities: type) type {
             return serialized.items;
         }
 
-        fn serializeHandle(index_map: []const EntityHandle.Index, handle: *EntityHandle) void {
-            handle.index = index_map[handle.index];
-            handle.generation = .invalid;
+        const SerializeContext = struct {
+            index_map: []const EntityHandle.Index,
+            entities: *const Entities,
+        };
+
+        fn serializeHandle(context: SerializeContext, handle: *EntityHandle) void {
+            if (context.entities.exists(handle.*)) {
+                handle.* = .{
+                    .index = context.index_map[handle.index],
+                    .generation = .invalid,
+                };
+            } else {
+                handle.generation = .none;
+            }
         }
 
-        fn deserializeHandle(live_handles: []const EntityHandle, handle: *EntityHandle) void {
-            // XXX: this should be an error if we're in self contained mode!
-            // Early out if we have a valid handle
-            if (handle.generation != .invalid) return;
+        const DeserializeContext = struct {
+            live_handles: []const EntityHandle,
+            self_contained: bool,
+        };
 
-            // Panic if we're out of bounds
-            if (handle.index >= live_handles.len) {
-                std.debug.panic("bad index", .{});
+        fn deserializeHandle(context: DeserializeContext, handle: *EntityHandle) void {
+            switch (handle.generation) {
+                // We don't need to patch it if it's empty
+                .none => {},
+                // If it's currently invalid, patch it
+                .invalid => {
+                    // Panic if we're out of bounds
+                    if (handle.index >= context.live_handles.len) {
+                        std.debug.panic("bad index", .{});
+                    }
+
+                    // Apply the patch
+                    handle.* = context.live_handles.ptr[handle.index];
+                },
+                // We don't need to patch it if it's pointing to a live entity, but this should
+                // fail in self contained mode
+                _ => if (context.self_contained) {
+                    std.debug.panic("self contained prefab not self contained", .{});
+                },
             }
-
-            // Apply the patch
-            handle.* = live_handles.ptr[handle.index];
         }
 
         fn unsupportedType(

@@ -101,7 +101,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             entity_pointer.archetype_list.swapRemove(entity_pointer.index, &self.handles);
         }
 
-        pub fn exists(self: *Self, handle: Handle) bool {
+        pub fn exists(self: *const Self, handle: Handle) bool {
             return self.handles.exists(handle);
         }
 
