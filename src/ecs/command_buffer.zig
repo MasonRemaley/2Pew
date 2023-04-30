@@ -3,12 +3,12 @@ const ecs = @import("index.zig");
 const NoAlloc = @import("../no_alloc.zig").NoAlloc;
 const Handle = ecs.entities.Handle;
 const Allocator = std.mem.Allocator;
-const parenting = ecs.parenting;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const assert = std.debug.assert;
 
 pub fn CommandBuffer(comptime Entities: type) type {
+    const parenting = ecs.parenting.init(Entities);
     const prefabs = ecs.prefabs.init(Entities);
     const ArchetypeChange = Entities.ArchetypeChange;
     const ArchetypeChangeCommand = struct {
@@ -150,9 +150,11 @@ pub fn CommandBuffer(comptime Entities: type) type {
                 self.prefab_spans.items,
             );
 
-            // Execute parenting
-            if (parenting.supported(Entities) and self.remove.items.len > 0) {
-                parenting.removeOrphans(self.entities);
+            // Remove orphans
+            if (parenting) |p| {
+                if (self.remove.items.len > 0) {
+                    p.removeOrphans(self.entities);
+                }
             }
         }
 

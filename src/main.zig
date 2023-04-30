@@ -47,7 +47,7 @@ const ComponentFlags = Entities.ComponentFlags;
 // XXX: this feels a little wonky, shoudl we maybe be instantiating prefabs here and passing that
 // into command buffer instead? or is this fine?
 const PrefabHandle = CommandBuffer.PrefabHandle;
-const parenting = ecs.parenting;
+const parenting = ecs.parenting.init(Entities).?;
 const prefabs = ecs.prefabs.init(Entities);
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
