@@ -650,8 +650,7 @@ pub fn EntityPointer(comptime T: type) type {
     };
 }
 
-// XXX: public? make part of entities? or just make part of ecs but not public outside?
-pub fn ComponentMap(
+fn ComponentMap(
     comptime T: type,
     comptime layout: std.builtin.Type.ContainerLayout,
     comptime Map: type,

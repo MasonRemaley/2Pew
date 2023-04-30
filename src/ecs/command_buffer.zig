@@ -5,6 +5,8 @@ const Handle = ecs.entities.Handle;
 const Allocator = std.mem.Allocator;
 const parenting = ecs.parenting;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const FixedBufferAllocator = std.heap.FixedBufferAllocator;
+const assert = std.debug.assert;
 
 pub fn CommandBuffer(comptime Entities: type) type {
     const prefabs = ecs.prefabs.init(Entities);
@@ -14,6 +16,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
         change: ArchetypeChange,
     };
     const PrefabEntity = ecs.entities.PrefabEntity(Entities);
+    const EntityHandle = ecs.entities.Handle;
 
     return struct {
         pub const PrefabHandle = prefabs.Handle;
@@ -28,15 +31,21 @@ pub fn CommandBuffer(comptime Entities: type) type {
         entities: *Entities,
         prefab_spans: ArrayListUnmanaged(PrefabSpan),
         prefab_entities: ArrayListUnmanaged(PrefabEntity),
+        prefab_temporary: []u8,
         remove: ArrayListUnmanaged(Handle),
         arch_change: ArrayListUnmanaged(ArchetypeChangeCommand),
 
         pub fn init(allocator: Allocator, entities: *Entities, desc: Descriptor) Allocator.Error!@This() {
+            assert(desc.prefab_entity_capacity < std.math.maxInt(EntityHandle.Index));
+
             var prefab_entities = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, desc.prefab_entity_capacity);
             errdefer prefab_entities.deinit(allocator);
 
             var prefab_spans = try ArrayListUnmanaged(PrefabSpan).initCapacity(allocator, desc.prefab_capacity);
             errdefer prefab_spans.deinit(allocator);
+
+            var prefab_temporary = try allocator.alloc(u8, @sizeOf(EntityHandle) * desc.prefab_capacity);
+            errdefer allocator.free(prefab_temporary);
 
             var remove = try ArrayListUnmanaged(Handle).initCapacity(allocator, desc.remove_capacity);
             errdefer remove.deinit(allocator);
@@ -48,6 +57,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
                 .entities = entities,
                 .prefab_entities = prefab_entities,
                 .prefab_spans = prefab_spans,
+                .prefab_temporary = prefab_temporary,
                 .remove = remove,
                 .arch_change = arch_change,
             };
@@ -56,6 +66,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
         pub fn deinit(self: *@This(), allocator: Allocator) void {
             self.prefab_entities.deinit(allocator);
             self.prefab_spans.deinit(allocator);
+            allocator.free(self.prefab_temporary);
             self.remove.deinit(allocator);
             self.arch_change.deinit(allocator);
         }
@@ -67,19 +78,16 @@ pub fn CommandBuffer(comptime Entities: type) type {
             self.arch_change.clearRetainingCapacity();
         }
 
-        // XXX: rename to createPrefab or instantiatePrefab or is this fine? create implies one entity
-        // XXX: make fancier lower level interface that lets you append sizes and individual prefab entities
-        // seprately, and call that from here? or can just access the fields directly for that..?
-        // XXX: a little weird that it returns a handle to the first one, could just say you gotta do that from the
-        // outside.
-        pub fn appendInstantiate(self: *@This(), self_contained: bool, prefab: []const PrefabEntity) PrefabHandle {
+        /// Appends an instantiate prefab command, and returns the prefab handle of the first prefab entity in the list
+        /// to be instantiated if the list is not empty.
+        pub fn appendInstantiate(self: *@This(), self_contained: bool, prefab: []const PrefabEntity) ?PrefabHandle {
             return self.appendInstantiateChecked(self_contained, prefab) catch |err|
                 std.debug.panic("append instantiate failed: {}", .{err});
         }
 
-        pub fn appendInstantiateChecked(self: *@This(), self_contained: bool, prefab: []const PrefabEntity) Allocator.Error!PrefabHandle {
-            // XXX: make helper, use here and outside...avoid explciit u20 cast etc. used multiple places outside.
-            const handle = PrefabHandle.init(@intCast(u20, self.prefab_entities.items.len));
+        pub fn appendInstantiateChecked(self: *@This(), self_contained: bool, prefab: []const PrefabEntity) Allocator.Error!?PrefabHandle {
+            if (prefab.len == 0) return null;
+            const handle = PrefabHandle.init(@intCast(EntityHandle.Index, self.prefab_entities.items.len));
             try self.prefab_entities.appendSlice(NoAlloc, prefab);
             try self.prefab_spans.append(NoAlloc, PrefabSpan{ .len = prefab.len, .self_contained = self_contained });
             return handle;
@@ -134,14 +142,14 @@ pub fn CommandBuffer(comptime Entities: type) type {
             }
 
             // Instantiate prefabs
-            {
-                // XXX: temp gpa...
-                var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-                defer _ = gpa.deinit();
-                try prefabs.instantiateSpansChecked(gpa.allocator(), self.entities, self.prefab_entities.items, self.prefab_spans.items);
-            }
+            var prefab_fba = FixedBufferAllocator.init(self.prefab_temporary);
+            try prefabs.instantiateSpansChecked(
+                prefab_fba.allocator(),
+                self.entities,
+                self.prefab_entities.items,
+                self.prefab_spans.items,
+            );
 
-            // XXX: Do we still wanna do this here?
             // Execute parenting
             if (parenting.supported(Entities) and self.remove.items.len > 0) {
                 parenting.removeOrphans(self.entities);

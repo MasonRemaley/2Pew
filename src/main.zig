@@ -1752,7 +1752,7 @@ const Game = struct {
                 },
                 .input = input,
             },
-        });
+        }).?;
     }
 
     fn createTriangle(
@@ -1811,7 +1811,7 @@ const Game = struct {
                 },
                 .input = input,
             },
-        });
+        }).?;
     }
 
     fn createMilitia(
@@ -1869,7 +1869,7 @@ const Game = struct {
                 .input = input,
                 .front_shield = .{},
             },
-        });
+        }).?;
     }
 
     // XXX: make sure this still works!
@@ -1957,7 +1957,7 @@ const Game = struct {
                 },
                 .transform = .{},
             },
-        });
+        }).?;
     }
 
     fn createWendy(
@@ -2091,7 +2091,7 @@ const Game = struct {
                 },
                 .input = input,
             },
-        });
+        }).?;
     }
 
     fn init(assets: *Assets) !Game {

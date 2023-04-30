@@ -66,7 +66,8 @@ pub fn init(comptime Entities: type) type {
         }
 
         /// Instantiate a prefab. Handles are assumed to be relative to the start of the prefab, and will be
-        /// patched. Asserts that spans covers all entities.
+        /// patched. Asserts that spans covers all entities. Temporarily allocates an array of `EntityHandles`
+        /// the length of the prefabs.
         pub fn instantiateSpans(temporary: Allocator, entities: *Entities, prefab: []PrefabEntity, spans: []Span) void {
             instantiateSpansChecked(temporary, entities, prefab, spans) catch |err|
                 std.debug.panic("failed to instantiate prefab: {}", .{err});
@@ -111,13 +112,21 @@ pub fn init(comptime Entities: type) type {
             assert(i == prefab.len);
         }
 
-        // XXX: document how much memory it needs on top of the memory for the result so we can preallocate
-        // it?
+        /// See `serializeChecked`.
         pub fn serialize(allocator: Allocator, entities: *const Entities) []PrefabEntity {
             return serializeChecked(allocator, entities) catch |err|
                 std.debug.panic("serialize failed: {}", .{err});
         }
 
+        /// Serializes all entities. This is an unfinished proof of concept: in reality the caller
+        /// should be able to conctrol the memory allocation more directly, and they should be able
+        /// to decide which entities to serialize. This probably involves a lower level interface
+        /// by which they perform the iteration, add entities one at a time, and then call a
+        /// finalize function that does the patch. We would likely also want to check that there are
+        /// no outside references during finalize, and error if there are, or null them out.
+        ///
+        /// Alternatively if we really do want to serialize everything, patching is not actually
+        /// necessary if we're willing to serialize holes.
         pub fn serializeChecked(allocator: Allocator, entities: *const Entities) Allocator.Error![]PrefabEntity {
             var serialized = try ArrayListUnmanaged(PrefabEntity).initCapacity(allocator, entities.len());
             errdefer serialized.deinit(allocator);
