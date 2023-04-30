@@ -13,7 +13,7 @@ const ArrayListUnmanaged = std.ArrayListUnmanaged;
 // necessarily require changing other code since we can alias stuff etc...then again does that add
 // coupling or no?
 pub fn init(comptime Entities: type) type {
-    const PrefabEntity = ecs.entities.PrefabEntity(Entities);
+    const PrefabEntity = Entities.PrefabEntity;
 
     return struct {
         /// A handle whose generation is invalid and whose index is relative to the start of the
@@ -136,7 +136,7 @@ pub fn init(comptime Entities: type) type {
 
             // Serialize each entity
             {
-                comptime var descriptor = ecs.entities.IteratorDescriptor(Entities){};
+                comptime var descriptor = Entities.IteratorDescriptor{};
                 inline for (Entities.component_names) |comp_name| {
                     @field(descriptor, comp_name) = .{ .optional = true };
                 }

@@ -10,12 +10,12 @@ const assert = std.debug.assert;
 
 pub fn CommandBuffer(comptime Entities: type) type {
     const prefabs = ecs.prefabs.init(Entities);
-    const ArchetypeChange = ecs.entities.ArchetypeChange(Entities);
+    const ArchetypeChange = Entities.ArchetypeChange;
     const ArchetypeChangeCommand = struct {
         handle: Handle,
         change: ArchetypeChange,
     };
-    const PrefabEntity = ecs.entities.PrefabEntity(Entities);
+    const PrefabEntity = Entities.PrefabEntity;
     const EntityHandle = ecs.entities.Handle;
 
     return struct {

@@ -39,11 +39,11 @@ const Entities = ecs.entities.Entities(.{
     .hook = Hook,
     .front_shield = struct {},
 });
+const PrefabEntity = Entities.PrefabEntity;
 const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
-const PrefabEntity = ecs.entities.PrefabEntity(Entities);
 const EntityHandle = ecs.entities.Handle;
 const DeferredHandle = ecs.command_buffer.DeferredHandle;
-const ComponentFlags = ecs.entities.ComponentFlags(Entities);
+const ComponentFlags = Entities.ComponentFlags;
 // XXX: this feels a little wonky, shoudl we maybe be instantiating prefabs here and passing that
 // into command buffer instead? or is this fine?
 const PrefabHandle = CommandBuffer.PrefabHandle;
