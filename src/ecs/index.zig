@@ -4,8 +4,8 @@ pub const parenting = @import("parenting.zig");
 pub const prefabs = @import("prefabs.zig");
 
 test {
-    _ = entities;
     _ = command_buffer;
     _ = parenting;
     _ = prefabs;
+    _ = entities;
 }

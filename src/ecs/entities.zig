@@ -129,7 +129,6 @@ pub fn Entities(comptime registered_components: anytype) type {
             );
         }
 
-        // TODO: use this in tests?
         pub fn changeArchetype(self: *Self, handle: Handle, changes: ArchetypeChange) void {
             self.changeArchetypeChecked(handle, changes) catch |err|
                 std.debug.panic("failed to change archetype: {}", .{err});
@@ -143,8 +142,8 @@ pub fn Entities(comptime registered_components: anytype) type {
             const pointer = try self.handles.get(handle);
             const previous_archetype = pointer.archetype_list.archetype;
             const components_added = ComponentFlags.initFromComponents(changes.add);
-            const new_archetype = previous_archetype.unionWith(components_added)
-                .differenceWith(changes.remove);
+            const new_archetype = previous_archetype.differenceWith(changes.remove)
+                .unionWith(components_added);
 
             // If the archetype actually changed, move the data
             if (new_archetype.int() != previous_archetype.int()) {
@@ -1278,8 +1277,82 @@ test "safety" {
     }));
 }
 
+test "change archetype" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const E = Entities(.{ .x = u32, .y = u8, .z = u16 });
+    var entities = try E.init(allocator);
+    defer entities.deinit();
+
+    const ComponentFlags = E.ComponentFlags;
+
+    var e = entities.create(.{});
+    try expectEqual(entities.getComponent(e, .x), null);
+    try expectEqual(entities.getComponent(e, .y), null);
+    try expectEqual(entities.getComponent(e, .z), null);
+
+    // Add a component, remove none
+    entities.changeArchetype(e, .{
+        .add = .{
+            .x = 10,
+        },
+        .remove = ComponentFlags.initFromKinds(.{}),
+    });
+    try expectEqual(entities.getComponent(e, .x).?.*, 10);
+    try expectEqual(entities.getComponent(e, .y), null);
+    try expectEqual(entities.getComponent(e, .z), null);
+
+    // Add a component, remove one that doesn't exist
+    entities.changeArchetype(e, .{
+        .add = .{
+            .y = 20,
+        },
+        .remove = ComponentFlags.initFromKinds(.{.z}),
+    });
+    try expectEqual(entities.getComponent(e, .x).?.*, 10);
+    try expectEqual(entities.getComponent(e, .y).?.*, 20);
+    try expectEqual(entities.getComponent(e, .z), null);
+
+    // Add a component that exists, remove one
+    entities.changeArchetype(e, .{
+        .add = .{
+            .y = 30,
+        },
+        .remove = ComponentFlags.initFromKinds(.{.x}),
+    });
+    try expectEqual(entities.getComponent(e, .x), null);
+    try expectEqual(entities.getComponent(e, .y).?.*, 30);
+    try expectEqual(entities.getComponent(e, .z), null);
+
+    // Add and remove the same component that doesn't exist
+    entities.changeArchetype(e, .{
+        .add = .{
+            .z = 40,
+        },
+        .remove = ComponentFlags.initFromKinds(.{.z}),
+    });
+    try expectEqual(entities.getComponent(e, .x), null);
+    try expectEqual(entities.getComponent(e, .y).?.*, 30);
+    try expectEqual(entities.getComponent(e, .z).?.*, 40);
+
+    // Add and remove the same component that does exist
+    entities.changeArchetype(e, .{
+        .add = .{
+            .z = 50,
+        },
+        .remove = ComponentFlags.initFromKinds(.{.z}),
+    });
+    try expectEqual(entities.getComponent(e, .x), null);
+    try expectEqual(entities.getComponent(e, .y).?.*, 30);
+    try expectEqual(entities.getComponent(e, .z).?.*, 50);
+}
+
 test "random data" {
     const E = Entities(.{ .x = u32, .y = u8, .z = u16 });
+    const ComponentFlags = E.ComponentFlags;
+    const ArchetypeChange = E.ArchetypeChange;
+
     var allocator = std.testing.allocator;
     var entities = try E.init(allocator);
     defer entities.deinit();
@@ -1299,7 +1372,7 @@ test "random data" {
     defer truth.deinit();
 
     for (0..4000) |_| {
-        switch (rnd.random().enumValue(enum { create, modify, add, remove, destroy })) {
+        switch (rnd.random().enumValue(enum { create, modify, change_arch, destroy })) {
             .create => {
                 for (0..rnd.random().uintLessThan(usize, 10)) |_| {
                     const data = Data{
@@ -1364,114 +1437,89 @@ test "random data" {
                     }
                 }
             },
-            .add => {
+            .change_arch => {
                 if (truth.items.len > 0) {
                     for (0..rnd.random().uintLessThan(usize, 10)) |_| {
                         const index = rnd.random().uintLessThan(usize, truth.items.len);
                         var entity: *Created = &truth.items[index];
-                        switch (rnd.random().enumValue(enum { none, x, y, z, xy, xz, yz, xyz })) {
-                            .none => {
-                                entities.addComponents(entity.handle, .{});
+                        var change = ArchetypeChange{
+                            .add = .{
+                                .x = rnd.random().int(u32),
+                                .y = rnd.random().int(u8),
+                                .z = rnd.random().int(u16),
                             },
+                            .remove = ComponentFlags.initFromKinds(.{}),
+                        };
+
+                        switch (rnd.random().enumValue(enum { none, x, y, z, xy, xz, yz, xyz })) {
+                            .none => {},
                             .x => {
-                                entity.data.x = rnd.random().int(u32);
-                                entities.addComponents(entity.handle, .{
-                                    .x = entity.data.x.?,
-                                });
+                                change.remove.set(.x);
                             },
                             .y => {
-                                entity.data.y = rnd.random().int(u8);
-                                entities.addComponents(entity.handle, .{
-                                    .y = entity.data.y.?,
-                                });
+                                change.remove.set(.y);
                             },
                             .z => {
-                                entity.data.z = rnd.random().int(u16);
-                                entities.addComponents(entity.handle, .{
-                                    .z = entity.data.z.?,
-                                });
+                                change.remove.set(.z);
                             },
                             .xy => {
-                                entity.data.x = rnd.random().int(u32);
-                                entity.data.y = rnd.random().int(u8);
-                                entities.addComponents(entity.handle, .{
-                                    .x = entity.data.x.?,
-                                    .y = entity.data.y.?,
-                                });
+                                change.remove.set(.x);
+                                change.remove.set(.y);
                             },
                             .xz => {
-                                entity.data.x = rnd.random().int(u32);
-                                entity.data.z = rnd.random().int(u16);
-                                entities.addComponents(entity.handle, .{
-                                    .x = entity.data.x.?,
-                                    .z = entity.data.z.?,
-                                });
+                                change.remove.set(.x);
+                                change.remove.set(.z);
                             },
                             .yz => {
-                                entity.data.y = rnd.random().int(u8);
-                                entity.data.z = rnd.random().int(u16);
-                                entities.addComponents(entity.handle, .{
-                                    .y = entity.data.y.?,
-                                    .z = entity.data.z.?,
-                                });
+                                change.remove.set(.y);
+                                change.remove.set(.z);
                             },
                             .xyz => {
-                                entity.data.x = rnd.random().int(u32);
-                                entity.data.y = rnd.random().int(u8);
-                                entity.data.z = rnd.random().int(u16);
-                                entities.addComponents(entity.handle, .{
-                                    .x = entity.data.x.?,
-                                    .y = entity.data.y.?,
-                                    .z = entity.data.z.?,
-                                });
+                                change.remove.set(.x);
+                                change.remove.set(.y);
+                                change.remove.set(.z);
                             },
                         }
-                    }
-                }
-            },
-            .remove => {
-                if (truth.items.len > 0) {
-                    for (0..rnd.random().uintLessThan(usize, 10)) |_| {
-                        const index = rnd.random().uintLessThan(usize, truth.items.len);
-                        var entity: *Created = &truth.items[index];
+
+                        if (change.remove.isSet(.x)) entity.data.x = null;
+                        if (change.remove.isSet(.y)) entity.data.y = null;
+                        if (change.remove.isSet(.z)) entity.data.z = null;
+
                         switch (rnd.random().enumValue(enum { none, x, y, z, xy, xz, yz, xyz })) {
                             .none => {
-                                entities.removeComponents(entity.handle, .{});
+                                change.add.x = null;
+                                change.add.y = null;
+                                change.add.z = null;
                             },
                             .x => {
-                                entity.data.x = null;
-                                entities.removeComponents(entity.handle, .{.x});
+                                change.add.y = null;
+                                change.add.z = null;
                             },
                             .y => {
-                                entity.data.y = null;
-                                entities.removeComponents(entity.handle, .{.y});
+                                change.add.x = null;
+                                change.add.z = null;
                             },
                             .z => {
-                                entity.data.z = null;
-                                entities.removeComponents(entity.handle, .{.z});
+                                change.add.x = null;
+                                change.add.y = null;
                             },
                             .xy => {
-                                entity.data.x = null;
-                                entity.data.y = null;
-                                entities.removeComponents(entity.handle, .{ .x, .y });
+                                change.add.z = null;
                             },
                             .xz => {
-                                entity.data.x = null;
-                                entity.data.z = null;
-                                entities.removeComponents(entity.handle, .{ .x, .z });
+                                change.add.y = null;
                             },
                             .yz => {
-                                entity.data.y = null;
-                                entity.data.z = null;
-                                entities.removeComponents(entity.handle, .{ .y, .z });
+                                change.add.x = null;
                             },
-                            .xyz => {
-                                entity.data.x = null;
-                                entity.data.y = null;
-                                entity.data.z = null;
-                                entities.removeComponents(entity.handle, .{ .x, .y, .z });
-                            },
+                            .xyz => {},
                         }
+
+                        if (change.add.x) |x| entity.data.x = x;
+                        if (change.add.y) |y| entity.data.y = y;
+                        if (change.add.z) |z| entity.data.z = z;
+
+                        entities.changeArchetype(entity.handle, change);
                     }
                 }
             },
