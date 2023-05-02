@@ -7,6 +7,8 @@ const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const assert = std.debug.assert;
 
+const EntityHandle = ecs.entities.Handle;
+
 pub fn CommandBuffer(comptime Entities: type) type {
     const parenting = ecs.parenting.init(Entities);
     const prefabs = ecs.prefabs.init(Entities);
@@ -16,10 +18,9 @@ pub fn CommandBuffer(comptime Entities: type) type {
         change: ArchetypeChange,
     };
     const PrefabEntity = Entities.PrefabEntity;
-    const EntityHandle = ecs.entities.Handle;
 
     return struct {
-        pub const PrefabHandle = prefabs.Handle;
+        const PrefabHandle = prefabs.Handle;
         pub const Descriptor = struct {
             prefab_capacity: usize,
             prefab_entity_capacity: usize,
@@ -163,4 +164,277 @@ pub fn CommandBuffer(comptime Entities: type) type {
                 std.debug.panic("execute failed: {}", .{err});
         }
     };
+}
+
+// XXX: why isn't component flags just a packed struct with a field for each component? then we
+// wouldn't even need the init function. I guess it's hard to do bitwise ops but maybe we can make
+// that happen? Or is that what we're doing here? No we could at least init the inner data that way
+// etc. could also just bitcast into int and do ops.
+test "basics" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const Entities = ecs.entities.Entities(.{
+        .a = u8,
+        .b = u8,
+        .c = u8,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+    const PrefabHandle = prefabs.Handle;
+    const ComponentFlags = Entities.ComponentFlags;
+    const helper = struct {
+        fn fillCommandBuffer(
+            command_buffer: *CommandBuffer(Entities),
+            remove: ?struct { a: EntityHandle, b: EntityHandle, c: EntityHandle },
+            keep: EntityHandle,
+        ) !void {
+            // Instantiate
+            {
+                try expectEqual(command_buffer.appendInstantiate(
+                    true,
+                    &[_]PrefabEntity{.{ .a = 0 }},
+                ).?, PrefabHandle.init(0));
+                try expectEqual(command_buffer.appendInstantiate(
+                    true,
+                    &[_]PrefabEntity{.{ .a = 1 }},
+                ).?, PrefabHandle.init(1));
+                try expectEqual(command_buffer.appendInstantiateChecked(
+                    true,
+                    &[_]PrefabEntity{.{ .a = 2 }},
+                ), error.OutOfMemory);
+            }
+
+            // Remove
+            if (remove) |r| {
+                command_buffer.appendRemove(r.a);
+                command_buffer.appendRemove(r.a); // It's okay to remove it twice via the command buffer
+                command_buffer.appendRemove(r.b);
+                try expectEqual(command_buffer.appendRemoveChecked(r.c), error.DoubleFree);
+                try expectEqual(command_buffer.appendRemoveChecked(r.b), error.OutOfMemory);
+            } else {
+                command_buffer.appendRemove(keep);
+                command_buffer.appendRemove(keep);
+                command_buffer.appendRemove(keep);
+                try expectEqual(command_buffer.appendRemoveChecked(keep), error.OutOfMemory);
+            }
+
+            // Arch change
+            {
+                // It's okay to try to change archetypes of entities that *will* be removed but haven't been yet
+                command_buffer.appendArchChange(if (remove) |r| r.b else keep, .{
+                    .add = .{
+                        .b = 10,
+                    },
+                    .remove = ComponentFlags.initFromKinds(.{ .a, .c }),
+                });
+
+                // Appending arch changes to entities that have already been removed should error
+                if (remove) |r| {
+                    try expectEqual(command_buffer.appendArchChangeChecked(r.c, .{
+                        .add = .{
+                            .b = 10,
+                        },
+                        .remove = ComponentFlags.initFromKinds(.{ .a, .c }),
+                    }), error.UseAfterFree);
+                }
+
+                // Test removing a component and adding new components
+                command_buffer.appendArchChange(keep, .{
+                    .add = .{
+                        .b = 20,
+                    },
+                    .remove = ComponentFlags.initFromKinds(.{ .a, .c }),
+                });
+
+                // Test removing and adding the same component at the same time
+                command_buffer.appendArchChange(keep, .{
+                    .add = .{
+                        .a = 100,
+                    },
+                    .remove = ComponentFlags.initFromKinds(.{.a}),
+                });
+
+                try expectEqual(command_buffer.appendArchChangeChecked(keep, .{
+                    .add = .{
+                        .b = 10,
+                    },
+                    .remove = ComponentFlags.initFromKinds(.{ .a, .c }),
+                }), error.OutOfMemory);
+            }
+        }
+    };
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    var command_buffer = try CommandBuffer(Entities).init(allocator, &entities, .{
+        .prefab_entity_capacity = 2,
+        .prefab_capacity = 2,
+        .remove_capacity = 3,
+        .arch_change_capacity = 3,
+    });
+    defer command_buffer.deinit(allocator);
+
+    // Initialize the ecs with some entities
+    const a = entities.create(.{});
+    const b = entities.create(.{});
+    const c = entities.create(.{});
+    const keep = entities.create(.{ .a = 10 });
+
+    // XXX: ...
+    // Fill the command buffer
+    {
+        entities.swapRemove(c); // Removing it before creating the command buffer should result in error
+        try helper.fillCommandBuffer(&command_buffer, .{ .a = a, .b = b, .c = c }, keep);
+        entities.swapRemove(a); // It's okay to remove it before the command buffer does
+
+        // Execute and check the results
+        {
+            command_buffer.execute();
+            try expectEqual(entities.len(), 3);
+
+            var a_0: usize = 0;
+            var a_1: usize = 0;
+            var a_100_b_20: usize = 0;
+
+            var iter = entities.iterator(.{
+                .a = .{ .optional = true },
+                .b = .{ .optional = true },
+                .c = .{ .optional = true },
+            });
+            while (iter.next()) |entity| {
+                try expectEqual(entity.c, null);
+                if (entity.a != null and entity.b == null) {
+                    if (entity.a.?.* == 0) a_0 += 1;
+                    if (entity.a.?.* == 1) a_1 += 1;
+                }
+
+                if (entity.a != null and entity.b != null) {
+                    if (entity.a.?.* == 100 and entity.b.?.* == 20) a_100_b_20 += 1;
+                }
+            }
+
+            try expectEqual(a_0, 1);
+            try expectEqual(a_1, 1);
+            try expectEqual(a_100_b_20, 1);
+        }
+
+        // Test re-running the command buffer
+        {
+            // Undo the changes to keep to make sure they get reapplied
+            entities.changeArchetype(keep, .{
+                .add = .{
+                    .a = 123,
+                },
+                .remove = ComponentFlags.initFromKinds(.{ .b, .c }),
+            });
+            try expectEqual(entities.getComponent(keep, .a).?.*, 123);
+            try expectEqual(entities.getComponent(keep, .b), null);
+            try expectEqual(entities.getComponent(keep, .c), null);
+
+            // Rerun the command buffer
+            command_buffer.execute();
+            try expectEqual(entities.len(), 5);
+
+            var a_0: usize = 0;
+            var a_1: usize = 0;
+            var a_100_b_20: usize = 0;
+
+            var iter = entities.iterator(.{
+                .a = .{ .optional = true },
+                .b = .{ .optional = true },
+                .c = .{ .optional = true },
+            });
+            while (iter.next()) |entity| {
+                std.debug.print("\ne: ", .{});
+                if (entity.a) |a_| std.debug.print("a={}, ", .{a_.*});
+                if (entity.b) |b_| std.debug.print("b={}, ", .{b_.*});
+                if (entity.c) |c_| std.debug.print("c={}, ", .{c_.*});
+                std.debug.print("\n", .{});
+                try expectEqual(entity.c, null);
+                if (entity.a != null and entity.b == null) {
+                    if (entity.a.?.* == 0) a_0 += 1;
+                    if (entity.a.?.* == 1) a_1 += 1;
+                }
+
+                if (entity.a != null and entity.b != null) {
+                    if (entity.a.?.* == 100 and entity.b.?.* == 20) a_100_b_20 += 1;
+                }
+            }
+
+            try expectEqual(a_0, 2);
+            try expectEqual(a_1, 2);
+            try expectEqual(a_100_b_20, 1);
+        }
+
+        // Test running a cleared command buffer
+        {
+            entities.changeArchetype(keep, .{
+                .add = .{
+                    .a = 123,
+                },
+                .remove = ComponentFlags.initFromKinds(.{ .b, .c }),
+            });
+            try expectEqual(entities.getComponent(keep, .a).?.*, 123);
+            try expectEqual(entities.getComponent(keep, .b), null);
+            try expectEqual(entities.getComponent(keep, .c), null);
+
+            command_buffer.clearRetainingCapacity();
+            command_buffer.execute();
+            try expectEqual(entities.len(), 5);
+
+            var a_0: usize = 0;
+            var a_1: usize = 0;
+            var a_123: usize = 0;
+
+            var iter = entities.iterator(.{
+                .a = .{ .optional = true },
+                .b = .{ .optional = true },
+                .c = .{ .optional = true },
+            });
+            while (iter.next()) |entity| {
+                std.debug.print("\ne: ", .{});
+                if (entity.a) |a_| std.debug.print("a={}, ", .{a_.*});
+                if (entity.b) |b_| std.debug.print("b={}, ", .{b_.*});
+                if (entity.c) |c_| std.debug.print("c={}, ", .{c_.*});
+                std.debug.print("\n", .{});
+                try expectEqual(entity.c, null);
+                if (entity.a != null and entity.b == null) {
+                    if (entity.a.?.* == 0) a_0 += 1;
+                    if (entity.a.?.* == 1) a_1 += 1;
+                }
+
+                if (entity.a != null and entity.b == null) {
+                    if (entity.a.?.* == 123) a_123 += 1;
+                }
+            }
+
+            try expectEqual(a_0, 2);
+            try expectEqual(a_1, 2);
+            try expectEqual(a_123, 1);
+        }
+
+        // Test re-filling the command buffer. If we failed to clear one of the fields, it'll run out of
+        // memory and we'll catch that here!
+        try helper.fillCommandBuffer(&command_buffer, null, keep);
+    }
+
+    // XXX: tests:
+    // * [x] init
+    // * [x] deinit
+    // * [x] clearRetainingCapacity
+    //     * [x] test double execution!
+    // * [x] appendInstantiate
+    // * [x] appendInstantiateChecked
+    //     * [ ] test patching, including in nested types, maybe of multiple types
+    //     * [ ] only test patching that's specific to command buffer though, if possible do it in that module instead!
+    //     * [ ] maybe just the limits around prefabs vs prefab entities and whether self contained works right, minimally?
+    // * [x] appendRemove
+    // * [x] appendRemoveChecked
+    // * [x] appendArchChange
+    // * [x] appendArchChangeChecked
+    // * [ ] executeChecked
+    //      * [ ] test this resulting in out of memory or not worth it?
+    // * [x] execute
 }
