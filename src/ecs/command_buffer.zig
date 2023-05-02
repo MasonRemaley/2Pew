@@ -166,10 +166,6 @@ pub fn CommandBuffer(comptime Entities: type) type {
     };
 }
 
-// XXX: why isn't component flags just a packed struct with a field for each component? then we
-// wouldn't even need the init function. I guess it's hard to do bitwise ops but maybe we can make
-// that happen? Or is that what we're doing here? No we could at least init the inner data that way
-// etc. could also just bitcast into int and do ops.
 test "basics" {
     const expectEqual = std.testing.expectEqual;
     var allocator = std.testing.allocator;
@@ -226,7 +222,7 @@ test "basics" {
                     .add = .{
                         .b = 10,
                     },
-                    .remove = ComponentFlags.initFromKinds(.{ .a, .c }),
+                    .remove = ComponentFlags.init(.{ .a, .c }),
                 });
 
                 // Appending arch changes to entities that have already been removed should error
@@ -235,7 +231,7 @@ test "basics" {
                         .add = .{
                             .b = 10,
                         },
-                        .remove = ComponentFlags.initFromKinds(.{ .a, .c }),
+                        .remove = ComponentFlags.init(.{ .a, .c }),
                     }), error.UseAfterFree);
                 }
 
@@ -244,7 +240,7 @@ test "basics" {
                     .add = .{
                         .b = 20,
                     },
-                    .remove = ComponentFlags.initFromKinds(.{ .a, .c }),
+                    .remove = ComponentFlags.init(.{ .a, .c }),
                 });
 
                 // Test removing and adding the same component at the same time
@@ -252,14 +248,14 @@ test "basics" {
                     .add = .{
                         .a = 100,
                     },
-                    .remove = ComponentFlags.initFromKinds(.{.a}),
+                    .remove = ComponentFlags.init(.{.a}),
                 });
 
                 try expectEqual(command_buffer.appendArchChangeChecked(keep, .{
                     .add = .{
                         .b = 10,
                     },
-                    .remove = ComponentFlags.initFromKinds(.{ .a, .c }),
+                    .remove = ComponentFlags.init(.{ .a, .c }),
                 }), error.OutOfMemory);
             }
         }
@@ -282,143 +278,129 @@ test "basics" {
     const c = entities.create(.{});
     const keep = entities.create(.{ .a = 10 });
 
-    // XXX: ...
-    // Fill the command buffer
+    entities.swapRemove(c); // Removing it before creating the command buffer should result in error
+    try helper.fillCommandBuffer(&command_buffer, .{ .a = a, .b = b, .c = c }, keep);
+    entities.swapRemove(a); // It's okay to remove it before the command buffer does
+
+    // Execute and check the results
     {
-        entities.swapRemove(c); // Removing it before creating the command buffer should result in error
-        try helper.fillCommandBuffer(&command_buffer, .{ .a = a, .b = b, .c = c }, keep);
-        entities.swapRemove(a); // It's okay to remove it before the command buffer does
+        command_buffer.execute();
+        try expectEqual(entities.len(), 3);
 
-        // Execute and check the results
-        {
-            command_buffer.execute();
-            try expectEqual(entities.len(), 3);
+        var a_0: usize = 0;
+        var a_1: usize = 0;
+        var a_100_b_20: usize = 0;
 
-            var a_0: usize = 0;
-            var a_1: usize = 0;
-            var a_100_b_20: usize = 0;
-
-            var iter = entities.iterator(.{
-                .a = .{ .optional = true },
-                .b = .{ .optional = true },
-                .c = .{ .optional = true },
-            });
-            while (iter.next()) |entity| {
-                try expectEqual(entity.c, null);
-                if (entity.a != null and entity.b == null) {
-                    if (entity.a.?.* == 0) a_0 += 1;
-                    if (entity.a.?.* == 1) a_1 += 1;
-                }
-
-                if (entity.a != null and entity.b != null) {
-                    if (entity.a.?.* == 100 and entity.b.?.* == 20) a_100_b_20 += 1;
-                }
+        var iter = entities.iterator(.{
+            .a = .{ .optional = true },
+            .b = .{ .optional = true },
+            .c = .{ .optional = true },
+        });
+        while (iter.next()) |entity| {
+            try expectEqual(entity.c, null);
+            if (entity.a != null and entity.b == null) {
+                if (entity.a.?.* == 0) a_0 += 1;
+                if (entity.a.?.* == 1) a_1 += 1;
             }
 
-            try expectEqual(a_0, 1);
-            try expectEqual(a_1, 1);
-            try expectEqual(a_100_b_20, 1);
-        }
-
-        // Test re-running the command buffer
-        {
-            // Undo the changes to keep to make sure they get reapplied
-            entities.changeArchetype(keep, .{
-                .add = .{
-                    .a = 123,
-                },
-                .remove = ComponentFlags.initFromKinds(.{ .b, .c }),
-            });
-            try expectEqual(entities.getComponent(keep, .a).?.*, 123);
-            try expectEqual(entities.getComponent(keep, .b), null);
-            try expectEqual(entities.getComponent(keep, .c), null);
-
-            // Rerun the command buffer
-            command_buffer.execute();
-            try expectEqual(entities.len(), 5);
-
-            var a_0: usize = 0;
-            var a_1: usize = 0;
-            var a_100_b_20: usize = 0;
-
-            var iter = entities.iterator(.{
-                .a = .{ .optional = true },
-                .b = .{ .optional = true },
-                .c = .{ .optional = true },
-            });
-            while (iter.next()) |entity| {
-                std.debug.print("\ne: ", .{});
-                if (entity.a) |a_| std.debug.print("a={}, ", .{a_.*});
-                if (entity.b) |b_| std.debug.print("b={}, ", .{b_.*});
-                if (entity.c) |c_| std.debug.print("c={}, ", .{c_.*});
-                std.debug.print("\n", .{});
-                try expectEqual(entity.c, null);
-                if (entity.a != null and entity.b == null) {
-                    if (entity.a.?.* == 0) a_0 += 1;
-                    if (entity.a.?.* == 1) a_1 += 1;
-                }
-
-                if (entity.a != null and entity.b != null) {
-                    if (entity.a.?.* == 100 and entity.b.?.* == 20) a_100_b_20 += 1;
-                }
+            if (entity.a != null and entity.b != null) {
+                if (entity.a.?.* == 100 and entity.b.?.* == 20) a_100_b_20 += 1;
             }
-
-            try expectEqual(a_0, 2);
-            try expectEqual(a_1, 2);
-            try expectEqual(a_100_b_20, 1);
         }
 
-        // Test running a cleared command buffer
-        {
-            entities.changeArchetype(keep, .{
-                .add = .{
-                    .a = 123,
-                },
-                .remove = ComponentFlags.initFromKinds(.{ .b, .c }),
-            });
-            try expectEqual(entities.getComponent(keep, .a).?.*, 123);
-            try expectEqual(entities.getComponent(keep, .b), null);
-            try expectEqual(entities.getComponent(keep, .c), null);
-
-            command_buffer.clearRetainingCapacity();
-            command_buffer.execute();
-            try expectEqual(entities.len(), 5);
-
-            var a_0: usize = 0;
-            var a_1: usize = 0;
-            var a_123: usize = 0;
-
-            var iter = entities.iterator(.{
-                .a = .{ .optional = true },
-                .b = .{ .optional = true },
-                .c = .{ .optional = true },
-            });
-            while (iter.next()) |entity| {
-                std.debug.print("\ne: ", .{});
-                if (entity.a) |a_| std.debug.print("a={}, ", .{a_.*});
-                if (entity.b) |b_| std.debug.print("b={}, ", .{b_.*});
-                if (entity.c) |c_| std.debug.print("c={}, ", .{c_.*});
-                std.debug.print("\n", .{});
-                try expectEqual(entity.c, null);
-                if (entity.a != null and entity.b == null) {
-                    if (entity.a.?.* == 0) a_0 += 1;
-                    if (entity.a.?.* == 1) a_1 += 1;
-                }
-
-                if (entity.a != null and entity.b == null) {
-                    if (entity.a.?.* == 123) a_123 += 1;
-                }
-            }
-
-            try expectEqual(a_0, 2);
-            try expectEqual(a_1, 2);
-            try expectEqual(a_123, 1);
-        }
-
-        // Test re-filling the command buffer. If we failed to clear one of the fields, it'll run out of
-        // memory and we'll catch that here!
-        try helper.fillCommandBuffer(&command_buffer, null, keep);
+        try expectEqual(a_0, 1);
+        try expectEqual(a_1, 1);
+        try expectEqual(a_100_b_20, 1);
     }
+
+    // Test re-running the command buffer
+    {
+        // Undo the changes to keep to make sure they get reapplied
+        entities.changeArchetype(keep, .{
+            .add = .{
+                .a = 123,
+            },
+            .remove = ComponentFlags.init(.{ .b, .c }),
+        });
+        try expectEqual(entities.getComponent(keep, .a).?.*, 123);
+        try expectEqual(entities.getComponent(keep, .b), null);
+        try expectEqual(entities.getComponent(keep, .c), null);
+
+        // Rerun the command buffer
+        command_buffer.execute();
+        try expectEqual(entities.len(), 5);
+
+        var a_0: usize = 0;
+        var a_1: usize = 0;
+        var a_100_b_20: usize = 0;
+
+        var iter = entities.iterator(.{
+            .a = .{ .optional = true },
+            .b = .{ .optional = true },
+            .c = .{ .optional = true },
+        });
+        while (iter.next()) |entity| {
+            try expectEqual(entity.c, null);
+            if (entity.a != null and entity.b == null) {
+                if (entity.a.?.* == 0) a_0 += 1;
+                if (entity.a.?.* == 1) a_1 += 1;
+            }
+
+            if (entity.a != null and entity.b != null) {
+                if (entity.a.?.* == 100 and entity.b.?.* == 20) a_100_b_20 += 1;
+            }
+        }
+
+        try expectEqual(a_0, 2);
+        try expectEqual(a_1, 2);
+        try expectEqual(a_100_b_20, 1);
+    }
+
+    // Test running a cleared command buffer
+    {
+        entities.changeArchetype(keep, .{
+            .add = .{
+                .a = 123,
+            },
+            .remove = ComponentFlags.init(.{ .b, .c }),
+        });
+        try expectEqual(entities.getComponent(keep, .a).?.*, 123);
+        try expectEqual(entities.getComponent(keep, .b), null);
+        try expectEqual(entities.getComponent(keep, .c), null);
+
+        command_buffer.clearRetainingCapacity();
+        command_buffer.execute();
+        try expectEqual(entities.len(), 5);
+
+        var a_0: usize = 0;
+        var a_1: usize = 0;
+        var a_123: usize = 0;
+
+        var iter = entities.iterator(.{
+            .a = .{ .optional = true },
+            .b = .{ .optional = true },
+            .c = .{ .optional = true },
+        });
+        while (iter.next()) |entity| {
+            try expectEqual(entity.c, null);
+            if (entity.a != null and entity.b == null) {
+                if (entity.a.?.* == 0) a_0 += 1;
+                if (entity.a.?.* == 1) a_1 += 1;
+            }
+
+            if (entity.a != null and entity.b == null) {
+                if (entity.a.?.* == 123) a_123 += 1;
+            }
+        }
+
+        try expectEqual(a_0, 2);
+        try expectEqual(a_1, 2);
+        try expectEqual(a_123, 1);
+    }
+
+    // Test re-filling the command buffer. If we failed to clear one of the fields, it'll run out of
+    // memory and we'll catch that here!
+    try helper.fillCommandBuffer(&command_buffer, null, keep);
 
     // XXX: tests:
     // * [x] init

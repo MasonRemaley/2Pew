@@ -124,7 +124,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 handle,
                 .{
                     .add = .{},
-                    .remove = ComponentFlags.initFromKinds(remove),
+                    .remove = ComponentFlags.init(remove),
                 },
             );
         }
@@ -258,7 +258,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         });
         pub const ArchetypeChange = struct {
             add: PrefabEntity = .{},
-            remove: ComponentFlags = ComponentFlags.initFromKinds(.{}),
+            remove: ComponentFlags = ComponentFlags.init(.{}),
         };
         pub const ComponentFlags = packed struct {
             pub const Int = std.meta.Int(.unsigned, @bitSizeOf(ComponentFlags));
@@ -275,7 +275,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
             mask: Mask = .{},
 
-            pub fn initFromKinds(tuple: anytype) ComponentFlags {
+            pub fn init(tuple: anytype) ComponentFlags {
                 var self = ComponentFlags{};
                 inline for (tuple) |kind| {
                     self.set(kind);
@@ -283,7 +283,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 return self;
             }
 
-            pub fn initFromComponents(components: anytype) ComponentFlags {
+            fn initFromComponents(components: anytype) ComponentFlags {
                 if (@TypeOf(components) == PrefabEntity) {
                     var self = ComponentFlags{};
                     inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
@@ -301,7 +301,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 };
             }
 
-            pub fn initFromIteratorDescriptorRequired(descriptor: IteratorDescriptor) ComponentFlags {
+            fn initFromIteratorDescriptorRequired(descriptor: IteratorDescriptor) ComponentFlags {
                 comptime var self = ComponentFlags{};
                 inline for (component_names) |comp_name| {
                     if (@field(descriptor, comp_name)) |comp| {
@@ -1297,7 +1297,7 @@ test "change archetype" {
         .add = .{
             .x = 10,
         },
-        .remove = ComponentFlags.initFromKinds(.{}),
+        .remove = ComponentFlags.init(.{}),
     });
     try expectEqual(entities.getComponent(e, .x).?.*, 10);
     try expectEqual(entities.getComponent(e, .y), null);
@@ -1308,7 +1308,7 @@ test "change archetype" {
         .add = .{
             .y = 20,
         },
-        .remove = ComponentFlags.initFromKinds(.{.z}),
+        .remove = ComponentFlags.init(.{.z}),
     });
     try expectEqual(entities.getComponent(e, .x).?.*, 10);
     try expectEqual(entities.getComponent(e, .y).?.*, 20);
@@ -1319,7 +1319,7 @@ test "change archetype" {
         .add = .{
             .y = 30,
         },
-        .remove = ComponentFlags.initFromKinds(.{.x}),
+        .remove = ComponentFlags.init(.{.x}),
     });
     try expectEqual(entities.getComponent(e, .x), null);
     try expectEqual(entities.getComponent(e, .y).?.*, 30);
@@ -1330,7 +1330,7 @@ test "change archetype" {
         .add = .{
             .z = 40,
         },
-        .remove = ComponentFlags.initFromKinds(.{.z}),
+        .remove = ComponentFlags.init(.{.z}),
     });
     try expectEqual(entities.getComponent(e, .x), null);
     try expectEqual(entities.getComponent(e, .y).?.*, 30);
@@ -1341,7 +1341,7 @@ test "change archetype" {
         .add = .{
             .z = 50,
         },
-        .remove = ComponentFlags.initFromKinds(.{.z}),
+        .remove = ComponentFlags.init(.{.z}),
     });
     try expectEqual(entities.getComponent(e, .x), null);
     try expectEqual(entities.getComponent(e, .y).?.*, 30);
@@ -1448,7 +1448,7 @@ test "random data" {
                                 .y = rnd.random().int(u8),
                                 .z = rnd.random().int(u16),
                             },
-                            .remove = ComponentFlags.initFromKinds(.{}),
+                            .remove = ComponentFlags.init(.{}),
                         };
 
                         switch (rnd.random().enumValue(enum { none, x, y, z, xy, xz, yz, xyz })) {
