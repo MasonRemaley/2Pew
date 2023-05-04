@@ -401,22 +401,38 @@ test "basics" {
     // Test re-filling the command buffer. If we failed to clear one of the fields, it'll run out of
     // memory and we'll catch that here!
     try helper.fillCommandBuffer(&command_buffer, null, keep);
+}
 
-    // XXX: tests:
-    // * [x] init
-    // * [x] deinit
-    // * [x] clearRetainingCapacity
-    //     * [x] test double execution!
-    // * [x] appendInstantiate
-    // * [x] appendInstantiateChecked
-    //     * [ ] test patching, including in nested types, maybe of multiple types
-    //     * [ ] only test patching that's specific to command buffer though, if possible do it in that module instead!
-    //     * [ ] maybe just the limits around prefabs vs prefab entities and whether self contained works right, minimally?
-    // * [x] appendRemove
-    // * [x] appendRemoveChecked
-    // * [x] appendArchChange
-    // * [x] appendArchChangeChecked
-    // * [ ] executeChecked
-    //      * [ ] test this resulting in out of memory or not worth it?
-    // * [x] execute
+test "ecs out of memory" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const Entities = ecs.entities.Entities(.{
+        .a = u8,
+        .b = u8,
+        .c = u8,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+    const PrefabHandle = prefabs.Handle;
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    var command_buffer = try CommandBuffer(Entities).init(allocator, &entities, .{
+        .prefab_entity_capacity = 1,
+        .prefab_capacity = 1,
+        .remove_capacity = 0,
+        .arch_change_capacity = 0,
+    });
+    defer command_buffer.deinit(allocator);
+
+    try expectEqual(command_buffer.appendInstantiate(
+        true,
+        &[_]PrefabEntity{.{ .a = 0 }},
+    ).?, PrefabHandle.init(0));
+
+    var failing_allocator = std.testing.FailingAllocator.init(entities.allocator, 0);
+    entities.allocator = failing_allocator.allocator();
+    try expectEqual(command_buffer.executeChecked(), error.OutOfMemory);
 }

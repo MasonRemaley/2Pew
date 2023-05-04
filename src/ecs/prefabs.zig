@@ -289,3 +289,9 @@ pub fn init(comptime Entities: type) type {
         }
     };
 }
+
+// XXX: tests:
+// * [ ] look over all functions
+// * [ ] test patching, including in nested types, maybe of multiple types
+// * [ ] only test patching that's specific to command buffer though, if possible do it in that module instead!
+// * [ ] maybe just the limits around prefabs vs prefab entities and whether self contained works right, minimally?
