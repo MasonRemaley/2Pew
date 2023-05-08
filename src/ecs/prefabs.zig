@@ -53,7 +53,7 @@ pub fn init(comptime Entities: type) type {
             );
         }
 
-        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []const PrefabEntity) Allocator.Error!void {
+        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []const PrefabEntity) (Allocator.Error || DeserializeHandleError)!void {
             return instantiateSpansChecked(
                 temporary,
                 entities,
@@ -73,13 +73,18 @@ pub fn init(comptime Entities: type) type {
                 std.debug.panic("failed to instantiate prefab: {}", .{err});
         }
 
-        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []const PrefabEntity, spans: []const Span) Allocator.Error!void {
+        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []const PrefabEntity, spans: []const Span) (Allocator.Error || DeserializeHandleError)!void {
             // Instantiate the entities
             var live_handles = try temporary.alloc(EntityHandle, prefab.len);
             defer temporary.free(live_handles);
             for (prefab, 0..) |prefab_entity, i| {
                 live_handles[i] = try entities.createChecked(prefab_entity);
             }
+
+            // If we fail, remove the new entities
+            errdefer for (live_handles) |live_handle| {
+                entities.swapRemove(live_handle);
+            };
 
             // Patch the handles
             var i: usize = 0;
@@ -98,7 +103,8 @@ pub fn init(comptime Entities: type) type {
                                     live_handles,
                                 .self_contained = span.self_contained,
                             };
-                            visitHandles(
+                            try visitHandles(
+                                DeserializeHandleError,
                                 context,
                                 component,
                                 @tagName(component_tag),
@@ -162,7 +168,8 @@ pub fn init(comptime Entities: type) type {
             for (serialized.items) |*serialized_entity| {
                 inline for (comptime std.meta.tags(Entities.ComponentTag)) |component_tag| {
                     if (@field(serialized_entity, @tagName(component_tag))) |*component| {
-                        visitHandles(
+                        try visitHandles(
+                            error{},
                             context,
                             component,
                             @tagName(component_tag),
@@ -197,7 +204,9 @@ pub fn init(comptime Entities: type) type {
             self_contained: bool,
         };
 
-        fn deserializeHandle(context: DeserializeContext, handle: *EntityHandle) void {
+        pub const DeserializeHandleError = error{ OutOfBounds, ExpectedSelfContained };
+
+        fn deserializeHandle(context: DeserializeContext, handle: *EntityHandle) DeserializeHandleError!void {
             switch (handle.generation) {
                 // We don't need to patch it if it's empty
                 .none => {},
@@ -205,7 +214,7 @@ pub fn init(comptime Entities: type) type {
                 .invalid => {
                     // Panic if we're out of bounds
                     if (handle.index >= context.live_handles.len) {
-                        std.debug.panic("bad index", .{});
+                        return error.OutOfBounds;
                     }
 
                     // Apply the patch
@@ -214,7 +223,7 @@ pub fn init(comptime Entities: type) type {
                 // We don't need to patch it if it's pointing to a live entity, but this should
                 // fail in self contained mode
                 _ => if (context.self_contained) {
-                    std.debug.panic("self contained prefab not self contained", .{});
+                    return error.ExpectedSelfContained;
                 },
             }
         }
@@ -228,14 +237,14 @@ pub fn init(comptime Entities: type) type {
         }
 
         fn visitHandles(
+            comptime Error: type,
             context: anytype,
             value: anytype,
             comptime component_name: []const u8,
-            cb: fn (@TypeOf(context), *EntityHandle) void,
-        ) void {
+            cb: fn (@TypeOf(context), *EntityHandle) Error!void,
+        ) Error!void {
             if (@TypeOf(value.*) == EntityHandle) {
-                cb(context, value);
-                return;
+                return cb(context, value);
             }
 
             switch (@typeInfo(@TypeOf(value.*))) {
@@ -257,15 +266,15 @@ pub fn init(comptime Entities: type) type {
                 => {},
 
                 // Recurse
-                .Optional => if (value.*) |*inner| visitHandles(context, inner, component_name, cb),
-                .Array => for (value) |*item| visitHandles(context, item, component_name, cb),
+                .Optional => if (value.*) |*inner| try visitHandles(Error, context, inner, component_name, cb),
+                .Array => for (value) |*item| try visitHandles(Error, context, item, component_name, cb),
                 .Struct => |s| inline for (s.fields) |field| {
-                    visitHandles(context, &@field(value.*, field.name), component_name, cb);
+                    try visitHandles(Error, context, &@field(value.*, field.name), component_name, cb);
                 },
                 .Union => |u| if (u.tag_type) |Tag| {
                     inline for (u.fields) |field| {
                         if (@field(Tag, field.name) == @as(Tag, value.*)) {
-                            visitHandles(context, &@field(value.*, field.name), component_name, cb);
+                            try visitHandles(Error, context, &@field(value.*, field.name), component_name, cb);
                         }
                     }
                 } else {
@@ -556,7 +565,7 @@ test "basic patch" {
     }
 }
 
-test "external handle not allowed" {
+test "out of bounds" {
     const expectEqual = std.testing.expectEqual;
     var allocator = std.testing.allocator;
 
@@ -571,7 +580,7 @@ test "external handle not allowed" {
     var entities = try Entities.init(allocator);
     defer entities.deinit();
 
-    prefabs.instantiateChecked(
+    try expectEqual(prefabs.instantiateChecked(
         allocator,
         &entities,
         true,
@@ -580,9 +589,121 @@ test "external handle not allowed" {
                 .other = PrefabHandle.init(1).relative,
             },
         },
-    );
+    ), error.OutOfBounds);
+
+    try expectEqual(prefabs.instantiateSpansChecked(
+        allocator,
+        &entities,
+        &[_]PrefabEntity{
+            .{
+                .other = PrefabHandle.init(1).relative,
+            },
+            .{},
+        },
+        &[_]Span{
+            .{
+                .len = 1,
+                .self_contained = true,
+            },
+            .{
+                .len = 1,
+                .self_contained = true,
+            },
+        },
+    ), error.OutOfBounds);
 }
 
+test "not self contained" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const Entities = ecs.entities.Entities(.{
+        .other = EntityHandle,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    // So we're not pointing at index 0
+    _ = entities.create(.{});
+    _ = entities.create(.{});
+    _ = entities.create(.{});
+
+    const entity = entities.create(.{});
+
+    try expectEqual(prefabs.instantiateChecked(
+        allocator,
+        &entities,
+        true,
+        &[_]PrefabEntity{
+            .{
+                .other = entity,
+            },
+        },
+    ), error.ExpectedSelfContained);
+
+    prefabs.instantiate(
+        allocator,
+        &entities,
+        false,
+        &[_]PrefabEntity{
+            .{
+                .other = entity,
+            },
+        },
+    );
+
+    var iter = entities.iterator(.{ .other = .{} });
+    var found = iter.next().?;
+    try expectEqual(iter.next(), null);
+
+    try expectEqual(found.other.*, entity);
+}
+
+test "none handles" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const Entities = ecs.entities.Entities(.{
+        .other = EntityHandle,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    prefabs.instantiate(
+        allocator,
+        &entities,
+        true,
+        &[_]PrefabEntity{
+            .{
+                .other = EntityHandle.none,
+            },
+        },
+    );
+
+    prefabs.instantiate(
+        allocator,
+        &entities,
+        false,
+        &[_]PrefabEntity{
+            .{
+                .other = .{ .index = 20, .generation = .none },
+            },
+        },
+    );
+
+    var iter = entities.iterator(.{ .other = .{} });
+    try expectEqual(iter.next().?.other.*, EntityHandle.none);
+    try expectEqual(iter.next().?.other.*, .{ .index = 20, .generation = .none });
+    try expectEqual(iter.next(), null);
+}
+
+// XXX: do we test that none doesn't exist in entities.zig?
 // XXX: tests:
 // * [ ] instantiate/instantiateSpans
 //      * [x] test instantaiting entities
@@ -592,7 +713,9 @@ test "external handle not allowed" {
 //
 //      * [x] test patching handles absolute
 //      * [x] test patching handles mixed
-//      * [ ] test external handles failing when self contianed or out of range
+//      * [x] test out of bounds
+//      * [x] test not self contained when should be or shouldn't be
+//      * [x] none handles
 //      * [ ] test instnatiating is fixed size and freed?
 //      * [ ] failing alloc?
 //      * [ ] spans not alingning?

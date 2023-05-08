@@ -121,7 +121,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
             });
         }
 
-        pub fn executeChecked(self: *@This()) Allocator.Error!void {
+        pub fn executeChecked(self: *@This()) (Allocator.Error || prefabs.DeserializeHandleError)!void {
             // Execute removals
             for (self.remove.items) |handle| {
                 self.entities.swapRemoveChecked(handle) catch |err| switch (err) {
