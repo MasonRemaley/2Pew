@@ -41,7 +41,7 @@ pub fn init(comptime Entities: type) type {
             self_contained: bool,
         };
 
-        pub fn instantiate(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []PrefabEntity) void {
+        pub fn instantiate(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []const PrefabEntity) void {
             return instantiateSpans(
                 temporary,
                 entities,
@@ -53,7 +53,7 @@ pub fn init(comptime Entities: type) type {
             );
         }
 
-        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []PrefabEntity) Allocator.Error!void {
+        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []const PrefabEntity) Allocator.Error!void {
             return instantiateSpansChecked(
                 temporary,
                 entities,
@@ -68,12 +68,12 @@ pub fn init(comptime Entities: type) type {
         /// Instantiate a prefab. Handles are assumed to be relative to the start of the prefab, and will be
         /// patched. Asserts that spans covers all entities. Temporarily allocates an array of `EntityHandles`
         /// the length of the prefabs.
-        pub fn instantiateSpans(temporary: Allocator, entities: *Entities, prefab: []PrefabEntity, spans: []Span) void {
+        pub fn instantiateSpans(temporary: Allocator, entities: *Entities, prefab: []const PrefabEntity, spans: []const Span) void {
             instantiateSpansChecked(temporary, entities, prefab, spans) catch |err|
                 std.debug.panic("failed to instantiate prefab: {}", .{err});
         }
 
-        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []PrefabEntity, spans: []Span) Allocator.Error!void {
+        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []const PrefabEntity, spans: []const Span) Allocator.Error!void {
             // Instantiate the entities
             var live_handles = try temporary.alloc(EntityHandle, prefab.len);
             defer temporary.free(live_handles);
@@ -290,8 +290,144 @@ pub fn init(comptime Entities: type) type {
     };
 }
 
+test "basic instantiate" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const Entities = ecs.entities.Entities(.{
+        .a = u8,
+        .b = u8,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+    const Span = prefabs.Span;
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    prefabs.instantiate(
+        allocator,
+        &entities,
+        true,
+        &[_]PrefabEntity{
+            .{ .a = 10 },
+            .{ .a = 20 },
+            .{ .a = 30 },
+        },
+    );
+
+    prefabs.instantiate(
+        allocator,
+        &entities,
+        false,
+        &[_]PrefabEntity{
+            .{ .a = 40 },
+            .{ .a = 50 },
+            .{ .a = 60 },
+        },
+    );
+
+    prefabs.instantiateSpans(
+        allocator,
+        &entities,
+        &[_]PrefabEntity{
+            .{ .a = 70 },
+            .{ .a = 80 },
+            .{ .a = 90 },
+            .{ .a = 100 },
+            .{ .a = 110 },
+            .{ .a = 120 },
+        },
+        &[_]Span{
+            .{
+                .len = 3,
+                .self_contained = true,
+            },
+            .{
+                .len = 3,
+                .self_contained = false,
+            },
+        },
+    );
+
+    var iter = entities.iterator(.{ .a = .{} });
+    var i: u8 = 1;
+    while (iter.next()) |next| {
+        try expectEqual(next.a.*, i * 10);
+        i += 1;
+    }
+    try expectEqual(iter.next(), null);
+}
+
+test "patch all handles" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const Handles = struct {
+        handle: EntityHandle,
+        optional: ?EntityHandle,
+        array: [1]EntityHandle,
+        @"struct": struct { field: EntityHandle },
+        @"union": union(enum) { variant: EntityHandle },
+    };
+
+    const Entities = ecs.entities.Entities(.{
+        .handles = Handles,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    prefabs.instantiate(
+        allocator,
+        &entities,
+        true,
+        &[_]PrefabEntity{
+            .{
+                .handles = .{
+                    .handle = .{ .index = 0, .generation = .invalid },
+                    .optional = .{ .index = 0, .generation = .invalid },
+                    .array = [1]EntityHandle{
+                        .{ .index = 0, .generation = .invalid },
+                    },
+                    .@"struct" = .{
+                        .field = .{ .index = 0, .generation = .invalid },
+                    },
+                    .@"union" = .{
+                        .variant = .{ .index = 0, .generation = .invalid },
+                    },
+                },
+            },
+        },
+    );
+
+    var iter = entities.iterator(.{ .handles = .{} });
+    var handles = iter.next().?.handles.*;
+    try expectEqual(iter.next(), null);
+
+    var expected = EntityHandle{ .index = 0, .generation = @intToEnum(EntityHandle.Generation, 0) };
+    try expectEqual(handles.handle, expected);
+    try expectEqual(handles.optional.?, expected);
+    try expectEqual(handles.array[0], expected);
+    try expectEqual(handles.@"struct".field, expected);
+    try expectEqual(handles.@"union".variant, expected);
+}
+
 // XXX: tests:
-// * [ ] look over all functions
-// * [ ] test patching, including in nested types, maybe of multiple types
-// * [ ] only test patching that's specific to command buffer though, if possible do it in that module instead!
-// * [ ] maybe just the limits around prefabs vs prefab entities and whether self contained works right, minimally?
+// * [ ] instantiate/instantiateSpans
+//      * [x] test instantaiting entities
+//          // XXX: test different componetn combinations or no?
+//      * [x] test that all handles are found
+//      * [ ] test patching handles relative
+//          * [ ] test that external handles are allowed when they should be
+//      * [ ] test patching handles absolute
+//      * [ ] test patching handles mixed
+//      * [ ] test instnatiating is fixed size and freed?
+//      * [ ] failing alloc?
+//      * [ ] spans not alingning?
+// * [ ] serialize
+//      * test that the handles are patched correctly
+//      * failing alloc?
+
