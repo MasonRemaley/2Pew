@@ -415,15 +415,184 @@ test "patch all handles" {
     try expectEqual(handles.@"union".variant, expected);
 }
 
+test "basic patch" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const Entities = ecs.entities.Entities(.{
+        .other = EntityHandle,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+    const PrefabHandle = prefabs.Handle;
+    const Span = prefabs.Span;
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    // Test self contained
+    {
+        // Create some entities so the patch actually has to adjust the index
+        _ = entities.create(.{});
+        _ = entities.create(.{});
+        _ = entities.create(.{});
+
+        prefabs.instantiate(
+            allocator,
+            &entities,
+            true,
+            &[_]PrefabEntity{
+                .{
+                    .other = PrefabHandle.init(1).relative,
+                },
+                .{
+                    .other = PrefabHandle.init(0).relative,
+                },
+            },
+        );
+
+        var iter = entities.iterator(.{ .other = .{} });
+        var entity_0_other = iter.next().?.other.*;
+        var entity_0 = iter.handle();
+        var entity_1_other = iter.next().?.other.*;
+        var entity_1 = iter.handle();
+        try expectEqual(iter.next(), null);
+
+        try expectEqual(entity_0_other, entity_1);
+        try expectEqual(entity_1_other, entity_0);
+
+        entities.clearRetainingCapacity();
+    }
+
+    // Test not self contained
+    {
+        // Create some entities so the patch actually has to adjust the index
+        _ = entities.create(.{});
+        _ = entities.create(.{});
+        _ = entities.create(.{});
+
+        prefabs.instantiate(
+            allocator,
+            &entities,
+            true,
+            &[_]PrefabEntity{
+                .{
+                    .other = PrefabHandle.init(1).relative,
+                },
+                .{
+                    .other = PrefabHandle.init(0).relative,
+                },
+            },
+        );
+
+        var iter = entities.iterator(.{ .other = .{} });
+        var entity_0_other = iter.next().?.other.*;
+        var entity_0 = iter.handle();
+        var entity_1_other = iter.next().?.other.*;
+        var entity_1 = iter.handle();
+        try expectEqual(iter.next(), null);
+
+        try expectEqual(entity_0_other, entity_1);
+        try expectEqual(entity_1_other, entity_0);
+
+        entities.clearRetainingCapacity();
+    }
+
+    // Test mixed
+    {
+        // Create some entities so the patch actually has to adjust the index
+        _ = entities.create(.{});
+        _ = entities.create(.{});
+        _ = entities.create(.{});
+
+        prefabs.instantiateSpans(
+            allocator,
+            &entities,
+            &[_]PrefabEntity{
+                // Not self contained
+                .{
+                    .other = PrefabHandle.init(1).relative,
+                },
+                .{
+                    .other = PrefabHandle.init(2).relative,
+                },
+
+                // Self contained
+                .{
+                    .other = PrefabHandle.init(1).relative,
+                },
+                .{
+                    .other = PrefabHandle.init(0).relative,
+                },
+            },
+            &[_]Span{
+                .{
+                    .len = 2,
+                    .self_contained = false,
+                },
+                .{
+                    .len = 2,
+                    .self_contained = true,
+                },
+            },
+        );
+
+        var iter = entities.iterator(.{ .other = .{} });
+        var entity_0_other = iter.next().?.other.*;
+        var entity_1_other = iter.next().?.other.*;
+        var entity_1 = iter.handle();
+        var entity_2_other = iter.next().?.other.*;
+        var entity_2 = iter.handle();
+        var entity_3_other = iter.next().?.other.*;
+        var entity_3 = iter.handle();
+        try expectEqual(iter.next(), null);
+
+        try expectEqual(entity_0_other, entity_1);
+        try expectEqual(entity_1_other, entity_2);
+        try expectEqual(entity_2_other, entity_3);
+        try expectEqual(entity_3_other, entity_2);
+
+        entities.clearRetainingCapacity();
+    }
+}
+
+test "external handle not allowed" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+
+    const Entities = ecs.entities.Entities(.{
+        .other = EntityHandle,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+    const PrefabHandle = prefabs.Handle;
+    const Span = prefabs.Span;
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    prefabs.instantiateChecked(
+        allocator,
+        &entities,
+        true,
+        &[_]PrefabEntity{
+            .{
+                .other = PrefabHandle.init(1).relative,
+            },
+        },
+    );
+}
+
 // XXX: tests:
 // * [ ] instantiate/instantiateSpans
 //      * [x] test instantaiting entities
 //          // XXX: test different componetn combinations or no?
 //      * [x] test that all handles are found
-//      * [ ] test patching handles relative
-//          * [ ] test that external handles are allowed when they should be
-//      * [ ] test patching handles absolute
-//      * [ ] test patching handles mixed
+//      * [x] test patching handles relative
+//
+//      * [x] test patching handles absolute
+//      * [x] test patching handles mixed
+//      * [ ] test external handles failing when self contianed or out of range
 //      * [ ] test instnatiating is fixed size and freed?
 //      * [ ] failing alloc?
 //      * [ ] spans not alingning?
