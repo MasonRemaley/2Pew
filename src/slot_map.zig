@@ -37,18 +37,6 @@ pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type
                 self.* = @intToEnum(Self, 0);
             }
         }
-
-        // XXX: annoying that i need to do this..but it's fine?
-        pub fn jsonStringify(
-            self: Self,
-            options: std.json.StringifyOptions,
-            out_stream: anytype,
-        ) !void {
-            switch (self) {
-                .invalid, .none => try std.json.stringify(@tagName(self), options, out_stream),
-                _ => try std.json.stringify(@enumToInt(self), options, out_stream),
-            }
-        }
     };
 
     return struct {

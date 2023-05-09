@@ -44,8 +44,6 @@ const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
 const EntityHandle = ecs.entities.Handle;
 const DeferredHandle = ecs.command_buffer.DeferredHandle;
 const ComponentFlags = Entities.ComponentFlags;
-// XXX: this feels a little wonky, shoudl we maybe be instantiating prefabs here and passing that
-// into command buffer instead? or is this fine?
 const parenting = ecs.parenting.init(Entities).?;
 const prefabs = ecs.prefabs.init(Entities);
 const PrefabHandle = prefabs.Handle;
@@ -57,27 +55,6 @@ const PrefabHandle = prefabs.Handle;
 const profile = false;
 
 pub fn main() !void {
-    // XXX: std.meta.intToEnum doesn't respect `is_exhaustive`...which breaks the json parser.
-    // We can fix that but, should we just use zon or something instead?
-    // XXX: in general this is silly. if the enum variant has a name it should be a string, otherwise
-    // it should be a number, this should be default behavior imo. If I have to fix this maybe also make
-    // a pr or at least an option that makes the enums automatic.
-    // XXX: also note that while this strategy is convenient because it makes saving and loading games
-    // the same as loading prefabs, we COULD just save the ecs to disk as is basically, and then load it,
-    // with minimal work done to change anything. I don't think we should worry about that unless we want
-    // it to go faster. What we're doing now is very very fast in theory, very simple, and VERY convenient
-    // and easy to understand.
-    // XXX: i don't think i'm checking if handles are valid before saving right now, but i should be. i also
-    // should probably have a way to specify which entities to save, and to fail or invalidate pointers to outside
-    // that set, or auto include but that's a mess, idk. think about a real save game. you wouldn't want to like
-    // save the menus and stuff for example--and those might use entities! you'd maybe do that per-scene somehow?
-    // we haven't decided how exactly layering scenes works, etc. but think that through a bit even if we don't
-    // decide it right now. it may make sense to make it open ended and just check for outside refs which is easy
-    // enough i think?
-    // var bar = @intToEnum(Animation.Index, 0);
-    // _ = bar;
-    // var foo = std.meta.intToEnum(Animation.Index, std.math.maxInt(u64)) catch unreachable;
-    // _ = foo;
     const gpa = std.heap.c_allocator;
 
     // Init SDL
@@ -212,54 +189,6 @@ fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
                 },
                 c.SDL_SCANCODE_6 => {
                     game.setupScenario(command_buffer, .royale_4p);
-                },
-
-                // XXX: delete these, they don't really work right now cause of inf and the json
-                // parser...we can just test as binary if we want or jsut not write to disk!
-                // XXX: get rid of the jsonStringify stuff if we remove this?
-                // XXX: ...
-                c.SDL_SCANCODE_0 => {
-                    // XXX: what do the the other functions in the json do?
-                    // XXX: temp allocator...
-                    // XXX: error handling...
-                    const gpa = std.heap.c_allocator;
-                    const serialized = prefabs.serialize(gpa, entities);
-                    defer gpa.free(serialized);
-
-                    // XXX: error hadnling
-                    var file = std.fs.cwd().createFile("save.json", .{}) catch unreachable;
-                    defer file.close();
-
-                    // XXX: error handling
-                    var options = .{
-                        .whitespace = .{},
-                        .emit_null_optional_fields = false,
-                    };
-                    std.json.stringify(serialized, options, file.writer()) catch unreachable;
-                },
-                // XXX: ...
-                c.SDL_SCANCODE_9 => {
-                    // XXX: read std.meta.traits!
-                    // XXX: what do the the other functions in the json do?
-                    // XXX: temp allocator...
-                    // XXX: error handling...
-                    const gpa = std.heap.c_allocator;
-
-                    // XXX: error hadnling
-                    // XXX: error handling
-                    var json = std.fs.cwd().readFileAlloc(gpa, "save.json", std.math.maxInt(u32)) catch unreachable;
-                    defer gpa.free(json);
-
-                    const options = .{
-                        .allocator = gpa,
-                    };
-                    @setEvalBranchQuota(10000); // XXX: ?
-                    var token_stream = std.json.TokenStream.init(json);
-                    const parsed = std.json.parse([]PrefabEntity, &token_stream, options) catch unreachable;
-                    // XXX: inf causes it to fail...
-                    defer std.json.parseFree([]PrefabEntity, parsed, options);
-                    entities.clearRetainingCapacity();
-                    prefabs.instantiate(gpa, entities, true, parsed);
                 },
                 else => {},
             },
@@ -1188,7 +1117,6 @@ pub fn sdlAssertZero(ret: c_int) void {
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
 
-// XXX: note: @hasDecl...
 const Input = struct {
     fn ActionMap(comptime T: type) type {
         return struct {
@@ -1217,14 +1145,6 @@ const Input = struct {
         thrust_x,
         thrust_y,
         fire,
-
-        pub fn jsonStringify(
-            self: @This(),
-            options: std.json.StringifyOptions,
-            out_stream: anytype,
-        ) !void {
-            try std.json.stringify(@tagName(self), options, out_stream);
-        }
     };
 
     pub const KeyboardMap = ActionMap(struct {
@@ -1244,31 +1164,12 @@ const Input = struct {
     pub const Direction = enum {
         positive,
         negative,
-
-        pub fn jsonStringify(
-            self: @This(),
-            options: std.json.StringifyOptions,
-            out_stream: anytype,
-        ) !void {
-            try std.json.stringify(@tagName(self), options, out_stream);
-        }
     };
-    // XXX: we really don't wanna be serializing the input state like this, just which player
-    // to get input from, how to make that work with ai though, what should be saved there? ideally
-    // we do this without having to patch the serializer!
     pub const DirectionState = enum {
         active,
         activated,
         inactive,
         deactivated,
-
-        pub fn jsonStringify(
-            self: @This(),
-            options: std.json.StringifyOptions,
-            out_stream: anytype,
-        ) !void {
-            try std.json.stringify(@tagName(self), options, out_stream);
-        }
     };
 
     const ActionState = struct {
@@ -1394,17 +1295,6 @@ const Animation = struct {
     const Index = enum(u32) {
         none = math.maxInt(u32),
         _,
-
-        pub fn jsonStringify(
-            self: @This(),
-            options: std.json.StringifyOptions,
-            out_stream: anytype,
-        ) !void {
-            switch (self) {
-                .none => try std.json.stringify(@tagName(self), options, out_stream),
-                _ => try std.json.stringify(@enumToInt(self), options, out_stream),
-            }
-        }
     };
 
     const Playback = struct {
@@ -1518,14 +1408,6 @@ const Collider = struct {
         hazard,
         projectile,
         hook,
-
-        pub fn jsonStringify(
-            self: @This(),
-            options: std.json.StringifyOptions,
-            out_stream: anytype,
-        ) !void {
-            try std.json.stringify(@tagName(self), options, out_stream);
-        }
     };
     const interacts: SymmetricMatrix(Layer, bool) = interacts: {
         var m = SymmetricMatrix(Layer, bool).init(true);
@@ -1578,14 +1460,6 @@ const Ship = struct {
         triangle,
         kevin,
         wendy,
-
-        pub fn jsonStringify(
-            self: @This(),
-            options: std.json.StringifyOptions,
-            out_stream: anytype,
-        ) !void {
-            try std.json.stringify(@tagName(self), options, out_stream);
-        }
     };
 };
 
@@ -1595,17 +1469,7 @@ const Sprite = struct {
 
     /// Index into the sprites array.
     const Index = enum(u32) {
-        // XXX: why do i need to define this to avoid an error?
-        workaround = std.math.maxInt(u32),
         _,
-
-        pub fn jsonStringify(
-            self: @This(),
-            options: std.json.StringifyOptions,
-            out_stream: anytype,
-        ) !void {
-            try std.json.stringify(@enumToInt(self), options, out_stream);
-        }
     };
 
     /// Assumes the pos points to the center of the sprite.
@@ -1968,14 +1832,6 @@ const Game = struct {
         _: f32,
         input: Input,
     ) PrefabHandle {
-        // XXX: don't let us instantiate prefabs that create infinite loops of entities somehow? or at least catch it
-        // and crash or break the loop etc
-        // XXX: make a fancier helper that lets us like, spawn a bunch of handles, and then set each one at
-        // a time, to avoid getting handles mixed up? Or any other nice way to do this? There may also be some
-        // comptime transformation we can do that makes this possible with a less error prone sytnax etc. The data
-        // doesn't have ot be comptime just the transformation of pointers or whatever idk.
-        // XXX: cast...
-        // const ship_handle = PrefabHandle.init(@intCast(u20, command_buffer.prefab_entities.items.len));
         const ship_handle = PrefabHandle.init(0);
         return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
             .{
@@ -2384,7 +2240,6 @@ const Game = struct {
             .deathmatch_2v2_one_rock,
             => {
                 const progression = &.{
-                    .wendy, // XXX: ...
                     .ranger,
                     .militia,
                     .ranger,
@@ -2415,7 +2270,6 @@ const Game = struct {
 
             .deathmatch_1v1, .deathmatch_1v1_one_rock => {
                 const progression = &.{
-                    .wendy, // XXX: ...
                     .ranger,
                     .militia,
                     .triangle,
@@ -2441,7 +2295,6 @@ const Game = struct {
 
             .royale_4p => {
                 const progression = &.{
-                    .wendy, // XXX: ...
                     .ranger,
                     .militia,
                     .triangle,

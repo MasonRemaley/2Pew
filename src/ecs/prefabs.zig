@@ -7,10 +7,6 @@ const Allocator = std.mem.Allocator;
 const EntityHandle = ecs.entities.Handle;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
-// XXX: reference notes, clean up diffs before merging
-// XXX: also could just init the entire ecs namespace instead of individual parts? doesn't even
-// necessarily require changing other code since we can alias stuff etc...then again does that add
-// coupling or no?
 pub fn init(comptime Entities: type) type {
     const PrefabEntity = Entities.PrefabEntity;
 
