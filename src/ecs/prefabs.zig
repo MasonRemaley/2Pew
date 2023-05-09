@@ -7,7 +7,6 @@ const Allocator = std.mem.Allocator;
 const EntityHandle = ecs.entities.Handle;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
-// XXX: add tests? what about for command buffer?
 // XXX: reference notes, clean up diffs before merging
 // XXX: also could just init the entire ecs namespace instead of individual parts? doesn't even
 // necessarily require changing other code since we can alias stuff etc...then again does that add
@@ -41,6 +40,8 @@ pub fn init(comptime Entities: type) type {
             self_contained: bool,
         };
 
+        pub const InstantiateError = Allocator.Error || DeserializeHandleError;
+
         pub fn instantiate(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []const PrefabEntity) void {
             return instantiateSpans(
                 temporary,
@@ -53,7 +54,7 @@ pub fn init(comptime Entities: type) type {
             );
         }
 
-        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []const PrefabEntity) (Allocator.Error || DeserializeHandleError)!void {
+        pub fn instantiateChecked(temporary: Allocator, entities: *Entities, self_contained: bool, prefab: []const PrefabEntity) InstantiateError!void {
             return instantiateSpansChecked(
                 temporary,
                 entities,
@@ -66,25 +67,20 @@ pub fn init(comptime Entities: type) type {
         }
 
         /// Instantiate a prefab. Handles are assumed to be relative to the start of the prefab, and will be
-        /// patched. Asserts that spans covers all entities. Temporarily allocates an array of `EntityHandles`
-        /// the length of the prefabs.
+        /// patched. If safety checks are enabled, asserts that spans cover all entities and are not out of
+        /// bounds. Temporarily allocates an array of `EntityHandle`s the length of the prefabs.
         pub fn instantiateSpans(temporary: Allocator, entities: *Entities, prefab: []const PrefabEntity, spans: []const Span) void {
             instantiateSpansChecked(temporary, entities, prefab, spans) catch |err|
                 std.debug.panic("failed to instantiate prefab: {}", .{err});
         }
 
-        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []const PrefabEntity, spans: []const Span) (Allocator.Error || DeserializeHandleError)!void {
+        pub fn instantiateSpansChecked(temporary: Allocator, entities: *Entities, prefab: []const PrefabEntity, spans: []const Span) InstantiateError!void {
             // Instantiate the entities
             var live_handles = try temporary.alloc(EntityHandle, prefab.len);
             defer temporary.free(live_handles);
             for (prefab, 0..) |prefab_entity, i| {
                 live_handles[i] = try entities.createChecked(prefab_entity);
             }
-
-            // If we fail, remove the new entities
-            errdefer for (live_handles) |live_handle| {
-                entities.swapRemove(live_handle);
-            };
 
             // Patch the handles
             var i: usize = 0;
@@ -188,7 +184,7 @@ pub fn init(comptime Entities: type) type {
             entities: *const Entities,
         };
 
-        fn serializeHandle(context: SerializeContext, handle: *EntityHandle) void {
+        fn serializeHandle(context: SerializeContext, handle: *EntityHandle) error{}!void {
             if (context.entities.exists(handle.*)) {
                 handle.* = .{
                     .index = context.index_map[handle.index],
@@ -633,17 +629,6 @@ test "not self contained" {
 
     const entity = entities.create(.{});
 
-    try expectEqual(prefabs.instantiateChecked(
-        allocator,
-        &entities,
-        true,
-        &[_]PrefabEntity{
-            .{
-                .other = entity,
-            },
-        },
-    ), error.ExpectedSelfContained);
-
     prefabs.instantiate(
         allocator,
         &entities,
@@ -656,10 +641,19 @@ test "not self contained" {
     );
 
     var iter = entities.iterator(.{ .other = .{} });
-    var found = iter.next().?;
+    try expectEqual(iter.next().?.other.*, entity);
     try expectEqual(iter.next(), null);
 
-    try expectEqual(found.other.*, entity);
+    try expectEqual(prefabs.instantiateChecked(
+        allocator,
+        &entities,
+        true,
+        &[_]PrefabEntity{
+            .{
+                .other = entity,
+            },
+        },
+    ), error.ExpectedSelfContained);
 }
 
 test "none handles" {
@@ -703,23 +697,146 @@ test "none handles" {
     try expectEqual(iter.next(), null);
 }
 
-// XXX: do we test that none doesn't exist in entities.zig?
-// XXX: tests:
-// * [ ] instantiate/instantiateSpans
-//      * [x] test instantaiting entities
-//          // XXX: test different componetn combinations or no?
-//      * [x] test that all handles are found
-//      * [x] test patching handles relative
-//
-//      * [x] test patching handles absolute
-//      * [x] test patching handles mixed
-//      * [x] test out of bounds
-//      * [x] test not self contained when should be or shouldn't be
-//      * [x] none handles
-//      * [ ] test instnatiating is fixed size and freed?
-//      * [ ] failing alloc?
-//      * [ ] spans not alingning?
-// * [ ] serialize
-//      * test that the handles are patched correctly
-//      * failing alloc?
+test "fixed alloc" {
+    const expectEqual = std.testing.expectEqual;
+    var allocator = std.testing.allocator;
+    const Entities = ecs.entities.Entities(.{
+        .other = EntityHandle,
+    });
+    const PrefabEntity = Entities.PrefabEntity;
+    const prefabs = ecs.prefabs.init(Entities);
+    const PrefabHandle = prefabs.Handle;
+    const Span = prefabs.Span;
 
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    var buffer: [6 * @sizeOf(EntityHandle)]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buffer);
+    prefabs.instantiateSpans(
+        fba.allocator(),
+        &entities,
+        &[_]PrefabEntity{
+            .{
+                .other = EntityHandle.none,
+            },
+            .{
+                .other = PrefabHandle.init(0).relative,
+            },
+            .{},
+            .{
+                .other = EntityHandle.none,
+            },
+            .{
+                .other = PrefabHandle.init(1).relative,
+            },
+            .{},
+        },
+        &[_]Span{
+            .{
+                .len = 2,
+                .self_contained = true,
+            },
+            .{
+                .len = 1,
+                .self_contained = false,
+            },
+            .{
+                .len = 3,
+                .self_contained = true,
+            },
+        },
+    );
+
+    // Make sure that when using a fixed buffer allocator, we don't go over the documented limit, and are
+    // succesfully freed before returning! (Remember that order of frees matters for a fixed buffer allocator.)
+    try expectEqual(fba.end_index, 0);
+}
+
+test "serialize" {
+    const expectEqual = std.testing.expectEqual;
+    const expect = std.testing.expect;
+    var allocator = std.testing.allocator;
+    const Entities = ecs.entities.Entities(.{
+        .other = EntityHandle,
+        .c = u8,
+    });
+    const prefabs = ecs.prefabs.init(Entities);
+
+    var entities = try Entities.init(allocator);
+    defer entities.deinit();
+
+    var temp = entities.create(.{});
+    entities.swapRemove(temp);
+    const e5 = entities.create(.{
+        .c = 4,
+        .other = temp,
+    });
+    const e0 = entities.create(.{});
+    const e1 = entities.create(.{
+        .c = 123,
+    });
+    const e2 = entities.create(.{
+        .other = e1,
+        .c = 2,
+    });
+    const e3 = entities.create(.{
+        .other = e2,
+    });
+    const e4 = entities.create(.{
+        .c = 3,
+    });
+
+    _ = e0;
+    _ = e3;
+    _ = e4;
+    _ = e5;
+
+    var serialized = prefabs.serialize(allocator, &entities);
+    defer allocator.free(serialized);
+
+    try expectEqual(serialized.len, 6);
+    var found = [_]bool{false} ** 6;
+    for (serialized) |e| {
+        if (e.other == null and e.c == null) {
+            found[0] = true;
+            continue;
+        }
+
+        if (e.c != null and e.c.? == 123 and e.other == null) {
+            found[1] = true;
+            continue;
+        }
+
+        if (e.c != null and e.c.? == 2 and e.other != null) {
+            try expectEqual(e.other.?.generation, .invalid);
+            try expectEqual(serialized[e.other.?.index].c.?, 123);
+            try expectEqual(serialized[e.other.?.index].other, null);
+            found[2] = true;
+            continue;
+        }
+
+        if (e.c == null and e.other != null) {
+            try expectEqual(e.other.?.generation, .invalid);
+            try expectEqual(serialized[e.other.?.index].c.?, 2);
+            try expect(serialized[e.other.?.index].other != null);
+            found[3] = true;
+            continue;
+        }
+
+        if (e.c != null and e.c.? == 3 and e.other == null) {
+            found[4] = true;
+            continue;
+        }
+
+        if (e.c != null and e.c.? == 4 and e.other != null) {
+            try expectEqual(e.other.?.index, temp.index);
+            try expectEqual(e.other.?.generation, .none);
+            found[5] = true;
+            continue;
+        }
+
+        unreachable;
+    }
+    for (found) |b| try expect(b);
+}

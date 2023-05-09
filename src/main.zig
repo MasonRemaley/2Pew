@@ -46,9 +46,9 @@ const DeferredHandle = ecs.command_buffer.DeferredHandle;
 const ComponentFlags = Entities.ComponentFlags;
 // XXX: this feels a little wonky, shoudl we maybe be instantiating prefabs here and passing that
 // into command buffer instead? or is this fine?
-const PrefabHandle = CommandBuffer.PrefabHandle;
 const parenting = ecs.parenting.init(Entities).?;
 const prefabs = ecs.prefabs.init(Entities);
+const PrefabHandle = prefabs.Handle;
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
 // screen including this, the number of live entities, etc. We also want warnings/errors to show up
@@ -427,7 +427,7 @@ fn update(
                                     .damping = hook.damping,
                                 },
                             },
-                            .remove = ComponentFlags.initFromKinds(.{.hook}),
+                            .remove = ComponentFlags.init(.{.hook}),
                         });
                         hooked = true;
                     }
@@ -442,7 +442,7 @@ fn update(
                                     .damping = hook.damping,
                                 },
                             },
-                            .remove = ComponentFlags.initFromKinds(.{.hook}),
+                            .remove = ComponentFlags.init(.{.hook}),
                         });
                         hooked = true;
                     }
