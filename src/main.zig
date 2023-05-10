@@ -12,6 +12,14 @@ const FieldEnum = std.meta.FieldEnum;
 const MinimumAlignmentAllocator = @import("minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
 
+const input_system = @import("input_system.zig").init(enum {
+    turn,
+    thrust_forward,
+    thrust_x,
+    thrust_y,
+    fire,
+});
+
 const display_width = 1920;
 const display_height = 1080;
 const display_center: V = .{
@@ -27,7 +35,7 @@ const Entities = ecs.entities.Entities(.{
     .ship = Ship,
     .transform = Transform,
     .rb = RigidBody,
-    .input = Input,
+    .player_index = u2,
     .lifetime = Lifetime,
     .sprite = Sprite.Index,
     .animation = Animation.Playback,
@@ -47,6 +55,8 @@ const ComponentFlags = Entities.ComponentFlags;
 const parenting = ecs.parenting.init(Entities).?;
 const prefabs = ecs.prefabs.init(Entities);
 const PrefabHandle = prefabs.Handle;
+
+const dead_zone = 10000;
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
 // screen including this, the number of live entities, etc. We also want warnings/errors to show up
@@ -206,21 +216,22 @@ fn update(
 ) void {
     // Update input
     {
+        for (&game.input_state, &game.control_schemes) |*input_state, *control_scheme| {
+            input_state.update();
+            input_state.applyControlScheme(control_scheme, &game.controllers);
+        }
+    }
+
+    // Prevent invulnerable entities from firing
+    {
         var it = entities.iterator(.{
-            .input = .{ .mutable = true },
-            .health = .{ .optional = true },
+            .player_index = .{},
+            .health = .{},
         });
         while (it.next()) |entity| {
-            entity.input.update(&game.controllers);
-
-            var parent_it = parenting.iterator(entities, it.handle());
-            while (parent_it.next()) |current| {
-                if (entities.getComponent(current, .health)) |health| {
-                    if (health.invulnerable_s > 0.0) {
-                        entity.input.state.getPtr(.fire).positive = .inactive;
-                        break;
-                    }
-                }
+            if (entity.health.invulnerable_s > 0.0) {
+                var input_state = &game.input_state[entity.player_index.*];
+                input_state.setAction(.fire, .positive, .inactive);
             }
         }
     }
@@ -525,8 +536,7 @@ fn update(
             .health = .{ .mutable = true },
             .rb = .{ .optional = true },
             .transform = .{ .optional = true },
-            .ship = .{ .optional = true },
-            .input = .{ .optional = true },
+            .player_index = .{ .optional = true },
         });
         while (it.next()) |entity| {
             if (entity.health.hp <= 0) {
@@ -556,24 +566,22 @@ fn update(
 
                 // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
-                if (entity.ship) |ship| {
-                    if (entity.input) |input| {
-                        // give player their next ship
-                        const player = &game.players[ship.player];
-                        const team = &game.teams[player.team];
-                        if (team.ship_progression_index >= team.ship_progression.len) {
-                            const already_over = game.over();
-                            team.players_alive -= 1;
-                            if (game.over() and !already_over) {
-                                const happy_team = game.aliveTeam();
-                                game.spawnTeamVictory(entities, display_center, happy_team);
-                            }
-                        } else {
-                            const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                            const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
-                            const facing_angle = new_angle + math.pi;
-                            _ = game.createShip(command_buffer, ship.player, new_pos, facing_angle, input.*);
+                if (entity.player_index) |player_index| {
+                    // give player their next ship
+                    const player = &game.players[player_index.*];
+                    const team = &game.teams[player.team];
+                    if (team.ship_progression_index >= team.ship_progression.len) {
+                        const already_over = game.over();
+                        team.players_alive -= 1;
+                        if (game.over() and !already_over) {
+                            const happy_team = game.aliveTeam();
+                            game.spawnTeamVictory(entities, display_center, happy_team);
                         }
+                    } else {
+                        const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                        const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
+                        const facing_angle = new_angle + math.pi;
+                        _ = game.createShip(command_buffer, player_index.*, new_pos, facing_angle);
                     }
                 }
 
@@ -600,23 +608,24 @@ fn update(
             .ship = .{},
             .rb = .{ .mutable = true },
             .transform = .{ .mutable = true },
-            .input = .{},
+            .player_index = .{},
             .animation = .{ .optional = true, .mutable = true },
         });
         while (it.next()) |entity| {
+            const input_state = &game.input_state[entity.player_index.*];
             if (entity.ship.omnithrusters) {
                 entity.rb.vel.add(.{
-                    .x = entity.input.getAxis(.thrust_x) * entity.ship.thrust * delta_s,
-                    .y = entity.input.getAxis(.thrust_y) * entity.ship.thrust * delta_s,
+                    .x = input_state.getAxis(.thrust_x) * entity.ship.thrust * delta_s,
+                    .y = input_state.getAxis(.thrust_y) * entity.ship.thrust * delta_s,
                 });
             } else {
                 // convert to 1.0 or 0.0
                 entity.transform.angle = @mod(
-                    entity.transform.angle + entity.input.getAxis(.turn) * entity.ship.turn_speed * delta_s,
+                    entity.transform.angle + input_state.getAxis(.turn) * entity.ship.turn_speed * delta_s,
                     2 * math.pi,
                 );
 
-                const thrust_input = @intToFloat(f32, @boolToInt(entity.input.isAction(.thrust_forward, .positive, .active)));
+                const thrust_input = @intToFloat(f32, @boolToInt(input_state.isAction(.thrust_forward, .positive, .active)));
                 const thrust = V.unit(entity.transform.angle);
                 entity.rb.vel.add(thrust.scaled(thrust_input * entity.ship.thrust * delta_s));
             }
@@ -626,16 +635,18 @@ fn update(
     // Update animate on input
     {
         var it = entities.iterator(.{
-            .input = .{},
+            .player_index = .{},
             .animate_on_input = .{},
             .animation = .{ .mutable = true },
         });
         while (it.next()) |entity| {
-            if (entity.input.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
+            // XXX: get rid of parent iters when we can!
+            const input_state = &game.input_state[entity.player_index.*];
+            if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
                 entity.animation.* = .{
                     .index = entity.animate_on_input.activated,
                 };
-            } else if (entity.input.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .deactivated)) {
+            } else if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .deactivated)) {
                 entity.animation.* = .{
                     .index = entity.animate_on_input.deactivated,
                 };
@@ -648,16 +659,16 @@ fn update(
     {
         var it = entities.iterator(.{
             .grapple_gun = .{ .mutable = true },
-            .input = .{},
+            .player_index = .{},
             .rb = .{},
             .transform = .{},
         });
         while (it.next()) |entity| {
             var gg = entity.grapple_gun;
-            var input = entity.input;
             var rb = entity.rb;
             gg.cooldown_s -= delta_s;
-            if (input.isAction(.fire, .positive, .activated) and gg.cooldown_s <= 0) {
+            const input_state = &game.input_state[entity.player_index.*];
+            if (input_state.isAction(.fire, .positive, .activated) and gg.cooldown_s <= 0) {
                 gg.cooldown_s = gg.max_cooldown_s;
 
                 // TODO: increase cooldown_s?
@@ -802,7 +813,7 @@ fn update(
     {
         var it = entities.iterator(.{
             .turret = .{ .mutable = true },
-            .input = .{},
+            .player_index = .{},
             .rb = .{},
             .transform = .{},
         });
@@ -826,7 +837,8 @@ fn update(
                 else
                     true,
             };
-            if (entity.input.isAction(.fire, .positive, .active) and ready) {
+            const input_state = &game.input_state[entity.player_index.*];
+            if (input_state.isAction(.fire, .positive, .active) and ready) {
                 switch (entity.turret.cooldown) {
                     .time => |*time| time.current_s = time.max_s,
                     .distance => |*dist| dist.last_pos = fire_pos,
@@ -920,7 +932,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             .transform = .{},
             .animation = .{ .mutable = true },
             .health = .{ .optional = true },
-            .ship = .{ .optional = true },
+            .player_index = .{ .optional = true },
             .parent = .{ .optional = true },
         });
         draw: while (it.next()) |entity| {
@@ -969,8 +981,8 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                     c.SDL_FLIP_NONE,
                 ));
 
-                if (entity.ship) |ship| {
-                    const sprite = assets.sprite(game.team_sprites[game.players[ship.player].team]);
+                if (entity.player_index) |player_index| {
+                    const sprite = assets.sprite(game.team_sprites[game.players[player_index.*].team]);
                     sdlAssertZero(c.SDL_RenderCopyEx(
                         renderer,
                         sprite.texture,
@@ -1117,136 +1129,9 @@ pub fn sdlAssertZero(ret: c_int) void {
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
 
-const Input = struct {
-    fn ActionMap(comptime T: type) type {
-        return struct {
-            turn: T,
-            thrust_forward: T,
-            thrust_x: T,
-            thrust_y: T,
-            fire: T,
-
-            fn init(default: T) @This() {
-                var map: @This() = undefined;
-                inline for (@typeInfo(@This()).Struct.fields) |field| {
-                    @field(map, field.name) = default;
-                }
-                return map;
-            }
-        };
-    }
-
-    // XXX: ...define action map in terms of this instead of vice versa? do we even need
-    // action map can we just use arrays/do we already? if it's just for syntax that's FINE...
-    // pub const Action = FieldEnum(ActionMap(void));
-    pub const Action = enum {
-        turn,
-        thrust_forward,
-        thrust_x,
-        thrust_y,
-        fire,
-    };
-
-    pub const KeyboardMap = ActionMap(struct {
-        positive: ?u16 = null,
-        negative: ?u16 = null,
-    });
-
-    pub const ControllerMap = ActionMap(struct {
-        axis: ?c.SDL_GameControllerAxis = null,
-        buttons: struct {
-            positive: ?c.SDL_GameControllerButton = null,
-            negative: ?c.SDL_GameControllerButton = null,
-        } = .{},
-        dead_zone: i16 = 10000,
-    });
-
-    pub const Direction = enum {
-        positive,
-        negative,
-    };
-    pub const DirectionState = enum {
-        active,
-        activated,
-        inactive,
-        deactivated,
-    };
-
-    const ActionState = struct {
-        positive: DirectionState = .inactive,
-        negative: DirectionState = .inactive,
-    };
-
-    controller_index: usize,
-    controller_map: ControllerMap,
-    keyboard_map: KeyboardMap,
-    state: std.EnumArray(Action, ActionState) = std.EnumArray(Action, ActionState).initFill(.{}),
-
-    pub fn update(self: *@This(), controllers: []?*c.SDL_GameController) void {
-        inline for (comptime std.meta.tags(Action)) |action| {
-            inline for (.{ Direction.positive, Direction.negative }) |direction| {
-                // Check if the keyboard or controller control is activated
-                const keyboard_action = @field(self.keyboard_map, @tagName(action));
-                const key = if (@field(keyboard_action, @tagName(direction))) |key|
-                    c.SDL_GetKeyboardState(null)[key] == 1
-                else
-                    false;
-
-                const controller_action = @field(self.controller_map, @tagName(action));
-                const button = if (@field(controller_action.buttons, @tagName(direction))) |button|
-                    c.SDL_GameControllerGetButton(controllers[self.controller_index], button) != 0
-                else
-                    false;
-
-                const axis = if (controller_action.axis) |axis| a: {
-                    const v = c.SDL_GameControllerGetAxis(controllers[self.controller_index], axis);
-                    switch (direction) {
-                        .positive => break :a v > controller_action.dead_zone,
-                        .negative => break :a v < -controller_action.dead_zone,
-                    }
-                } else false;
-
-                // Update the current state
-                const current_state = &@field(self.state.getPtr(action), @tagName(direction));
-
-                if (key or button or axis) {
-                    switch (current_state.*) {
-                        .active, .activated => current_state.* = .active,
-                        .inactive, .deactivated => current_state.* = .activated,
-                    }
-                } else {
-                    switch (current_state.*) {
-                        .active, .activated => current_state.* = .deactivated,
-                        .inactive, .deactivated => current_state.* = .inactive,
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn isAction(
-        self: *const @This(),
-        action: Action,
-        direction: Direction,
-        state: DirectionState,
-    ) bool {
-        const current_state = switch (direction) {
-            .positive => self.state.get(action).positive,
-            .negative => self.state.get(action).negative,
-        };
-        return switch (state) {
-            .active => current_state == .active or current_state == .activated,
-            .activated => current_state == .activated,
-            .inactive => current_state == .inactive or current_state == .deactivated,
-            .deactivated => current_state == .deactivated,
-        };
-    }
-
-    pub fn getAxis(self: *const @This(), action: Action) f32 {
-        // TODO(mason): make most recent input take precedence on keyboard?
-        return @intToFloat(f32, @boolToInt(self.isAction(action, .positive, .active))) -
-            @intToFloat(f32, @boolToInt(self.isAction(action, .negative, .active)));
-    }
+const User = union(enum) {
+    player_index: usize,
+    npc: EntityHandle,
 };
 
 const Damage = struct {
@@ -1381,8 +1266,8 @@ const Transform = struct {
 };
 
 const AnimateOnInput = struct {
-    action: Input.Action,
-    direction: Input.Direction,
+    action: input_system.Action,
+    direction: input_system.Direction,
     activated: Animation.Index,
     deactivated: Animation.Index,
 };
@@ -1452,7 +1337,6 @@ const Ship = struct {
     omnithrusters: bool = false,
 
     class: Class,
-    player: u2,
 
     const Class = enum {
         ranger,
@@ -1506,6 +1390,8 @@ const Game = struct {
 
     players_buffer: [4]Player,
     controllers: [4]?*c.SDL_GameController = [_]?*c.SDL_GameController{ null, null, null, null },
+    control_schemes: [4]input_system.ControlScheme,
+    input_state: [4]input_system.InputState,
     players: []Player,
     teams_buffer: [4]Team,
     teams: []Team,
@@ -1568,7 +1454,6 @@ const Game = struct {
         player_index: u2,
         pos: V,
         angle: f32,
-        input: Input,
     ) PrefabHandle {
         return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
             .{
@@ -1576,7 +1461,6 @@ const Game = struct {
                     .class = .ranger,
                     .turn_speed = math.pi * 1.0,
                     .thrust = 160,
-                    .player = player_index,
                 },
                 .health = .{
                     .hp = 80,
@@ -1614,7 +1498,7 @@ const Game = struct {
                     .projectile_damage = 6,
                     .projectile_radius = 8,
                 },
-                .input = input,
+                .player_index = player_index,
             },
         }).?;
     }
@@ -1625,7 +1509,6 @@ const Game = struct {
         player_index: u2,
         pos: V,
         angle: f32,
-        input: Input,
     ) PrefabHandle {
         const radius = 24;
         return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
@@ -1634,7 +1517,6 @@ const Game = struct {
                     .class = .triangle,
                     .turn_speed = math.pi * 0.9,
                     .thrust = 250,
-                    .player = player_index,
                 },
                 .health = .{
                     .hp = 100,
@@ -1673,7 +1555,7 @@ const Game = struct {
                     .projectile_damage = 12,
                     .projectile_radius = 12,
                 },
-                .input = input,
+                .player_index = player_index,
             },
         }).?;
     }
@@ -1684,7 +1566,6 @@ const Game = struct {
         player_index: u2,
         pos: V,
         angle: f32,
-        input: Input,
     ) PrefabHandle {
         return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
             .{
@@ -1692,7 +1573,6 @@ const Game = struct {
                     .class = .militia,
                     .turn_speed = math.pi * 1.4,
                     .thrust = 400,
-                    .player = player_index,
                 },
                 .health = .{
                     .hp = 80,
@@ -1730,20 +1610,18 @@ const Game = struct {
                 //     // kickback!
                 //     .projectile_speed = 0,
                 // },
-                .input = input,
+                .player_index = player_index,
                 .front_shield = .{},
             },
         }).?;
     }
 
-    // XXX: make sure this still works!
     fn createKevin(
         self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
         pos: V,
         angle: f32,
-        input: Input,
     ) PrefabHandle {
         const ship_handle = PrefabHandle.init(0);
 
@@ -1754,7 +1632,6 @@ const Game = struct {
                     .class = .kevin,
                     .turn_speed = math.pi * 1.1,
                     .thrust = 300,
-                    .player = player_index,
                 },
                 .health = .{
                     .hp = 300,
@@ -1783,7 +1660,7 @@ const Game = struct {
                     .activated = self.kevin_animations.accel,
                     .deactivated = self.kevin_animations.still,
                 },
-                .input = input,
+                .player_index = player_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1796,7 +1673,7 @@ const Game = struct {
                     .projectile_damage = 18,
                     .projectile_radius = 18,
                 },
-                .input = input,
+                .player_index = player_index,
                 .rb = .{
                     .radius = radius,
                     .density = std.math.inf(f32),
@@ -1814,7 +1691,7 @@ const Game = struct {
                     .projectile_damage = 18,
                     .projectile_radius = 18,
                 },
-                .input = input,
+                .player_index = player_index,
                 .rb = .{
                     .radius = radius,
                     .density = std.math.inf(f32),
@@ -1830,7 +1707,6 @@ const Game = struct {
         player_index: u2,
         pos: V,
         _: f32,
-        input: Input,
     ) PrefabHandle {
         const ship_handle = PrefabHandle.init(0);
         return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
@@ -1839,7 +1715,6 @@ const Game = struct {
                     .class = .wendy,
                     .turn_speed = math.pi * 1.0,
                     .thrust = 200,
-                    .player = player_index,
                     .omnithrusters = true,
                 },
                 .health = .{
@@ -1873,7 +1748,7 @@ const Game = struct {
                     .projectile_density = std.math.inf(f32),
                     .aim_opposite_movement = true,
                 },
-                .input = input,
+                .player_index = player_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1891,7 +1766,7 @@ const Game = struct {
                 .animation = .{
                     .index = .none,
                 },
-                .input = input,
+                .player_index = player_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1909,7 +1784,7 @@ const Game = struct {
                 .animation = .{
                     .index = .none,
                 },
-                .input = input,
+                .player_index = player_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1927,7 +1802,7 @@ const Game = struct {
                 .animation = .{
                     .index = .none,
                 },
-                .input = input,
+                .player_index = player_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1945,7 +1820,7 @@ const Game = struct {
                 .animation = .{
                     .index = .none,
                 },
-                .input = input,
+                .player_index = player_index,
             },
         }).?;
     }
@@ -2123,6 +1998,78 @@ const Game = struct {
             try assets.loadSprite("img/team3.png"),
         };
 
+        const controller_default = input_system.ControlScheme.Controller{
+            .turn = .{
+                .axis = .{
+                    .axis = c.SDL_CONTROLLER_AXIS_LEFTX,
+                    .dead_zone = dead_zone,
+                },
+            },
+            .thrust_forward = .{
+                .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_B },
+            },
+            .thrust_x = .{
+                .axis = .{
+                    .axis = c.SDL_CONTROLLER_AXIS_LEFTX,
+                    .dead_zone = dead_zone,
+                },
+            },
+            .thrust_y = .{
+                .axis = .{
+                    .axis = c.SDL_CONTROLLER_AXIS_LEFTY,
+                    .dead_zone = dead_zone,
+                },
+            },
+            .fire = .{
+                .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_A },
+            },
+        };
+        const keyboard_wasd = input_system.ControlScheme.Keyboard{
+            .turn = .{
+                .positive = c.SDL_SCANCODE_D,
+                .negative = c.SDL_SCANCODE_A,
+            },
+            .thrust_forward = .{ .positive = c.SDL_SCANCODE_W },
+            .thrust_x = .{
+                .positive = c.SDL_SCANCODE_D,
+                .negative = c.SDL_SCANCODE_A,
+            },
+            .thrust_y = .{
+                .positive = c.SDL_SCANCODE_S,
+                .negative = c.SDL_SCANCODE_W,
+            },
+            .fire = .{
+                .positive = c.SDL_SCANCODE_LSHIFT,
+            },
+        };
+        const keyboard_arrows = input_system.ControlScheme.Keyboard{
+            .turn = .{
+                .positive = c.SDL_SCANCODE_RIGHT,
+                .negative = c.SDL_SCANCODE_LEFT,
+            },
+            .thrust_forward = .{
+                .positive = c.SDL_SCANCODE_UP,
+            },
+            .thrust_x = .{
+                .positive = c.SDL_SCANCODE_RIGHT,
+                .negative = c.SDL_SCANCODE_LEFT,
+            },
+            .thrust_y = .{
+                .positive = c.SDL_SCANCODE_DOWN,
+                .negative = c.SDL_SCANCODE_UP,
+            },
+            .fire = .{
+                .positive = c.SDL_SCANCODE_RSHIFT,
+            },
+        };
+        const keyboard_none: input_system.ControlScheme.Keyboard = .{
+            .turn = .{},
+            .thrust_forward = .{},
+            .thrust_x = .{},
+            .thrust_y = .{},
+            .fire = .{},
+        };
+
         return .{
             .assets = assets,
             .teams = undefined,
@@ -2131,6 +2078,29 @@ const Game = struct {
             .players_buffer = undefined,
             .shrapnel_animations = shrapnel_animations,
             .explosion_animation = explosion_animation,
+            .control_schemes = [_]input_system.ControlScheme{
+                .{
+                    .controller_index = 0,
+                    .controller_scheme = controller_default,
+                    .keyboard_scheme = keyboard_wasd,
+                },
+                .{
+                    .controller_index = 1,
+                    .controller_scheme = controller_default,
+                    .keyboard_scheme = keyboard_arrows,
+                },
+                .{
+                    .controller_index = 2,
+                    .controller_scheme = controller_default,
+                    .keyboard_scheme = keyboard_none,
+                },
+                .{
+                    .controller_index = 3,
+                    .controller_scheme = controller_default,
+                    .keyboard_scheme = keyboard_none,
+                },
+            },
+            .input_state = [_]input_system.InputState{input_system.InputState.init()} ** 4,
 
             .ring_bg = ring_bg,
             .star_small = star_small,
@@ -2186,18 +2156,17 @@ const Game = struct {
         player_index: u2,
         pos: V,
         angle: f32,
-        input: Input,
     ) PrefabHandle {
         const player = game.players[player_index];
         const team = &game.teams[player.team];
         const progression_index = team.ship_progression_index;
         team.ship_progression_index += 1;
         return switch (team.ship_progression[progression_index]) {
-            .ranger => game.createRanger(command_buffer, player_index, pos, angle, input),
-            .militia => game.createMilitia(command_buffer, player_index, pos, angle, input),
-            .triangle => game.createTriangle(command_buffer, player_index, pos, angle, input),
-            .kevin => game.createKevin(command_buffer, player_index, pos, angle, input),
-            .wendy => game.createWendy(command_buffer, player_index, pos, angle, input),
+            .ranger => game.createRanger(command_buffer, player_index, pos, angle),
+            .militia => game.createMilitia(command_buffer, player_index, pos, angle),
+            .triangle => game.createTriangle(command_buffer, player_index, pos, angle),
+            .kevin => game.createKevin(command_buffer, player_index, pos, angle),
+            .wendy => game.createWendy(command_buffer, player_index, pos, angle),
         };
     }
 
@@ -2342,91 +2311,11 @@ const Game = struct {
                 }
             }
 
-            const controller_default = Input.ControllerMap{
-                .turn = .{ .axis = c.SDL_CONTROLLER_AXIS_LEFTX },
-                .thrust_forward = .{
-                    .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_B },
-                },
-                .thrust_x = .{ .axis = c.SDL_CONTROLLER_AXIS_LEFTX },
-                .thrust_y = .{ .axis = c.SDL_CONTROLLER_AXIS_LEFTY },
-                .fire = .{
-                    .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_A },
-                },
-            };
-            const keyboard_wasd = Input.KeyboardMap{
-                .turn = .{
-                    .positive = c.SDL_SCANCODE_D,
-                    .negative = c.SDL_SCANCODE_A,
-                },
-                .thrust_forward = .{ .positive = c.SDL_SCANCODE_W },
-                .thrust_x = .{
-                    .positive = c.SDL_SCANCODE_D,
-                    .negative = c.SDL_SCANCODE_A,
-                },
-                .thrust_y = .{
-                    .positive = c.SDL_SCANCODE_S,
-                    .negative = c.SDL_SCANCODE_W,
-                },
-                .fire = .{
-                    .positive = c.SDL_SCANCODE_LSHIFT,
-                },
-            };
-            const keyboard_arrows = Input.KeyboardMap{
-                .turn = .{
-                    .positive = c.SDL_SCANCODE_RIGHT,
-                    .negative = c.SDL_SCANCODE_LEFT,
-                },
-                .thrust_forward = .{
-                    .positive = c.SDL_SCANCODE_UP,
-                },
-                .thrust_x = .{
-                    .positive = c.SDL_SCANCODE_RIGHT,
-                    .negative = c.SDL_SCANCODE_LEFT,
-                },
-                .thrust_y = .{
-                    .positive = c.SDL_SCANCODE_DOWN,
-                    .negative = c.SDL_SCANCODE_UP,
-                },
-                .fire = .{
-                    .positive = c.SDL_SCANCODE_RSHIFT,
-                },
-            };
-            const keyboard_none: Input.KeyboardMap = .{
-                .turn = .{},
-                .thrust_forward = .{},
-                .thrust_x = .{},
-                .thrust_y = .{},
-                .fire = .{},
-            };
-
-            var input_devices = [_]Input{
-                .{
-                    .controller_index = 0,
-                    .controller_map = controller_default,
-                    .keyboard_map = keyboard_wasd,
-                },
-                .{
-                    .controller_index = 1,
-                    .controller_map = controller_default,
-                    .keyboard_map = keyboard_arrows,
-                },
-                .{
-                    .controller_index = 2,
-                    .controller_map = controller_default,
-                    .keyboard_map = keyboard_none,
-                },
-                .{
-                    .controller_index = 3,
-                    .controller_map = controller_default,
-                    .keyboard_map = keyboard_none,
-                },
-            };
-
-            for (game.players, input_devices[0..game.players.len], 0..) |_, input, i| {
+            for (game.control_schemes, 0..) |_, i| {
                 const angle = math.pi / 2.0 * @intToFloat(f32, i);
                 const pos = display_center.plus(V.unit(angle).scaled(50));
                 const player_index = @intCast(u2, i);
-                _ = game.createShip(command_buffer, player_index, pos, angle, input);
+                _ = game.createShip(command_buffer, player_index, pos, angle);
             }
         }
 
