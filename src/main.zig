@@ -640,7 +640,6 @@ fn update(
             .animation = .{ .mutable = true },
         });
         while (it.next()) |entity| {
-            // XXX: get rid of parent iters when we can!
             const input_state = &game.input_state[entity.player_index.*];
             if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
                 entity.animation.* = .{
@@ -941,9 +940,9 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             // We should probably make the sprites half opacity instead of turning them off when
             // flashing for a less jarring effect, but that is difficult right now.
             {
-                var curr: ?EntityHandle = it.handle();
-                while (curr) |handle| {
-                    if (entities.getComponent(handle, .health)) |health| {
+                var parent_it = parenting.iterator(entities, it.handle());
+                while (parent_it.next()) |current| {
+                    if (entities.getComponent(current, .health)) |health| {
                         if (health.invulnerable_s > 0.0) {
                             var flashes_ps: f32 = 2;
                             if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
@@ -953,12 +952,6 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                                 continue :draw;
                             }
                         }
-                    }
-
-                    if (entities.getComponent(handle, .parent)) |parent| {
-                        curr = parent.*;
-                    } else {
-                        curr = null;
                     }
                 }
             }
