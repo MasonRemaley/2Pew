@@ -227,7 +227,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         fn copyComponents(to: *const EntityPointer, from: EntityPointer, which: ComponentFlags) void {
-            inline for (0..component_names.len) |i| {
+            inline for (0..component_types.len) |i| {
                 const component = @intToEnum(ComponentTag, i);
                 if (which.isSet(component)) {
                     to.archetype_list.getComponentUnchecked(to.index, component).* = from.archetype_list.getComponentUnchecked(from.index, component).*;
@@ -372,12 +372,12 @@ pub fn Entities(comptime registered_components: anytype) type {
         ) type {
             var fields: [component_types.len]Type.StructField = undefined;
             var i: usize = 0;
-            for (component_types, component_names, 0..) |comp_type, comp_name, component_i| {
+            for (component_types, 0..) |comp_type, component_i| {
                 const component = @intToEnum(ComponentTag, component_i);
                 if (!@hasDecl(Map, "skip") or !Map.skip(component)) {
                     const FieldType = Map.FieldType(component, comp_type);
                     fields[i] = Type.StructField{
-                        .name = comp_name,
+                        .name = @tagName(component),
                         .type = FieldType,
                         .default_value = Map.default_value(component, FieldType),
                         .is_comptime = false,
@@ -429,7 +429,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 const required_components = ComponentFlags.initFromIteratorDescriptorRequired(descriptor);
                 const Item = ComponentMap(.Auto, struct {
                     fn FieldType(comptime component: ComponentTag, comptime C: type) type {
-                        const name = component_names[@enumToInt(component)];
+                        const name = @tagName(component);
 
                         var Result = C;
 
@@ -455,7 +455,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                     }
 
                     fn skip(comptime component: ComponentTag) bool {
-                        return @field(descriptor, component_names[@enumToInt(component)]) == null;
+                        return @field(descriptor, @tagName(component)) == null;
                     }
                 });
 
@@ -618,7 +618,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
 
             pub fn getComponentUnchecked(self: *@This(), index: u32, comptime component: ComponentTag) *component_types[@enumToInt(component)] {
-                return @field(self.comps, component_names[@enumToInt(component)]).uncheckedAt(index);
+                return @field(self.comps, @tagName(component)).uncheckedAt(index);
             }
 
             pub fn clearRetainingCapacity(self: *@This()) void {
@@ -1367,11 +1367,21 @@ test "random data" {
         handle: Handle,
     };
 
+    const iterations = 4000;
     var rnd = std.rand.DefaultPrng.init(0);
-    var truth = std.ArrayList(Created).init(allocator);
+    var truth = try std.ArrayList(Created).initCapacity(allocator, iterations * 10);
     defer truth.deinit();
 
-    for (0..4000) |_| {
+    var truth_xyz = std.AutoArrayHashMap(Handle, Data).init(allocator);
+    defer truth_xyz.deinit();
+    var truth_xz = std.AutoArrayHashMap(Handle, Data).init(allocator);
+    defer truth_xz.deinit();
+    var truth_y = std.AutoArrayHashMap(Handle, Data).init(allocator);
+    defer truth_y.deinit();
+    var truth_all = std.AutoArrayHashMap(Handle, Data).init(allocator);
+    defer truth_all.deinit();
+
+    for (0..iterations) |i| {
         switch (rnd.random().enumValue(enum { create, modify, change_arch, destroy })) {
             .create => {
                 for (0..rnd.random().uintLessThan(usize, 10)) |_| {
@@ -1553,16 +1563,13 @@ test "random data" {
             }
         }
 
-        // Test that iterators are working properly
-        {
-            var truth_xyz = std.AutoArrayHashMap(Handle, Data).init(allocator);
-            defer truth_xyz.deinit();
-            var truth_xz = std.AutoArrayHashMap(Handle, Data).init(allocator);
-            defer truth_xz.deinit();
-            var truth_y = std.AutoArrayHashMap(Handle, Data).init(allocator);
-            defer truth_y.deinit();
-            var truth_all = std.AutoArrayHashMap(Handle, Data).init(allocator);
-            defer truth_all.deinit();
+        // Test that iterators are working properly, only every n iterations so test isn't unreasonably
+        // slow
+        if (i % 20 == 0) {
+            truth_xyz.clearRetainingCapacity();
+            truth_xz.clearRetainingCapacity();
+            truth_y.clearRetainingCapacity();
+            truth_all.clearRetainingCapacity();
 
             for (truth.items) |entity| {
                 if (entity.data.x != null and entity.data.y != null and entity.data.z != null)
