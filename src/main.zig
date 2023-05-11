@@ -973,7 +973,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                     frame.sprite.getTint(if (entity.team_index) |i| i.* else null),
                     null, // source rectangle
                     &dest_rect,
-                    toDegrees(entity.transform.angle + frame.angle),
+                    toDegrees(entity.transform.angle_world_cached + frame.angle),
                     null, // center of angle
                     c.SDL_FLIP_NONE,
                 ));
@@ -1452,6 +1452,7 @@ const Game = struct {
         pos: V,
         angle: f32,
     ) PrefabHandle {
+        const ship_handle = PrefabHandle.init(0);
         return command_buffer.appendInstantiate(true, &.{
             .{
                 .ship = .{
@@ -1480,12 +1481,6 @@ const Game = struct {
                 .animation = .{
                     .index = self.ranger_animations.still,
                 },
-                .animate_on_input = .{
-                    .action = .thrust_forward,
-                    .direction = .positive,
-                    .activated = self.ranger_animations.accel,
-                    .deactivated = self.ranger_animations.still,
-                },
                 .turret = .{
                     .angle = 0,
                     .radius = self.ranger_radius,
@@ -1494,6 +1489,25 @@ const Game = struct {
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 6,
                     .projectile_radius = 8,
+                },
+                .player_index = player_index,
+                .team_index = team_index,
+            },
+            .{
+                .parent = ship_handle.relative,
+                .transform = .{},
+                .rb = .{
+                    .radius = self.ranger_radius,
+                    .density = std.math.inf(f32),
+                },
+                .animate_on_input = .{
+                    .action = .thrust_forward,
+                    .direction = .positive,
+                    .activated = self.ranger_animations.accel,
+                    .deactivated = .none,
+                },
+                .animation = .{
+                    .index = .none,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1510,6 +1524,7 @@ const Game = struct {
         angle: f32,
     ) PrefabHandle {
         const radius = 24;
+        const ship_handle = PrefabHandle.init(0);
         return command_buffer.appendInstantiate(true, &.{
             .{
                 .ship = .{
@@ -1539,12 +1554,6 @@ const Game = struct {
                 .animation = .{
                     .index = self.triangle_animations.still,
                 },
-                .animate_on_input = .{
-                    .action = .thrust_forward,
-                    .direction = .positive,
-                    .activated = self.triangle_animations.accel,
-                    .deactivated = self.triangle_animations.still,
-                },
                 .turret = .{
                     .angle = 0,
                     .radius = radius,
@@ -1553,6 +1562,25 @@ const Game = struct {
                     .projectile_lifetime = 1.0,
                     .projectile_damage = 12,
                     .projectile_radius = 12,
+                },
+                .player_index = player_index,
+                .team_index = team_index,
+            },
+            .{
+                .parent = ship_handle.relative,
+                .transform = .{},
+                .rb = .{
+                    .radius = self.militia_radius,
+                    .density = std.math.inf(f32),
+                },
+                .animate_on_input = .{
+                    .action = .thrust_forward,
+                    .direction = .positive,
+                    .activated = self.triangle_animations.accel,
+                    .deactivated = .none,
+                },
+                .animation = .{
+                    .index = .none,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1568,6 +1596,7 @@ const Game = struct {
         pos: V,
         angle: f32,
     ) PrefabHandle {
+        const ship_handle = PrefabHandle.init(0);
         return command_buffer.appendInstantiate(true, &.{
             .{
                 .ship = .{
@@ -1596,12 +1625,6 @@ const Game = struct {
                 .animation = .{
                     .index = self.militia_animations.still,
                 },
-                .animate_on_input = .{
-                    .action = .thrust_forward,
-                    .direction = .positive,
-                    .activated = self.militia_animations.accel,
-                    .deactivated = self.militia_animations.still,
-                },
                 // .grapple_gun = .{
                 //     .radius = self.ranger_radius * 10.0,
                 //     .angle = 0,
@@ -1614,6 +1637,25 @@ const Game = struct {
                 .player_index = player_index,
                 .team_index = team_index,
                 .front_shield = .{},
+            },
+            .{
+                .parent = ship_handle.relative,
+                .transform = .{},
+                .rb = .{
+                    .radius = self.militia_radius,
+                    .density = std.math.inf(f32),
+                },
+                .animate_on_input = .{
+                    .action = .thrust_forward,
+                    .direction = .positive,
+                    .activated = self.militia_animations.accel,
+                    .deactivated = .none,
+                },
+                .animation = .{
+                    .index = .none,
+                },
+                .player_index = player_index,
+                .team_index = team_index,
             },
         }).?;
     }
@@ -1657,12 +1699,6 @@ const Game = struct {
                 .animation = .{
                     .index = self.kevin_animations.still,
                 },
-                .animate_on_input = .{
-                    .action = .thrust_forward,
-                    .direction = .positive,
-                    .activated = self.kevin_animations.accel,
-                    .deactivated = self.kevin_animations.still,
-                },
                 .player_index = player_index,
                 .team_index = team_index,
             },
@@ -1703,6 +1739,25 @@ const Game = struct {
                     .density = std.math.inf(f32),
                 },
                 .transform = .{},
+            },
+            .{
+                .parent = ship_handle.relative,
+                .transform = .{},
+                .rb = .{
+                    .radius = self.kevin_radius,
+                    .density = std.math.inf(f32),
+                },
+                .animate_on_input = .{
+                    .action = .thrust_forward,
+                    .direction = .positive,
+                    .activated = self.kevin_animations.accel,
+                    .deactivated = .none,
+                },
+                .animation = .{
+                    .index = .none,
+                },
+                .player_index = player_index,
+                .team_index = team_index,
             },
         }).?;
     }
@@ -1886,10 +1941,10 @@ const Game = struct {
         };
 
         const ranger_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/ranger0.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/ranger1.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/ranger2.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/ranger3.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/ranger/ship.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/0.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/1.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/2.png", false, no_tint),
         };
         const ranger_still = try assets.addAnimation(&.{
             ranger_sprites[0],
@@ -1903,10 +1958,10 @@ const Game = struct {
         }, ranger_steady_thrust, 10, math.pi / 2.0);
 
         const militia_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/militia0.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/militia1.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/militia2.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/militia3.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/militia/ship.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/militia/thrusters/0.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/militia/thrusters/1.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/militia/thrusters/2.png", false, no_tint),
         };
         const militia_still = try assets.addAnimation(&.{
             militia_sprites[0],
@@ -1935,10 +1990,10 @@ const Game = struct {
         }, .none, 30, 0.0);
 
         const triangle_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/triangle0.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/triangle1.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/triangle2.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/triangle3.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/triangle/ship.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/0.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/1.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/2.png", false, no_tint),
         };
         const triangle_still = try assets.addAnimation(&.{
             triangle_sprites[0],
@@ -1952,10 +2007,10 @@ const Game = struct {
         }, triangle_steady_thrust, 10, math.pi / 2.0);
 
         const kevin_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/kevin0.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/kevin1.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/kevin2.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/kevin3.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/kevin/ship.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/0.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/1.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/2.png", false, no_tint),
         };
         const kevin_still = try assets.addAnimation(&.{
             kevin_sprites[0],
