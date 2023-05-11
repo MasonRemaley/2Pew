@@ -1915,23 +1915,23 @@ const Game = struct {
                 64,
             },
         };
-        const no_tint = &.{.{ 255, 255, 255 }};
+        const no_tint = &.{};
 
-        const ring_bg = try assets.loadSprite(allocator, "img/ring.png", false, no_tint);
-        const star_small = try assets.loadSprite(allocator, "img/star/small.png", false, no_tint);
-        const star_large = try assets.loadSprite(allocator, "img/star/large.png", false, no_tint);
-        const planet_red = try assets.loadSprite(allocator, "img/planet-red.png", false, no_tint);
-        const bullet_small = try assets.loadSprite(allocator, "img/bullet/small.png", false, no_tint);
-        const bullet_shiny = try assets.loadSprite(allocator, "img/bullet/shiny.png", false, no_tint);
+        const ring_bg = try assets.loadSprite(allocator, "img/ring.png", null, no_tint);
+        const star_small = try assets.loadSprite(allocator, "img/star/small.png", null, no_tint);
+        const star_large = try assets.loadSprite(allocator, "img/star/large.png", null, no_tint);
+        const planet_red = try assets.loadSprite(allocator, "img/planet-red.png", null, no_tint);
+        const bullet_small = try assets.loadSprite(allocator, "img/bullet/small.png", null, no_tint);
+        const bullet_shiny = try assets.loadSprite(allocator, "img/bullet/shiny.png", null, no_tint);
 
         var shrapnel_sprites: [shrapnel_sprite_names.len]Sprite.Index = undefined;
         for (&shrapnel_sprites, shrapnel_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(allocator, name, false, no_tint);
+            s.* = try assets.loadSprite(allocator, name, null, no_tint);
         }
 
         var rock_sprites: [rock_sprite_names.len]Sprite.Index = undefined;
         for (&rock_sprites, rock_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(allocator, name, false, no_tint);
+            s.* = try assets.loadSprite(allocator, name, null, no_tint);
         }
 
         const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
@@ -1941,10 +1941,10 @@ const Game = struct {
         };
 
         const ranger_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/ranger/ship.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/0.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/1.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/2.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/ranger/diffuse.png", "img/ship/ranger/recolor.png", team_tints),
+            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/0.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/1.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/2.png", null, no_tint),
         };
         const ranger_still = try assets.addAnimation(&.{
             ranger_sprites[0],
@@ -1958,10 +1958,10 @@ const Game = struct {
         }, ranger_steady_thrust, 10, math.pi / 2.0);
 
         const militia_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/militia/ship.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/militia/thrusters/0.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/militia/thrusters/1.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/militia/thrusters/2.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/militia/diffuse.png", "img/ship/militia/recolor.png", team_tints),
+            try assets.loadSprite(allocator, "img/ship/militia/thrusters/0.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/militia/thrusters/1.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/militia/thrusters/2.png", null, no_tint),
         };
         const militia_still = try assets.addAnimation(&.{
             militia_sprites[0],
@@ -1975,25 +1975,25 @@ const Game = struct {
         }, militia_steady_thrust, 10, math.pi / 2.0);
 
         const explosion_animation = try assets.addAnimation(&.{
-            try assets.loadSprite(allocator, "img/explosion/01.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/02.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/03.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/04.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/05.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/06.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/07.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/08.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/09.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/10.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/11.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/12.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/01.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/02.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/03.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/04.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/05.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/06.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/07.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/08.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/09.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/10.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/11.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/12.png", null, no_tint),
         }, .none, 30, 0.0);
 
         const triangle_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/triangle/ship.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/0.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/1.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/2.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/triangle/diffuse.png", "img/ship/triangle/recolor.png", team_tints),
+            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/0.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/1.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/2.png", null, no_tint),
         };
         const triangle_still = try assets.addAnimation(&.{
             triangle_sprites[0],
@@ -2007,10 +2007,10 @@ const Game = struct {
         }, triangle_steady_thrust, 10, math.pi / 2.0);
 
         const kevin_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/kevin/ship.png", true, team_tints),
-            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/0.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/1.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/2.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/kevin/diffuse.png", "img/ship/kevin/recolor.png", team_tints),
+            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/0.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/1.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/2.png", null, no_tint),
         };
         const kevin_still = try assets.addAnimation(&.{
             kevin_sprites[0],
@@ -2023,26 +2023,26 @@ const Game = struct {
             kevin_sprites[1],
         }, kevin_steady_thrust, 10, math.pi / 2.0);
 
-        const wendy_sprite = try assets.loadSprite(allocator, "img/ship/wendy/ship.png", true, team_tints);
+        const wendy_sprite = try assets.loadSprite(allocator, "img/ship/wendy/diffuse.png", "img/ship/wendy/recolor.png", team_tints);
         const wendy_thrusters_left = .{
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/0.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/1.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/2.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/0.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/1.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/2.png", null, no_tint),
         };
         const wendy_thrusters_right = .{
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/0.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/1.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/2.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/0.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/1.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/2.png", null, no_tint),
         };
         const wendy_thrusters_top = .{
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/0.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/1.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/2.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/0.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/1.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/2.png", null, no_tint),
         };
         const wendy_thrusters_bottom = .{
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/0.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/1.png", false, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/2.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/0.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/1.png", null, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/2.png", null, no_tint),
         };
         const wendy_still = try assets.addAnimation(&.{
             wendy_sprite,
@@ -2082,7 +2082,7 @@ const Game = struct {
         const kevin_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
         const wendy_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
 
-        const particle = try assets.loadSprite(allocator, "img/particle.png", false, team_tints);
+        const particle = try assets.loadSprite(allocator, "img/particle.png", null, team_tints);
 
         const controller_default = input_system.ControlScheme.Controller{
             .turn = .{
@@ -2553,39 +2553,55 @@ const Assets = struct {
         return a.sprites.items[@enumToInt(index)];
     }
 
-    fn loadSprite(a: *Assets, allocator: Allocator, name: []const u8, use_luminosity: bool, tints: []const [3]u8) !Sprite.Index {
-        const png_bytes = try a.dir.readFileAlloc(a.gpa, name, 50 * 1024 * 1024);
-        defer a.gpa.free(png_bytes);
-        try a.sprites.append(a.gpa, try spriteFromBytes(allocator, png_bytes, a.renderer, use_luminosity, tints));
+    fn loadSprite(a: *Assets, allocator: Allocator, diffuse_name: []const u8, recolor_name: ?[]const u8, tints: []const [3]u8) !Sprite.Index {
+        const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
+        defer a.gpa.free(diffuse_png);
+        const recolor = if (recolor_name != null) try a.dir.readFileAlloc(a.gpa, recolor_name.?, 50 * 1024 * 1024) else null;
+        defer if (recolor != null) a.gpa.free(recolor.?);
+        try a.sprites.append(a.gpa, try spriteFromBytes(allocator, diffuse_png, recolor, a.renderer, tints));
         return @intToEnum(Sprite.Index, a.sprites.items.len - 1);
     }
 
-    fn spriteFromBytes(allocator: Allocator, png_data: []const u8, renderer: *c.SDL_Renderer, use_luminosity: bool, tints: []const [3]u8) !Sprite {
+    fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, renderer: *c.SDL_Renderer, tints: []const [3]u8) !Sprite {
         var width: c_int = undefined;
         var height: c_int = undefined;
         const channel_count = 4;
         const bits_per_channel = 8;
-        const image_data = c.stbi_load_from_memory(
-            png_data.ptr,
-            @intCast(c_int, png_data.len),
+        const diffuse_data = c.stbi_load_from_memory(
+            png_diffuse.ptr,
+            @intCast(c_int, png_diffuse.len),
             &width,
             &height,
             null,
             channel_count,
         );
-        defer c.stbi_image_free(image_data);
+        defer c.stbi_image_free(diffuse_data);
+        var recolor_width: c_int = undefined;
+        var recolor_height: c_int = undefined;
+        const recolor_data = if (png_recolor != null) c.stbi_load_from_memory(
+            png_recolor.?.ptr,
+            @intCast(c_int, png_recolor.?.len),
+            &recolor_width,
+            &recolor_height,
+            null,
+            1,
+        ) else null;
+        defer if (recolor_data != null) c.stbi_image_free(recolor_data.?);
+        if (recolor_data != null) {
+            assert(width == recolor_width and height == recolor_height);
+        }
 
         var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(allocator, tints.len);
         errdefer textures.deinit(allocator);
         for (tints) |tint| {
-            const image_copy = try allocator.alloc(u8, @intCast(usize, width) * @intCast(usize, height) * channel_count);
-            defer allocator.free(image_copy);
-            @memcpy(image_copy.ptr, image_data, image_copy.len);
+            const diffuse_copy = try allocator.alloc(u8, @intCast(usize, width) * @intCast(usize, height) * channel_count);
+            defer allocator.free(diffuse_copy);
+            @memcpy(diffuse_copy.ptr, diffuse_data, diffuse_copy.len);
 
-            for (0..image_copy.len / channel_count) |pixel| {
-                var r = &image_copy[pixel * channel_count];
-                var g = &image_copy[pixel * channel_count + 1];
-                var b = &image_copy[pixel * channel_count + 2];
+            for (0..diffuse_copy.len / channel_count) |pixel| {
+                var r = &diffuse_copy[pixel * channel_count];
+                var g = &diffuse_copy[pixel * channel_count + 1];
+                var b = &diffuse_copy[pixel * channel_count + 2];
 
                 var color: [3]f32 = .{
                     @intToFloat(f32, r.*) / 255.0,
@@ -2599,8 +2615,11 @@ const Assets = struct {
                     color_channel.* = math.pow(f32, color_channel.*, 1.0 / gamma);
                 }
 
-                // Convert to grayscale
-                if (use_luminosity) {
+                // Convert to grayscale or determine recolor amount
+                var amount: f32 = 1.0;
+                if (recolor_data) |recolor| {
+                    amount = @intToFloat(f32, recolor[pixel]) / 255.0;
+                } else {
                     var luminosity = 0.299 * color[0] + 0.587 * color[1] + 0.0722 * color[2] / 255.0;
                     luminosity = math.pow(f32, luminosity, 1.0 / gamma);
                     for (&color) |*color_channel| {
@@ -2610,7 +2629,8 @@ const Assets = struct {
 
                 // Apply tint
                 for (&color, tint) |*color_channel, tint_channel| {
-                    color_channel.* *= math.pow(f32, @intToFloat(f32, tint_channel) / 255.0, 1.0 / gamma);
+                    var recolored = math.pow(f32, @intToFloat(f32, tint_channel) / 255.0, 1.0 / gamma);
+                    color_channel.* = lerp(color_channel.*, color_channel.* * recolored, amount);
                 }
 
                 // Change gamma back
@@ -2625,7 +2645,7 @@ const Assets = struct {
             }
             const pitch = width * channel_count;
             const surface = c.SDL_CreateRGBSurfaceFrom(
-                image_copy.ptr,
+                diffuse_copy.ptr,
                 width,
                 height,
                 channel_count * bits_per_channel,
@@ -2637,6 +2657,22 @@ const Assets = struct {
             );
             defer c.SDL_FreeSurface(surface);
             textures.appendAssumeCapacity(c.SDL_CreateTextureFromSurface(renderer, surface) orelse
+                panic("unable to convert surface to texture", .{}));
+        } else {
+            const pitch = width * channel_count;
+            const surface = c.SDL_CreateRGBSurfaceFrom(
+                diffuse_data,
+                width,
+                height,
+                channel_count * bits_per_channel,
+                pitch,
+                0x000000ff,
+                0x0000ff00,
+                0x00ff0000,
+                0xff000000,
+            );
+            defer c.SDL_FreeSurface(surface);
+            try textures.append(allocator, c.SDL_CreateTextureFromSurface(renderer, surface) orelse
                 panic("unable to convert surface to texture", .{}));
         }
         return .{
