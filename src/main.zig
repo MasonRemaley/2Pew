@@ -326,7 +326,7 @@ fn update(
                     const base_vel = if (std.crypto.random.boolean()) entity.rb.vel else other.rb.vel;
                     const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                         .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
-                    _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+                    _ = command_buffer.appendInstantiate(true, &.{
                         .{
                             .lifetime = .{
                                 .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
@@ -498,7 +498,7 @@ fn update(
                         ];
                         const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
-                        _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+                        _ = command_buffer.appendInstantiate(true, &.{
                             .{
                                 .lifetime = .{
                                     .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
@@ -542,7 +542,7 @@ fn update(
             if (entity.health.hp <= 0) {
                 // spawn explosion here
                 if (entity.transform) |trans| {
-                    _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+                    _ = command_buffer.appendInstantiate(true, &.{
                         .{
                             .lifetime = .{
                                 .seconds = 100,
@@ -551,7 +551,7 @@ fn update(
                                 .pos = trans.pos,
                             },
                             .rb = .{
-                                .vel = if (entity.rb) |rb| rb.vel else .{ .x = 0, .y = 0 },
+                                .vel = if (entity.rb) |rb| rb.vel else V{ .x = 0, .y = 0 },
                                 .rotation_vel = 0,
                                 .radius = 32,
                                 .density = 0.001,
@@ -843,7 +843,7 @@ fn update(
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+                _ = command_buffer.appendInstantiate(true, &.{
                     .{
                         .damage = .{
                             .hp = entity.turret.projectile_damage,
@@ -1382,7 +1382,7 @@ const Game = struct {
     assets: *Assets,
 
     players_buffer: [4]Player,
-    controllers: [4]?*c.SDL_GameController = [_]?*c.SDL_GameController{ null, null, null, null },
+    controllers: [4]?*c.SDL_GameController = .{ null, null, null, null },
     control_schemes: [4]input_system.ControlScheme,
     input_state: [4]input_system.InputState,
     players: []Player,
@@ -1448,7 +1448,7 @@ const Game = struct {
         pos: V,
         angle: f32,
     ) PrefabHandle {
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &.{
             .{
                 .ship = .{
                     .class = .ranger,
@@ -1504,7 +1504,7 @@ const Game = struct {
         angle: f32,
     ) PrefabHandle {
         const radius = 24;
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &.{
             .{
                 .ship = .{
                     .class = .triangle,
@@ -1560,7 +1560,7 @@ const Game = struct {
         pos: V,
         angle: f32,
     ) PrefabHandle {
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &.{
             .{
                 .ship = .{
                     .class = .militia,
@@ -1619,7 +1619,7 @@ const Game = struct {
         const ship_handle = PrefabHandle.init(0);
 
         const radius = 32;
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &.{
             .{
                 .ship = .{
                     .class = .kevin,
@@ -1702,7 +1702,7 @@ const Game = struct {
         _: f32,
     ) PrefabHandle {
         const ship_handle = PrefabHandle.init(0);
-        return command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+        return command_buffer.appendInstantiate(true, &.{
             .{
                 .ship = .{
                     .class = .wendy,
@@ -1842,7 +1842,7 @@ const Game = struct {
             try assets.addAnimation(&.{shrapnel_sprites[2]}, null, 30, 0.0),
         };
 
-        const ranger_sprites = [_]Sprite.Index{
+        const ranger_sprites = .{
             try assets.loadSprite("img/ship/ranger0.png"),
             try assets.loadSprite("img/ship/ranger1.png"),
             try assets.loadSprite("img/ship/ranger2.png"),
@@ -1859,7 +1859,7 @@ const Game = struct {
             ranger_sprites[1],
         }, ranger_steady_thrust, 10, math.pi / 2.0);
 
-        const militia_sprites = [_]Sprite.Index{
+        const militia_sprites = .{
             try assets.loadSprite("img/ship/militia0.png"),
             try assets.loadSprite("img/ship/militia1.png"),
             try assets.loadSprite("img/ship/militia2.png"),
@@ -1891,7 +1891,7 @@ const Game = struct {
             try assets.loadSprite("img/explosion/12.png"),
         }, .none, 30, 0.0);
 
-        const triangle_sprites = [_]Sprite.Index{
+        const triangle_sprites = .{
             try assets.loadSprite("img/ship/triangle0.png"),
             try assets.loadSprite("img/ship/triangle1.png"),
             try assets.loadSprite("img/ship/triangle2.png"),
@@ -1908,7 +1908,7 @@ const Game = struct {
             triangle_sprites[1],
         }, triangle_steady_thrust, 10, math.pi / 2.0);
 
-        const kevin_sprites = [_]Sprite.Index{
+        const kevin_sprites = .{
             try assets.loadSprite("img/ship/kevin0.png"),
             try assets.loadSprite("img/ship/kevin1.png"),
             try assets.loadSprite("img/ship/kevin2.png"),
@@ -1926,22 +1926,22 @@ const Game = struct {
         }, kevin_steady_thrust, 10, math.pi / 2.0);
 
         const wendy_sprite = try assets.loadSprite("img/ship/wendy/ship.png");
-        const wendy_thrusters_left = [_]Sprite.Index{
+        const wendy_thrusters_left = .{
             try assets.loadSprite("img/ship/wendy/thrusters/left/0.png"),
             try assets.loadSprite("img/ship/wendy/thrusters/left/1.png"),
             try assets.loadSprite("img/ship/wendy/thrusters/left/2.png"),
         };
-        const wendy_thrusters_right = [_]Sprite.Index{
+        const wendy_thrusters_right = .{
             try assets.loadSprite("img/ship/wendy/thrusters/right/0.png"),
             try assets.loadSprite("img/ship/wendy/thrusters/right/1.png"),
             try assets.loadSprite("img/ship/wendy/thrusters/right/2.png"),
         };
-        const wendy_thrusters_top = [_]Sprite.Index{
+        const wendy_thrusters_top = .{
             try assets.loadSprite("img/ship/wendy/thrusters/top/0.png"),
             try assets.loadSprite("img/ship/wendy/thrusters/top/1.png"),
             try assets.loadSprite("img/ship/wendy/thrusters/top/2.png"),
         };
-        const wendy_thrusters_bottom = [_]Sprite.Index{
+        const wendy_thrusters_bottom = .{
             try assets.loadSprite("img/ship/wendy/thrusters/bottom/0.png"),
             try assets.loadSprite("img/ship/wendy/thrusters/bottom/1.png"),
             try assets.loadSprite("img/ship/wendy/thrusters/bottom/2.png"),
@@ -2071,7 +2071,7 @@ const Game = struct {
             .players_buffer = undefined,
             .shrapnel_animations = shrapnel_animations,
             .explosion_animation = explosion_animation,
-            .control_schemes = [_]input_system.ControlScheme{
+            .control_schemes = .{
                 .{
                     .controller_index = 0,
                     .controller_scheme = controller_default,
@@ -2093,7 +2093,7 @@ const Game = struct {
                     .keyboard_scheme = keyboard_none,
                 },
             },
-            .input_state = [_]input_system.InputState{input_system.InputState.init()} ** 4,
+            .input_state = .{input_system.InputState.init()} ** 4,
 
             .ring_bg = ring_bg,
             .star_small = star_small,
@@ -2329,7 +2329,7 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, std.crypto.random.float(f32)))
                 .plus(display_center);
 
-            _ = command_buffer.appendInstantiate(true, &[_]PrefabEntity{
+            _ = command_buffer.appendInstantiate(true, &.{
                 .{
                     .sprite = sprite,
                     .transform = .{
@@ -2481,11 +2481,11 @@ const Assets = struct {
     fn loadSprite(a: *Assets, name: []const u8) !Sprite.Index {
         const png_bytes = try a.dir.readFileAlloc(a.gpa, name, 50 * 1024 * 1024);
         defer a.gpa.free(png_bytes);
-        try a.sprites.append(a.gpa, spriteFromBytes(png_bytes, a.renderer));
+        try a.sprites.append(a.gpa, spriteFromBytes(png_bytes, a.renderer, .{ 1.0, 1.0, 1.0 }));
         return @intToEnum(Sprite.Index, a.sprites.items.len - 1);
     }
 
-    fn spriteFromBytes(png_data: []const u8, renderer: *c.SDL_Renderer) Sprite {
+    fn spriteFromBytes(png_data: []const u8, renderer: *c.SDL_Renderer, tint: [3]f32) Sprite {
         var width: c_int = undefined;
         var height: c_int = undefined;
         const channel_count = 4;
@@ -2498,6 +2498,16 @@ const Assets = struct {
             null,
             channel_count,
         );
+        const len: usize = @intCast(usize, width) * @intCast(usize, height) * channel_count;
+        for (0..len / channel_count) |pixel| {
+            var r = &image_data[pixel * channel_count];
+            var g = &image_data[pixel * channel_count + 1];
+            var b = &image_data[pixel * channel_count + 2];
+
+            r.* = @floatToInt(u8, @intToFloat(f32, r.*) * tint[0]);
+            g.* = @floatToInt(u8, @intToFloat(f32, g.*) * tint[1]);
+            b.* = @floatToInt(u8, @intToFloat(f32, b.*) * tint[2]);
+        }
         const pitch = width * channel_count;
         const surface = c.SDL_CreateRGBSurfaceFrom(
             image_data,
@@ -2510,6 +2520,7 @@ const Assets = struct {
             0x00ff0000,
             0xff000000,
         );
+        defer c.SDL_FreeSurface(surface);
         const texture = c.SDL_CreateTextureFromSurface(renderer, surface) orelse
             panic("unable to convert surface to texture", .{});
         return .{
