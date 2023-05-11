@@ -4,6 +4,7 @@ const panic = std.debug.panic;
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const BoundedArray = std.BoundedArray;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const math = std.math;
 const assert = std.debug.assert;
 const V = @import("Vec2d.zig");
@@ -36,6 +37,7 @@ const Entities = ecs.entities.Entities(.{
     .transform = Transform,
     .rb = RigidBody,
     .player_index = u2,
+    .team_index = u2,
     .lifetime = Lifetime,
     .sprite = Sprite.Index,
     .animation = Animation.Playback,
@@ -107,7 +109,7 @@ pub fn main() !void {
     var assets = try Assets.init(gpa, renderer);
     defer assets.deinit();
 
-    var game = try Game.init(&assets);
+    var game = try Game.init(gpa, &assets);
 
     // Create initial entities
     var pa = std.heap.page_allocator;
@@ -537,6 +539,7 @@ fn update(
             .rb = .{ .optional = true },
             .transform = .{ .optional = true },
             .player_index = .{ .optional = true },
+            .team_index = .{ .optional = true },
         });
         while (it.next()) |entity| {
             if (entity.health.hp <= 0) {
@@ -567,21 +570,22 @@ fn update(
                 // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
                 if (entity.player_index) |player_index| {
-                    // give player their next ship
-                    const player = &game.players[player_index.*];
-                    const team = &game.teams[player.team];
-                    if (team.ship_progression_index >= team.ship_progression.len) {
-                        const already_over = game.over();
-                        team.players_alive -= 1;
-                        if (game.over() and !already_over) {
-                            const happy_team = game.aliveTeam();
-                            game.spawnTeamVictory(entities, display_center, happy_team);
+                    if (entity.team_index) |team_index| {
+                        // give player their next ship
+                        const team = &game.teams[team_index.*];
+                        if (team.ship_progression_index >= team.ship_progression.len) {
+                            const already_over = game.over();
+                            team.players_alive -= 1;
+                            if (game.over() and !already_over) {
+                                const happy_team = game.aliveTeam();
+                                game.spawnTeamVictory(entities, display_center, happy_team);
+                            }
+                        } else {
+                            const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                            const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
+                            const facing_angle = new_angle + math.pi;
+                            _ = game.createShip(command_buffer, player_index.*, team_index.*, new_pos, facing_angle);
                         }
-                    } else {
-                        const new_angle = math.pi * 2 * std.crypto.random.float(f32);
-                        const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
-                        const facing_angle = new_angle + math.pi;
-                        _ = game.createShip(command_buffer, player_index.*, new_pos, facing_angle);
                     }
                 }
 
@@ -907,7 +911,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
         };
         sdlAssertZero(c.SDL_RenderCopy(
             renderer,
-            sprite.texture,
+            sprite.tints[0],
             null,
             &dst_rect,
         ));
@@ -918,7 +922,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
         const sprite = assets.sprite(game.ring_bg);
         sdlAssertZero(c.SDL_RenderCopy(
             renderer,
-            sprite.texture,
+            sprite.tints[0],
             null,
             &sprite.toSdlRect(display_center),
         ));
@@ -931,7 +935,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             .transform = .{},
             .animation = .{ .mutable = true },
             .health = .{ .optional = true },
-            .player_index = .{ .optional = true },
+            .team_index = .{ .optional = true },
             .parent = .{ .optional = true },
         });
         draw: while (it.next()) |entity| {
@@ -966,26 +970,13 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
                 sdlAssertZero(c.SDL_RenderCopyEx(
                     renderer,
-                    frame.sprite.texture,
+                    frame.sprite.getTint(if (entity.team_index) |i| i.* else null),
                     null, // source rectangle
                     &dest_rect,
                     toDegrees(entity.transform.angle + frame.angle),
                     null, // center of angle
                     c.SDL_FLIP_NONE,
                 ));
-
-                if (entity.player_index) |player_index| {
-                    const sprite = assets.sprite(game.team_sprites[game.players[player_index.*].team]);
-                    sdlAssertZero(c.SDL_RenderCopyEx(
-                        renderer,
-                        sprite.texture,
-                        null, // source rectangle
-                        &dest_rect,
-                        0,
-                        null, // center of angle
-                        c.SDL_FLIP_NONE,
-                    ));
-                }
             }
         }
     }
@@ -1022,7 +1013,12 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     // Draw sprites
     // TODO(mason): sort draw calls somehow (can the sdl renderer do depth buffers?)
     {
-        var it = entities.iterator(.{ .sprite = .{}, .rb = .{}, .transform = .{} });
+        var it = entities.iterator(.{
+            .sprite = .{},
+            .rb = .{},
+            .transform = .{},
+            .team_index = .{ .optional = true },
+        });
         while (it.next()) |entity| {
             const sprite = assets.sprite(entity.sprite.*);
             const unscaled_sprite_size = sprite.size();
@@ -1032,7 +1028,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             const dest_rect = sdlRect(entity.transform.pos.minus(sprite_size.scaled(0.5)), sprite_size);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
-                sprite.texture,
+                sprite.getTint(if (entity.team_index) |i| i.* else null),
                 null, // source rectangle
                 &dest_rect,
                 toDegrees(entity.transform.angle),
@@ -1070,14 +1066,14 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
         for (game.teams, 0..) |team, team_index| {
             {
-                const sprite = assets.sprite(game.team_sprites[team_index]);
+                const sprite = assets.sprite(game.particle);
                 const pos = top_left.plus(.{
                     .x = col_width * @intToFloat(f32, team_index),
                     .y = 0,
                 });
                 sdlAssertZero(c.SDL_RenderCopy(
                     renderer,
-                    sprite.texture,
+                    sprite.getTint(team_index),
                     null,
                     &sprite.toSdlRect(pos),
                 ));
@@ -1095,7 +1091,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                 const dest_rect = sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
                 sdlAssertZero(c.SDL_RenderCopy(
                     renderer,
-                    sprite.texture,
+                    sprite.getTint(team_index),
                     null,
                     &dest_rect,
                 ));
@@ -1105,10 +1101,6 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     c.SDL_RenderPresent(renderer);
 }
-
-const Player = struct {
-    team: u2,
-};
 
 const Team = struct {
     ship_progression_index: u32,
@@ -1341,13 +1333,26 @@ const Ship = struct {
 };
 
 const Sprite = struct {
-    texture: *c.SDL_Texture,
+    tints: []*c.SDL_Texture,
     rect: c.SDL_Rect,
+
+    // If this sprite supports tinting, returns the tint. Otherwise returns the default tint.
+    fn getTint(self: *const @This(), index: ?usize) *c.SDL_Texture {
+        if (index != null and self.tints.len > 1) {
+            return self.tints[index.?];
+        }
+        return self.tints[0];
+    }
 
     /// Index into the sprites array.
     const Index = enum(u32) {
         _,
     };
+
+    fn deinit(self: *@This(), allocator: Allocator) void {
+        allocator.free(self.tints);
+        self.* = undefined;
+    }
 
     /// Assumes the pos points to the center of the sprite.
     fn toSdlRect(sprite: Sprite, pos: V) c.SDL_Rect {
@@ -1381,11 +1386,9 @@ fn boundedArrayFromArray(comptime T: type, comptime capacity: usize, array: anyt
 const Game = struct {
     assets: *Assets,
 
-    players_buffer: [4]Player,
     controllers: [4]?*c.SDL_GameController = .{ null, null, null, null },
     control_schemes: [4]input_system.ControlScheme,
     input_state: [4]input_system.InputState,
-    players: []Player,
     teams_buffer: [4]Team,
     teams: []Team,
 
@@ -1418,7 +1421,7 @@ const Game = struct {
 
     stars: [150]Star,
 
-    team_sprites: [4]Sprite.Index,
+    particle: Sprite.Index,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -1445,6 +1448,7 @@ const Game = struct {
         self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
+        team_index: u2,
         pos: V,
         angle: f32,
     ) PrefabHandle {
@@ -1492,6 +1496,7 @@ const Game = struct {
                     .projectile_radius = 8,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
             },
         }).?;
     }
@@ -1500,6 +1505,7 @@ const Game = struct {
         self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
+        team_index: u2,
         pos: V,
         angle: f32,
     ) PrefabHandle {
@@ -1549,6 +1555,7 @@ const Game = struct {
                     .projectile_radius = 12,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
             },
         }).?;
     }
@@ -1557,6 +1564,7 @@ const Game = struct {
         self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
+        team_index: u2,
         pos: V,
         angle: f32,
     ) PrefabHandle {
@@ -1604,6 +1612,7 @@ const Game = struct {
                 //     .projectile_speed = 0,
                 // },
                 .player_index = player_index,
+                .team_index = team_index,
                 .front_shield = .{},
             },
         }).?;
@@ -1613,6 +1622,7 @@ const Game = struct {
         self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
+        team_index: u2,
         pos: V,
         angle: f32,
     ) PrefabHandle {
@@ -1654,6 +1664,7 @@ const Game = struct {
                     .deactivated = self.kevin_animations.still,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1667,6 +1678,7 @@ const Game = struct {
                     .projectile_radius = 18,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
                 .rb = .{
                     .radius = radius,
                     .density = std.math.inf(f32),
@@ -1685,6 +1697,7 @@ const Game = struct {
                     .projectile_radius = 18,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
                 .rb = .{
                     .radius = radius,
                     .density = std.math.inf(f32),
@@ -1698,6 +1711,7 @@ const Game = struct {
         self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
+        team_index: u2,
         pos: V,
         _: f32,
     ) PrefabHandle {
@@ -1742,6 +1756,7 @@ const Game = struct {
                     .aim_opposite_movement = true,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1760,6 +1775,7 @@ const Game = struct {
                     .index = .none,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1778,6 +1794,7 @@ const Game = struct {
                     .index = .none,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1796,6 +1813,7 @@ const Game = struct {
                     .index = .none,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
             },
             .{
                 .parent = ship_handle.relative,
@@ -1814,26 +1832,51 @@ const Game = struct {
                     .index = .none,
                 },
                 .player_index = player_index,
+                .team_index = team_index,
             },
         }).?;
     }
 
-    fn init(assets: *Assets) !Game {
-        const ring_bg = try assets.loadSprite("img/ring.png");
-        const star_small = try assets.loadSprite("img/star/small.png");
-        const star_large = try assets.loadSprite("img/star/large.png");
-        const planet_red = try assets.loadSprite("img/planet-red.png");
-        const bullet_small = try assets.loadSprite("img/bullet/small.png");
-        const bullet_shiny = try assets.loadSprite("img/bullet/shiny.png");
+    fn init(allocator: Allocator, assets: *Assets) !Game {
+        const team_tints = &.{
+            .{
+                16,
+                124,
+                196,
+            },
+            .{
+                237,
+                210,
+                64,
+            },
+            .{
+                224,
+                64,
+                237,
+            },
+            .{
+                83,
+                237,
+                64,
+            },
+        };
+        const no_tint = &.{.{ 255, 255, 255 }};
+
+        const ring_bg = try assets.loadSprite(allocator, "img/ring.png", false, no_tint);
+        const star_small = try assets.loadSprite(allocator, "img/star/small.png", false, no_tint);
+        const star_large = try assets.loadSprite(allocator, "img/star/large.png", false, no_tint);
+        const planet_red = try assets.loadSprite(allocator, "img/planet-red.png", false, no_tint);
+        const bullet_small = try assets.loadSprite(allocator, "img/bullet/small.png", false, no_tint);
+        const bullet_shiny = try assets.loadSprite(allocator, "img/bullet/shiny.png", false, no_tint);
 
         var shrapnel_sprites: [shrapnel_sprite_names.len]Sprite.Index = undefined;
         for (&shrapnel_sprites, shrapnel_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(name);
+            s.* = try assets.loadSprite(allocator, name, false, no_tint);
         }
 
         var rock_sprites: [rock_sprite_names.len]Sprite.Index = undefined;
         for (&rock_sprites, rock_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(name);
+            s.* = try assets.loadSprite(allocator, name, false, no_tint);
         }
 
         const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
@@ -1843,10 +1886,10 @@ const Game = struct {
         };
 
         const ranger_sprites = .{
-            try assets.loadSprite("img/ship/ranger0.png"),
-            try assets.loadSprite("img/ship/ranger1.png"),
-            try assets.loadSprite("img/ship/ranger2.png"),
-            try assets.loadSprite("img/ship/ranger3.png"),
+            try assets.loadSprite(allocator, "img/ship/ranger0.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/ranger1.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/ranger2.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/ranger3.png", true, team_tints),
         };
         const ranger_still = try assets.addAnimation(&.{
             ranger_sprites[0],
@@ -1860,10 +1903,10 @@ const Game = struct {
         }, ranger_steady_thrust, 10, math.pi / 2.0);
 
         const militia_sprites = .{
-            try assets.loadSprite("img/ship/militia0.png"),
-            try assets.loadSprite("img/ship/militia1.png"),
-            try assets.loadSprite("img/ship/militia2.png"),
-            try assets.loadSprite("img/ship/militia3.png"),
+            try assets.loadSprite(allocator, "img/ship/militia0.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/militia1.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/militia2.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/militia3.png", true, team_tints),
         };
         const militia_still = try assets.addAnimation(&.{
             militia_sprites[0],
@@ -1877,25 +1920,25 @@ const Game = struct {
         }, militia_steady_thrust, 10, math.pi / 2.0);
 
         const explosion_animation = try assets.addAnimation(&.{
-            try assets.loadSprite("img/explosion/01.png"),
-            try assets.loadSprite("img/explosion/02.png"),
-            try assets.loadSprite("img/explosion/03.png"),
-            try assets.loadSprite("img/explosion/04.png"),
-            try assets.loadSprite("img/explosion/05.png"),
-            try assets.loadSprite("img/explosion/06.png"),
-            try assets.loadSprite("img/explosion/07.png"),
-            try assets.loadSprite("img/explosion/08.png"),
-            try assets.loadSprite("img/explosion/09.png"),
-            try assets.loadSprite("img/explosion/10.png"),
-            try assets.loadSprite("img/explosion/11.png"),
-            try assets.loadSprite("img/explosion/12.png"),
+            try assets.loadSprite(allocator, "img/explosion/01.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/02.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/03.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/04.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/05.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/06.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/07.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/08.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/09.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/10.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/11.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/explosion/12.png", false, no_tint),
         }, .none, 30, 0.0);
 
         const triangle_sprites = .{
-            try assets.loadSprite("img/ship/triangle0.png"),
-            try assets.loadSprite("img/ship/triangle1.png"),
-            try assets.loadSprite("img/ship/triangle2.png"),
-            try assets.loadSprite("img/ship/triangle3.png"),
+            try assets.loadSprite(allocator, "img/ship/triangle0.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/triangle1.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/triangle2.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/triangle3.png", true, team_tints),
         };
         const triangle_still = try assets.addAnimation(&.{
             triangle_sprites[0],
@@ -1909,10 +1952,10 @@ const Game = struct {
         }, triangle_steady_thrust, 10, math.pi / 2.0);
 
         const kevin_sprites = .{
-            try assets.loadSprite("img/ship/kevin0.png"),
-            try assets.loadSprite("img/ship/kevin1.png"),
-            try assets.loadSprite("img/ship/kevin2.png"),
-            try assets.loadSprite("img/ship/kevin3.png"),
+            try assets.loadSprite(allocator, "img/ship/kevin0.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/kevin1.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/kevin2.png", true, team_tints),
+            try assets.loadSprite(allocator, "img/ship/kevin3.png", true, team_tints),
         };
         const kevin_still = try assets.addAnimation(&.{
             kevin_sprites[0],
@@ -1925,26 +1968,26 @@ const Game = struct {
             kevin_sprites[1],
         }, kevin_steady_thrust, 10, math.pi / 2.0);
 
-        const wendy_sprite = try assets.loadSprite("img/ship/wendy/ship.png");
+        const wendy_sprite = try assets.loadSprite(allocator, "img/ship/wendy/ship.png", true, team_tints);
         const wendy_thrusters_left = .{
-            try assets.loadSprite("img/ship/wendy/thrusters/left/0.png"),
-            try assets.loadSprite("img/ship/wendy/thrusters/left/1.png"),
-            try assets.loadSprite("img/ship/wendy/thrusters/left/2.png"),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/0.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/1.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/2.png", false, no_tint),
         };
         const wendy_thrusters_right = .{
-            try assets.loadSprite("img/ship/wendy/thrusters/right/0.png"),
-            try assets.loadSprite("img/ship/wendy/thrusters/right/1.png"),
-            try assets.loadSprite("img/ship/wendy/thrusters/right/2.png"),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/0.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/1.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/2.png", false, no_tint),
         };
         const wendy_thrusters_top = .{
-            try assets.loadSprite("img/ship/wendy/thrusters/top/0.png"),
-            try assets.loadSprite("img/ship/wendy/thrusters/top/1.png"),
-            try assets.loadSprite("img/ship/wendy/thrusters/top/2.png"),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/0.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/1.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/2.png", false, no_tint),
         };
         const wendy_thrusters_bottom = .{
-            try assets.loadSprite("img/ship/wendy/thrusters/bottom/0.png"),
-            try assets.loadSprite("img/ship/wendy/thrusters/bottom/1.png"),
-            try assets.loadSprite("img/ship/wendy/thrusters/bottom/2.png"),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/0.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/1.png", false, no_tint),
+            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/2.png", false, no_tint),
         };
         const wendy_still = try assets.addAnimation(&.{
             wendy_sprite,
@@ -1984,12 +2027,7 @@ const Game = struct {
         const kevin_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
         const wendy_radius = @intToFloat(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
 
-        const team_sprites: [4]Sprite.Index = .{
-            try assets.loadSprite("img/team0.png"),
-            try assets.loadSprite("img/team1.png"),
-            try assets.loadSprite("img/team2.png"),
-            try assets.loadSprite("img/team3.png"),
-        };
+        const particle = try assets.loadSprite(allocator, "img/particle.png", false, team_tints);
 
         const controller_default = input_system.ControlScheme.Controller{
             .turn = .{
@@ -2067,8 +2105,6 @@ const Game = struct {
             .assets = assets,
             .teams = undefined,
             .teams_buffer = undefined,
-            .players = undefined,
-            .players_buffer = undefined,
             .shrapnel_animations = shrapnel_animations,
             .explosion_animation = explosion_animation,
             .control_schemes = .{
@@ -2139,7 +2175,7 @@ const Game = struct {
 
             .stars = undefined,
 
-            .team_sprites = team_sprites,
+            .particle = particle,
         };
     }
 
@@ -2147,19 +2183,19 @@ const Game = struct {
         game: *Game,
         command_buffer: *CommandBuffer,
         player_index: u2,
+        team_index: u2,
         pos: V,
         angle: f32,
     ) PrefabHandle {
-        const player = game.players[player_index];
-        const team = &game.teams[player.team];
+        const team = &game.teams[team_index];
         const progression_index = team.ship_progression_index;
         team.ship_progression_index += 1;
         return switch (team.ship_progression[progression_index]) {
-            .ranger => game.createRanger(command_buffer, player_index, pos, angle),
-            .militia => game.createMilitia(command_buffer, player_index, pos, angle),
-            .triangle => game.createTriangle(command_buffer, player_index, pos, angle),
-            .kevin => game.createKevin(command_buffer, player_index, pos, angle),
-            .wendy => game.createWendy(command_buffer, player_index, pos, angle),
+            .ranger => game.createRanger(command_buffer, player_index, team_index, pos, angle),
+            .militia => game.createMilitia(command_buffer, player_index, team_index, pos, angle),
+            .triangle => game.createTriangle(command_buffer, player_index, team_index, pos, angle),
+            .kevin => game.createKevin(command_buffer, player_index, team_index, pos, angle),
+            .wendy => game.createWendy(command_buffer, player_index, team_index, pos, angle),
         };
     }
 
@@ -2196,6 +2232,8 @@ const Game = struct {
     fn setupScenario(game: *Game, command_buffer: *CommandBuffer, scenario: Scenario) void {
         command_buffer.entities.clearRetainingCapacity();
 
+        var player_teams: []const u2 = undefined;
+
         switch (scenario) {
             .deathmatch_2v2,
             .deathmatch_2v2_no_rocks,
@@ -2220,14 +2258,7 @@ const Game = struct {
                 teams.* = .{ team_init, team_init };
                 game.teams = teams;
 
-                const players = game.players_buffer[0..4];
-                players.* = .{
-                    .{ .team = 0 },
-                    .{ .team = 1 },
-                    .{ .team = 0 },
-                    .{ .team = 1 },
-                };
-                game.players = players;
+                player_teams = &.{ 0, 1, 0, 1 };
             },
 
             .deathmatch_1v1, .deathmatch_1v1_one_rock => {
@@ -2247,12 +2278,7 @@ const Game = struct {
                 teams.* = .{ team_init, team_init };
                 game.teams = teams;
 
-                const players = game.players_buffer[0..2];
-                players.* = .{
-                    .{ .team = 0 },
-                    .{ .team = 1 },
-                };
-                game.players = players;
+                player_teams = &.{ 0, 1 };
             },
 
             .royale_4p => {
@@ -2272,14 +2298,7 @@ const Game = struct {
                 teams.* = .{ team_init, team_init, team_init, team_init };
                 game.teams = teams;
 
-                const players = game.players_buffer[0..4];
-                players.* = .{
-                    .{ .team = 0 },
-                    .{ .team = 1 },
-                    .{ .team = 2 },
-                    .{ .team = 3 },
-                };
-                game.players = players;
+                player_teams = &.{ 0, 1, 2, 3 };
             },
         }
 
@@ -2304,11 +2323,11 @@ const Game = struct {
                 }
             }
 
-            for (game.control_schemes, 0..) |_, i| {
+            for (player_teams, 0..) |team_index, i| {
                 const angle = math.pi / 2.0 * @intToFloat(f32, i);
                 const pos = display_center.plus(V.unit(angle).scaled(50));
                 const player_index = @intCast(u2, i);
-                _ = game.createShip(command_buffer, player_index, pos, angle);
+                _ = game.createShip(command_buffer, player_index, team_index, pos, angle);
             }
         }
 
@@ -2353,7 +2372,7 @@ const Game = struct {
         generateStars(&game.stars);
     }
 
-    fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team: u2) void {
+    fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team_index: u2) void {
         for (0..500) |_| {
             const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(300);
             _ = entities.create(.{
@@ -2370,7 +2389,8 @@ const Game = struct {
                     .radius = 16,
                     .density = 0.001,
                 },
-                .sprite = game.team_sprites[team],
+                .sprite = game.particle,
+                .team_index = team_index,
             });
         }
     }
@@ -2478,14 +2498,14 @@ const Assets = struct {
         return a.sprites.items[@enumToInt(index)];
     }
 
-    fn loadSprite(a: *Assets, name: []const u8) !Sprite.Index {
+    fn loadSprite(a: *Assets, allocator: Allocator, name: []const u8, use_luminosity: bool, tints: []const [3]u8) !Sprite.Index {
         const png_bytes = try a.dir.readFileAlloc(a.gpa, name, 50 * 1024 * 1024);
         defer a.gpa.free(png_bytes);
-        try a.sprites.append(a.gpa, spriteFromBytes(png_bytes, a.renderer, .{ 1.0, 1.0, 1.0 }));
+        try a.sprites.append(a.gpa, try spriteFromBytes(allocator, png_bytes, a.renderer, use_luminosity, tints));
         return @intToEnum(Sprite.Index, a.sprites.items.len - 1);
     }
 
-    fn spriteFromBytes(png_data: []const u8, renderer: *c.SDL_Renderer, tint: [3]f32) Sprite {
+    fn spriteFromBytes(allocator: Allocator, png_data: []const u8, renderer: *c.SDL_Renderer, use_luminosity: bool, tints: []const [3]u8) !Sprite {
         var width: c_int = undefined;
         var height: c_int = undefined;
         const channel_count = 4;
@@ -2498,33 +2518,74 @@ const Assets = struct {
             null,
             channel_count,
         );
-        const len: usize = @intCast(usize, width) * @intCast(usize, height) * channel_count;
-        for (0..len / channel_count) |pixel| {
-            var r = &image_data[pixel * channel_count];
-            var g = &image_data[pixel * channel_count + 1];
-            var b = &image_data[pixel * channel_count + 2];
+        defer c.stbi_image_free(image_data);
 
-            r.* = @floatToInt(u8, @intToFloat(f32, r.*) * tint[0]);
-            g.* = @floatToInt(u8, @intToFloat(f32, g.*) * tint[1]);
-            b.* = @floatToInt(u8, @intToFloat(f32, b.*) * tint[2]);
+        var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(allocator, tints.len);
+        errdefer textures.deinit(allocator);
+        for (tints) |tint| {
+            const image_copy = try allocator.alloc(u8, @intCast(usize, width) * @intCast(usize, height) * channel_count);
+            defer allocator.free(image_copy);
+            @memcpy(image_copy.ptr, image_data, image_copy.len);
+
+            for (0..image_copy.len / channel_count) |pixel| {
+                var r = &image_copy[pixel * channel_count];
+                var g = &image_copy[pixel * channel_count + 1];
+                var b = &image_copy[pixel * channel_count + 2];
+
+                var color: [3]f32 = .{
+                    @intToFloat(f32, r.*) / 255.0,
+                    @intToFloat(f32, g.*) / 255.0,
+                    @intToFloat(f32, b.*) / 255.0,
+                };
+
+                // Change gama
+                const gamma = 2.2;
+                for (&color) |*color_channel| {
+                    color_channel.* = math.pow(f32, color_channel.*, 1.0 / gamma);
+                }
+
+                // Convert to grayscale
+                if (use_luminosity) {
+                    var luminosity = 0.299 * color[0] + 0.587 * color[1] + 0.0722 * color[2] / 255.0;
+                    luminosity = math.pow(f32, luminosity, 1.0 / gamma);
+                    for (&color) |*color_channel| {
+                        color_channel.* = luminosity;
+                    }
+                }
+
+                // Apply tint
+                for (&color, tint) |*color_channel, tint_channel| {
+                    color_channel.* *= math.pow(f32, @intToFloat(f32, tint_channel) / 255.0, 1.0 / gamma);
+                }
+
+                // Change gamma back
+                for (&color) |*color_channel| {
+                    color_channel.* = math.pow(f32, color_channel.*, gamma);
+                }
+
+                // Apply changes
+                r.* = @floatToInt(u8, color[0] * 255.0);
+                g.* = @floatToInt(u8, color[1] * 255.0);
+                b.* = @floatToInt(u8, color[2] * 255.0);
+            }
+            const pitch = width * channel_count;
+            const surface = c.SDL_CreateRGBSurfaceFrom(
+                image_copy.ptr,
+                width,
+                height,
+                channel_count * bits_per_channel,
+                pitch,
+                0x000000ff,
+                0x0000ff00,
+                0x00ff0000,
+                0xff000000,
+            );
+            defer c.SDL_FreeSurface(surface);
+            textures.appendAssumeCapacity(c.SDL_CreateTextureFromSurface(renderer, surface) orelse
+                panic("unable to convert surface to texture", .{}));
         }
-        const pitch = width * channel_count;
-        const surface = c.SDL_CreateRGBSurfaceFrom(
-            image_data,
-            width,
-            height,
-            channel_count * bits_per_channel,
-            pitch,
-            0x000000ff,
-            0x0000ff00,
-            0x00ff0000,
-            0xff000000,
-        );
-        defer c.SDL_FreeSurface(surface);
-        const texture = c.SDL_CreateTextureFromSurface(renderer, surface) orelse
-            panic("unable to convert surface to texture", .{});
         return .{
-            .texture = texture,
+            .tints = textures.items,
             .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
         };
     }
