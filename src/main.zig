@@ -146,7 +146,7 @@ pub fn main() !void {
     while (true) {
         if (poll(&entities, &command_buffer, &game)) return;
         update(&entities, &command_buffer, &game, delta_s);
-        render(assets, &entities, game, delta_s, fx_loop_s);
+        render(&assets, &entities, game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
         // results if it's too close to zero!
@@ -884,7 +884,7 @@ fn update(
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop_s: f32) void {
+fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop_s: f32) void {
     const renderer = assets.renderer;
 
     // This was added for the flash effect and then not used since it already requires a timer
@@ -902,7 +902,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             .small => game.star_small,
             .large => game.star_large,
             .planet_red => game.planet_red,
-        }).?;
+        });
         const dst_rect: c.SDL_Rect = .{
             .x = star.x,
             .y = star.y,
@@ -919,7 +919,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw ring
     {
-        const sprite = assets.sprites.get(game.ring_bg).?;
+        const sprite = assets.sprites.get(game.ring_bg);
         sdlAssertZero(c.SDL_RenderCopy(
             renderer,
             sprite.tints[0],
@@ -1020,7 +1020,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             .team_index = .{ .optional = true },
         });
         while (it.next()) |entity| {
-            const sprite = assets.sprites.get(entity.sprite.*).?;
+            const sprite = assets.sprites.get(entity.sprite.*);
             const unscaled_sprite_size = sprite.size();
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = entity.rb.radius / sprite_radius;
@@ -1066,7 +1066,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
         for (game.teams, 0..) |team, team_index| {
             {
-                const sprite = assets.sprites.get(game.particle).?;
+                const sprite = assets.sprites.get(game.particle);
                 const pos = top_left.plus(.{
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = 0,
@@ -1082,7 +1082,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                 const dead = team.ship_progression_index > display_prog_index;
                 if (dead) continue;
 
-                const sprite = assets.sprites.get(game.shipLifeSprite(class)).?;
+                const sprite = assets.sprites.get(game.shipLifeSprite(class));
                 const pos = top_left.plus(.{
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
@@ -2071,12 +2071,12 @@ const Game = struct {
             wendy_thrusters_bottom[0],
         }, wendy_thrusters_bottom_steady, 10, math.pi / 2.0);
 
-        const ranger_radius = @as(f32, @floatFromInt(assets.sprites.get(ranger_sprites[0]).?.rect.w)) / 2.0;
-        const militia_radius = @as(f32, @floatFromInt(assets.sprites.get(militia_sprites[0]).?.rect.w)) / 2.0;
-        const triangle_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).?.rect.w)) / 2.0;
+        const ranger_radius = @as(f32, @floatFromInt(assets.sprites.get(ranger_sprites[0]).rect.w)) / 2.0;
+        const militia_radius = @as(f32, @floatFromInt(assets.sprites.get(militia_sprites[0]).rect.w)) / 2.0;
+        const triangle_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).rect.w)) / 2.0;
         // XXX: wrong, but looks better...fix this
-        const kevin_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).?.rect.w)) / 2.0;
-        const wendy_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).?.rect.w)) / 2.0;
+        const kevin_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).rect.w)) / 2.0;
+        const wendy_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).rect.w)) / 2.0;
 
         const particle = try assets.loadSprite(allocator, "img/particle.png", null, team_tints);
 
@@ -2267,7 +2267,7 @@ const Game = struct {
         const assets = game.assets;
         const animation = assets.animations.items[@intFromEnum(animation_index)];
         const sprite_id = assets.frames.items[animation.start];
-        const sprite = assets.sprites.get(sprite_id).?;
+        const sprite = assets.sprites.get(sprite_id);
         return sprite.radius();
     }
 
@@ -2480,12 +2480,12 @@ const Assets = struct {
     // XXX: could define these as data, idk, is tricky cause we wanna be able to reference them too right?
     animations: std.ArrayListUnmanaged(Animation),
 
+    // XXX: put on asset map or keep separate?
     fn Id(comptime Asset: type) type {
         _ = Asset;
         return enum(u64) { _ };
     }
 
-    // XXX: return pink or such on failure or such? need a default for each asset type?
     // XXX: make sure this hash is stable across releases or use custom one/specify one, can ask andy
     // XXX: also support way to re-hash everything as is?
     fn AssetMap(comptime Asset: type) type {
@@ -2498,7 +2498,49 @@ const Assets = struct {
             }
         };
 
-        return std.HashMapUnmanaged(Id(Asset), Asset, AssetContext, std.hash_map.default_max_load_percentage);
+        return struct {
+            missing: Asset,
+            data: Map,
+
+            const Self = @This();
+            const Map = std.HashMap(Id(Asset), Asset, AssetContext, std.hash_map.default_max_load_percentage);
+
+            pub fn init(allocator: Allocator, missing: Asset) Self {
+                return .{
+                    .missing = missing,
+                    .data = Map.init(allocator),
+                };
+            }
+
+            pub fn deinit(self: *Self) void {
+                self.data.deinit();
+                self.* = undefined;
+            }
+
+            pub fn putNoClobber(self: *Self, id: Id(Asset), asset: Asset) Allocator.Error!void {
+                // XXX: we probably do want a way to differentiate between clobbering and loading something that already exists right?
+                // we can probably just make sure at compiletime that all hashes are unique, then this is a non issue. (we probably don't want to
+                // reload stuff unless explciitly asked I guess, but, we do want to allow e.g. merging sets of assets from disparate sources
+                // to load eventually.)
+                try self.data.putNoClobber(id, asset);
+            }
+
+            // XXX: returning by value?
+            // XXX: it's confusing that we don't know the actual name here...can we at least get a stack trace or something?
+            // or try to recover it from the list of all assets and log that? wait also, we don't want to error every frame, so i guess
+            // we should include it after this?
+            // XXX: annoying that this modifies it since this means it can't be done from multiple threads. there's probably some kinda
+            // rw lock we could use where contention could only occur on errors.
+            // XXX: checked version?
+            pub fn get(self: *Self, id: Id(Asset)) Asset {
+                const result = self.data.getOrPut(id) catch panic("out of memory", .{});
+                if (!result.found_existing) {
+                    std.log.err("missing asset: {s}: {}", .{ @typeName(Asset), id });
+                    result.value_ptr.* = self.missing;
+                }
+                return result.value_ptr.*;
+            }
+        };
     }
 
     const Frame = struct {
@@ -2517,11 +2559,41 @@ const Assets = struct {
             });
         };
 
+        var missing_sprite = es: {
+            var width: c_int = 1;
+            var height: c_int = 1;
+            const channel_count = 4;
+            const bits_per_channel = 8;
+
+            var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(gpa, 1);
+            errdefer textures.deinit(gpa);
+            const pitch = width * channel_count;
+            var data: [4]u8 = .{ 255, 0, 255, 255 };
+            const surface = c.SDL_CreateRGBSurfaceFrom(
+                &data,
+                width,
+                height,
+                channel_count * bits_per_channel,
+                pitch,
+                0x000000ff,
+                0x0000ff00,
+                0x00ff0000,
+                0xff000000,
+            );
+            defer c.SDL_FreeSurface(surface);
+            try textures.append(gpa, c.SDL_CreateTextureFromSurface(renderer, surface) orelse
+                panic("unable to convert surface to texture", .{}));
+            break :es .{
+                .tints = textures.items,
+                .rect = .{ .x = 0, .y = 0, .w = 32, .h = 32 },
+            };
+        };
+
         return .{
             .gpa = gpa,
             .renderer = renderer,
             .dir = dir,
-            .sprites = .{},
+            .sprites = AssetMap(Sprite).init(gpa, missing_sprite),
             .frames = .{},
             .animations = .{},
         };
@@ -2529,18 +2601,18 @@ const Assets = struct {
 
     fn deinit(a: *Assets) void {
         a.dir.close();
-        a.sprites.deinit(a.gpa);
+        a.sprites.deinit();
         a.frames.deinit(a.gpa);
         a.animations.deinit(a.gpa);
         a.* = undefined;
     }
 
-    fn animate(a: Assets, anim: *Animation.Playback, delta_s: f32) Frame {
+    fn animate(a: *Assets, anim: *Animation.Playback, delta_s: f32) Frame {
         const animation = a.animations.items[@intFromEnum(anim.index)];
         const frame_index: u32 = @intFromFloat(@floor(anim.time_passed * animation.fps));
         const frame = animation.start + frame_index;
         // TODO: for large delta_s can cause out of bounds index
-        const frame_sprite = a.sprites.get(a.frames.items[frame]).?;
+        const frame_sprite = a.sprites.get(a.frames.items[frame]);
         anim.time_passed += delta_s;
         const end_time = @as(f32, @floatFromInt(animation.len)) / animation.fps;
         if (anim.time_passed >= end_time) {
@@ -2584,7 +2656,7 @@ const Assets = struct {
         // we can probably just make sure at compiletime that all hashes are unique, then this is a non issue. (we probably don't want to
         // reload stuff unless explciitly asked I guess, but, we do want to allow e.g. merging sets of assets from disparate sources
         // to load eventually.)
-        try a.sprites.putNoClobber(a.gpa, sprite_id, data);
+        try a.sprites.putNoClobber(sprite_id, data);
         return sprite_id;
     }
 
