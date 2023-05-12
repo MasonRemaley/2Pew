@@ -39,7 +39,7 @@ const Entities = ecs.entities.Entities(.{
     .player_index = u2,
     .team_index = u2,
     .lifetime = Lifetime,
-    .sprite = Sprite.Index,
+    .sprite = Assets.Id(Sprite),
     .animation = Animation.Playback,
     .collider = Collider,
     .turret = Turret,
@@ -898,11 +898,11 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw stars
     for (game.stars) |star| {
-        const sprite = assets.sprite(switch (star.kind) {
+        const sprite = assets.sprites.get(switch (star.kind) {
             .small => game.star_small,
             .large => game.star_large,
             .planet_red => game.planet_red,
-        });
+        }).?;
         const dst_rect: c.SDL_Rect = .{
             .x = star.x,
             .y = star.y,
@@ -919,7 +919,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw ring
     {
-        const sprite = assets.sprite(game.ring_bg);
+        const sprite = assets.sprites.get(game.ring_bg).?;
         sdlAssertZero(c.SDL_RenderCopy(
             renderer,
             sprite.tints[0],
@@ -1020,7 +1020,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             .team_index = .{ .optional = true },
         });
         while (it.next()) |entity| {
-            const sprite = assets.sprite(entity.sprite.*);
+            const sprite = assets.sprites.get(entity.sprite.*).?;
             const unscaled_sprite_size = sprite.size();
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = entity.rb.radius / sprite_radius;
@@ -1066,7 +1066,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
         for (game.teams, 0..) |team, team_index| {
             {
-                const sprite = assets.sprite(game.particle);
+                const sprite = assets.sprites.get(game.particle).?;
                 const pos = top_left.plus(.{
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = 0,
@@ -1082,7 +1082,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
                 const dead = team.ship_progression_index > display_prog_index;
                 if (dead) continue;
 
-                const sprite = assets.sprite(game.shipLifeSprite(class));
+                const sprite = assets.sprites.get(game.shipLifeSprite(class)).?;
                 const pos = top_left.plus(.{
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
@@ -1344,11 +1344,6 @@ const Sprite = struct {
         return self.tints[0];
     }
 
-    /// Index into the sprites array.
-    const Index = enum(u32) {
-        _,
-    };
-
     fn deinit(self: *@This(), allocator: Allocator) void {
         allocator.free(self.tints);
         self.* = undefined;
@@ -1395,14 +1390,14 @@ const Game = struct {
     shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
     explosion_animation: Animation.Index,
 
-    ring_bg: Sprite.Index,
-    star_small: Sprite.Index,
-    star_large: Sprite.Index,
-    planet_red: Sprite.Index,
-    bullet_small: Sprite.Index,
-    bullet_shiny: Sprite.Index,
+    ring_bg: Assets.Id(Sprite),
+    star_small: Assets.Id(Sprite),
+    star_large: Assets.Id(Sprite),
+    planet_red: Assets.Id(Sprite),
+    bullet_small: Assets.Id(Sprite),
+    bullet_shiny: Assets.Id(Sprite),
 
-    rock_sprites: [rock_sprite_names.len]Sprite.Index,
+    rock_sprites: [rock_sprite_names.len]Assets.Id(Sprite),
 
     ranger_animations: ShipAnimations,
     ranger_radius: f32,
@@ -1421,7 +1416,7 @@ const Game = struct {
 
     stars: [150]Star,
 
-    particle: Sprite.Index,
+    particle: Assets.Id(Sprite),
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -1924,12 +1919,12 @@ const Game = struct {
         const bullet_small = try assets.loadSprite(allocator, "img/bullet/small.png", null, no_tint);
         const bullet_shiny = try assets.loadSprite(allocator, "img/bullet/shiny.png", null, no_tint);
 
-        var shrapnel_sprites: [shrapnel_sprite_names.len]Sprite.Index = undefined;
+        var shrapnel_sprites: [shrapnel_sprite_names.len]Assets.Id(Sprite) = undefined;
         for (&shrapnel_sprites, shrapnel_sprite_names) |*s, name| {
             s.* = try assets.loadSprite(allocator, name, null, no_tint);
         }
 
-        var rock_sprites: [rock_sprite_names.len]Sprite.Index = undefined;
+        var rock_sprites: [rock_sprite_names.len]Assets.Id(Sprite) = undefined;
         for (&rock_sprites, rock_sprite_names) |*s, name| {
             s.* = try assets.loadSprite(allocator, name, null, no_tint);
         }
@@ -2076,11 +2071,12 @@ const Game = struct {
             wendy_thrusters_bottom[0],
         }, wendy_thrusters_bottom_steady, 10, math.pi / 2.0);
 
-        const ranger_radius = @as(f32, @floatFromInt(assets.sprite(ranger_sprites[0]).rect.w)) / 2.0;
-        const militia_radius = @as(f32, @floatFromInt(assets.sprite(militia_sprites[0]).rect.w)) / 2.0;
-        const triangle_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
-        const kevin_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
-        const wendy_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
+        const ranger_radius = @as(f32, @floatFromInt(assets.sprites.get(ranger_sprites[0]).?.rect.w)) / 2.0;
+        const militia_radius = @as(f32, @floatFromInt(assets.sprites.get(militia_sprites[0]).?.rect.w)) / 2.0;
+        const triangle_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).?.rect.w)) / 2.0;
+        // XXX: wrong, but looks better...fix this
+        const kevin_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).?.rect.w)) / 2.0;
+        const wendy_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).?.rect.w)) / 2.0;
 
         const particle = try assets.loadSprite(allocator, "img/particle.png", null, team_tints);
 
@@ -2254,7 +2250,7 @@ const Game = struct {
         };
     }
 
-    fn shipLifeSprite(game: Game, class: Ship.Class) Sprite.Index {
+    fn shipLifeSprite(game: Game, class: Ship.Class) Assets.Id(Sprite) {
         const animation_index = switch (class) {
             .ranger => game.ranger_animations.still,
             .militia => game.militia_animations.still,
@@ -2270,8 +2266,8 @@ const Game = struct {
     fn animationRadius(game: Game, animation_index: Animation.Index) f32 {
         const assets = game.assets;
         const animation = assets.animations.items[@intFromEnum(animation_index)];
-        const sprite_index = assets.frames.items[animation.start];
-        const sprite = assets.sprites.items[@intFromEnum(sprite_index)];
+        const sprite_id = assets.frames.items[animation.start];
+        const sprite = assets.sprites.get(sprite_id).?;
         return sprite.radius();
     }
 
@@ -2473,9 +2469,37 @@ const Assets = struct {
     gpa: Allocator,
     renderer: *c.SDL_Renderer,
     dir: std.fs.Dir,
-    sprites: std.ArrayListUnmanaged(Sprite),
-    frames: std.ArrayListUnmanaged(Sprite.Index),
+    // XXX: use for everything, may want to make into some generic thing, idk, or can put all in one list
+    // but specify with an adapter where to look for the actual data based on the type we're looking up
+    // etc.
+    // XXX: hmm it's a little weird for the key to be one file when the asset is really composed of multiple. we may want
+    // to have actual asset files that are separate or something and those get the guids idk. or can have *both*.
+    // or can store these as separate sprites but that's confusing for animations i think? maybe doesn't matter?
+    sprites: AssetMap(Sprite),
+    frames: std.ArrayListUnmanaged(Assets.Id(Sprite)),
+    // XXX: could define these as data, idk, is tricky cause we wanna be able to reference them too right?
     animations: std.ArrayListUnmanaged(Animation),
+
+    fn Id(comptime Asset: type) type {
+        _ = Asset;
+        return enum(u64) { _ };
+    }
+
+    // XXX: return pink or such on failure or such? need a default for each asset type?
+    // XXX: make sure this hash is stable across releases or use custom one/specify one, can ask andy
+    // XXX: also support way to re-hash everything as is?
+    fn AssetMap(comptime Asset: type) type {
+        const AssetContext = struct {
+            pub fn hash(_: @This(), id: Id(Asset)) u64 {
+                return @intFromEnum(id);
+            }
+            pub fn eql(_: @This(), a: Id(Asset), b: Id(Asset)) bool {
+                return a == b;
+            }
+        };
+
+        return std.HashMapUnmanaged(Id(Asset), Asset, AssetContext, std.hash_map.default_max_load_percentage);
+    }
 
     const Frame = struct {
         sprite: Sprite,
@@ -2516,7 +2540,7 @@ const Assets = struct {
         const frame_index: u32 = @intFromFloat(@floor(anim.time_passed * animation.fps));
         const frame = animation.start + frame_index;
         // TODO: for large delta_s can cause out of bounds index
-        const frame_sprite = a.sprite(a.frames.items[frame]);
+        const frame_sprite = a.sprites.get(a.frames.items[frame]).?;
         anim.time_passed += delta_s;
         const end_time = @as(f32, @floatFromInt(animation.len)) / animation.fps;
         if (anim.time_passed >= end_time) {
@@ -2532,7 +2556,7 @@ const Assets = struct {
     /// null next_animation means to loop.
     fn addAnimation(
         a: *Assets,
-        frames: []const Sprite.Index,
+        frames: []const Assets.Id(Sprite),
         next_animation: ?Animation.Index,
         fps: f32,
         angle: f32,
@@ -2549,17 +2573,19 @@ const Assets = struct {
         return result;
     }
 
-    fn sprite(a: Assets, index: Sprite.Index) Sprite {
-        return a.sprites.items[@intFromEnum(index)];
-    }
-
-    fn loadSprite(a: *Assets, allocator: Allocator, diffuse_name: []const u8, recolor_name: ?[]const u8, tints: []const [3]u8) !Sprite.Index {
+    fn loadSprite(a: *Assets, allocator: Allocator, diffuse_name: []const u8, recolor_name: ?[]const u8, tints: []const [3]u8) !Id(Sprite) {
         const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
         defer a.gpa.free(diffuse_png);
         const recolor = if (recolor_name != null) try a.dir.readFileAlloc(a.gpa, recolor_name.?, 50 * 1024 * 1024) else null;
         defer if (recolor != null) a.gpa.free(recolor.?);
-        try a.sprites.append(a.gpa, try spriteFromBytes(allocator, diffuse_png, recolor, a.renderer, tints));
-        return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
+        const data = try spriteFromBytes(allocator, diffuse_png, recolor, a.renderer, tints);
+        const sprite_id: Id(Sprite) = @enumFromInt(std.hash_map.hashString(diffuse_name));
+        // XXX: we probably do want a way to differentiate between clobbering and loading something that already exists right?
+        // we can probably just make sure at compiletime that all hashes are unique, then this is a non issue. (we probably don't want to
+        // reload stuff unless explciitly asked I guess, but, we do want to allow e.g. merging sets of assets from disparate sources
+        // to load eventually.)
+        try a.sprites.putNoClobber(a.gpa, sprite_id, data);
+        return sprite_id;
     }
 
     fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, renderer: *c.SDL_Renderer, tints: []const [3]u8) !Sprite {
