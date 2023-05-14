@@ -87,6 +87,9 @@ pub fn build(b: *std.Build) void {
     // game needing to modify internal arrays of things. may also be useful for things like animations?
     // XXX: asset packs for loading groups of assets together? (and verifying they exist?) if we make some of
     // this dynamic instead of static we may want the missing asset fallbacks again?
+    // XXX: allow speicfying the same input asset with different bake settings multiple times?
+    // XXX: what about e.g. deleting an asset that wasn't yet released? we could have a way to mark them as such maye idk, on release
+    // it can change whether they need to be persistent
     // {
     //     const bake_exe = b.addExecutable(.{
     //         .name = "bake",

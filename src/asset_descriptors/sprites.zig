@@ -1,3 +1,6 @@
+const std = @import("std");
+const math = std.math;
+
 pub const descriptors = &.{
     .{
         .id = "img/particle.png",
@@ -166,6 +169,7 @@ pub const descriptors = &.{
         .id = "img/ship/kevin/diffuse.png",
         .asset = .{
             .path = "img/ship/kevin/diffuse.png",
+            .angle = math.pi / 2.0,
             .tint = .{
                 .mask_path = "img/ship/kevin/recolor.png",
             },
@@ -193,6 +197,7 @@ pub const descriptors = &.{
         .id = "img/ship/militia/diffuse.png",
         .asset = .{
             .path = "img/ship/militia/diffuse.png",
+            .angle = math.pi / 2.0,
             .tint = .{
                 .mask_path = "img/ship/militia/recolor.png",
             },
@@ -220,6 +225,7 @@ pub const descriptors = &.{
         .id = "img/ship/ranger/diffuse.png",
         .asset = .{
             .path = "img/ship/ranger/diffuse.png",
+            .angle = math.pi / 2.0,
             .tint = .{
                 .mask_path = "img/ship/ranger/recolor.png",
             },
@@ -247,6 +253,7 @@ pub const descriptors = &.{
         .id = "img/ship/triangle/diffuse.png",
         .asset = .{
             .path = "img/ship/triangle/diffuse.png",
+            .angle = math.pi / 2.0,
             .tint = .{
                 .mask_path = "img/ship/triangle/recolor.png",
             },
@@ -328,6 +335,7 @@ pub const descriptors = &.{
         .id = "img/ship/wendy/diffuse.png",
         .asset = .{
             .path = "img/ship/wendy/diffuse.png",
+            .angle = math.pi / 2.0,
             .tint = .{
                 .mask_path = "img/ship/wendy/recolor.png",
             },

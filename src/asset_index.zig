@@ -2,6 +2,7 @@ const indexer = @import("asset_indexer.zig");
 
 pub const Sprite = struct {
     path: []const u8,
+    angle: f32 = 0.0,
     tint: ?struct {
         mask_path: ?[]const u8 = null,
     } = null,

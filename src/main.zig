@@ -39,12 +39,8 @@ const Entities = ecs.entities.Entities(.{
     .player_index = u2,
     .team_index = u2,
     .lifetime = Lifetime,
-    .sprite = struct {
-        id: SpriteId,
-        // XXX: ...wrap into rb or transform or whatever?
-        angle: f32 = 0.0,
-    },
-    .animation = Animation.Playback,
+    .sprite = SpriteId,
+    .animation = Animation,
     .collider = Collider,
     .turret = Turret,
     .grapple_gun = GrappleGun,
@@ -117,7 +113,7 @@ pub fn main() !void {
     var assets = try Assets.init(gpa, renderer);
     defer assets.deinit();
 
-    var game = try Game.init(gpa, &assets);
+    var game = try Game.init(&assets);
 
     // Create initial entities
     var pa = std.heap.page_allocator;
@@ -351,7 +347,7 @@ fn update(
                                 .radius = game.assets.sprites.get(shrapnel_sprite).radius(),
                                 .density = 0.001,
                             },
-                            .sprite = .{ .id = shrapnel_sprite },
+                            .sprite = shrapnel_sprite,
                         },
                     });
                 }
@@ -521,7 +517,7 @@ fn update(
                                     .radius = game.assets.sprites.get(shrapnel_sprite).radius(),
                                     .density = 0.001,
                                 },
-                                .sprite = .{ .id = shrapnel_sprite },
+                                .sprite = shrapnel_sprite,
                             },
                         });
 
@@ -866,7 +862,7 @@ fn update(
                             // TODO(mason): modify math to accept 0 and inf mass
                             .density = entity.turret.projectile_density,
                         },
-                        .sprite = .{ .id = sprite },
+                        .sprite = sprite,
                         .collider = .{
                             // Lasers gain energy when bouncing off of rocks
                             .collision_damping = 1,
@@ -1009,7 +1005,7 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
             if (flash_off(entities, it.handle())) {
                 continue :draw;
             }
-            const sprite = assets.sprites.get(entity.sprite.id);
+            const sprite = assets.sprites.get(entity.sprite.*);
             const unscaled_sprite_size = sprite.size();
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = entity.rb.radius / sprite_radius;
@@ -1020,7 +1016,7 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
                 sprite.getTint(if (entity.team_index) |i| i.* else null),
                 null, // source rectangle
                 &dest_rect,
-                toDegrees(entity.transform.angle + entity.sprite.angle),
+                toDegrees(entity.transform.angle + sprite.angle),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -1138,14 +1134,11 @@ const Lifetime = struct {
     seconds: f32,
 };
 
-// XXX: nesting no longer necessary...
 const Animation = struct {
-    const Playback = struct {
-        id: ?AnimationId,
-        /// number of seconds passed since Animation start.
-        time_passed: f32 = 0,
-        destroys_entity: bool = false,
-    };
+    id: ?AnimationId,
+    /// number of seconds passed since Animation start.
+    time_passed: f32 = 0,
+    destroys_entity: bool = false,
 };
 
 const Cooldown = union(enum) {
@@ -1306,8 +1299,11 @@ const Ship = struct {
 };
 
 const Sprite = struct {
+    const Self = @This();
+
     tints: []*c.SDL_Texture,
     rect: c.SDL_Rect,
+    angle: f32,
 
     // If this sprite supports tinting, returns the tint. Otherwise returns the default tint.
     fn getTint(self: *const @This(), index: ?usize) *c.SDL_Texture {
@@ -1323,20 +1319,20 @@ const Sprite = struct {
     }
 
     /// Assumes the pos points to the center of the sprite.
-    fn toSdlRect(sprite: Sprite, pos: V) c.SDL_Rect {
-        const sprite_size = sprite.size();
+    fn toSdlRect(self: Self, pos: V) c.SDL_Rect {
+        const sprite_size = self.size();
         return sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
     }
 
-    fn size(sprite: Sprite) V {
+    fn size(self: Self) V {
         return .{
-            .x = @floatFromInt(sprite.rect.w),
-            .y = @floatFromInt(sprite.rect.h),
+            .x = @floatFromInt(self.rect.w),
+            .y = @floatFromInt(self.rect.h),
         };
     }
 
-    fn radius(sprite: Sprite) f32 {
-        const s = sprite.size();
+    fn radius(self: Self) f32 {
+        const s = self.size();
         return (s.x + s.y) / 4.0;
     }
 };
@@ -1422,10 +1418,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite = .{
-                    .id = .@"img/ship/ranger/diffuse.png",
-                    .angle = math.pi / 2.0,
-                },
+                .sprite = .@"img/ship/ranger/diffuse.png",
                 .turret = .{
                     .angle = 0,
                     .radius = self.ranger_radius,
@@ -1496,10 +1489,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite = .{
-                    .id = .@"img/ship/triangle/diffuse.png",
-                    .angle = math.pi / 2.0,
-                },
+                .sprite = .@"img/ship/triangle/diffuse.png",
                 .turret = .{
                     .angle = 0,
                     .radius = radius,
@@ -1525,10 +1515,7 @@ const Game = struct {
                     .activated = .@"ship/triangle/thrusters",
                     .deactivated = null,
                 },
-                .animation = .{
-                    // XXX: have a null id or no?
-                    .id = null,
-                },
+                .animation = .{ .id = null },
                 .player_index = player_index,
                 .team_index = team_index,
             },
@@ -1569,10 +1556,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite = .{
-                    .id = .@"img/ship/militia/diffuse.png",
-                    .angle = math.pi / 2.0,
-                },
+                .sprite = .@"img/ship/militia/diffuse.png",
                 // .grapple_gun = .{
                 //     .radius = self.ranger_radius * 10.0,
                 //     .angle = 0,
@@ -1644,10 +1628,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite = .{
-                    .id = .@"img/ship/kevin/diffuse.png",
-                    .angle = math.pi / 2.0,
-                },
+                .sprite = .@"img/ship/kevin/diffuse.png",
                 .player_index = player_index,
                 .team_index = team_index,
             },
@@ -1745,10 +1726,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite = .{
-                    .id = .@"img/ship/wendy/diffuse.png",
-                    .angle = math.pi / 2.0,
-                },
+                .sprite = .@"img/ship/wendy/diffuse.png",
                 .turret = .{
                     .radius = self.wendy_radius,
                     .angle = 0,
@@ -1842,14 +1820,7 @@ const Game = struct {
         }).?;
     }
 
-    fn init(allocator: Allocator, assets: *Assets) !Game {
-        inline for (@typeInfo(SpriteId).Enum.fields) |field| {
-            const id: SpriteId = @enumFromInt(field.value);
-            // XXX: can panic on failure, shouldn't fail now right??
-            // XXX: also map doesn't need to be optional anymore I think? don't need treturn fvalue here either
-            _ = try assets.loadSprite(allocator, id);
-        }
-
+    fn init(assets: *Assets) !Game {
         const ranger_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/ranger/diffuse.png").rect.w)) / 2.0;
         const militia_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/militia/diffuse.png").rect.w)) / 2.0;
         const triangle_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/triangle/diffuse.png").rect.w)) / 2.0;
@@ -2128,7 +2099,7 @@ const Game = struct {
 
             _ = command_buffer.appendInstantiate(true, &.{
                 .{
-                    .sprite = .{ .id = sprite },
+                    .sprite = sprite,
                     .transform = .{
                         .pos = pos,
                     },
@@ -2168,7 +2139,7 @@ const Game = struct {
                     .radius = 16,
                     .density = 0.001,
                 },
-                .sprite = .{ .id = .@"img/particle.png" },
+                .sprite = .@"img/particle.png",
                 .team_index = team_index,
             });
         }
@@ -2197,44 +2168,8 @@ const Assets = struct {
     gpa: Allocator,
     renderer: *c.SDL_Renderer,
     dir: std.fs.Dir,
-    // XXX: use for everything, may want to make into some generic thing, idk, or can put all in one list
-    // but specify with an adapter where to look for the actual data based on the type we're looking up
-    // etc.
-    // XXX: hmm it's a little weird for the key to be one file when the asset is really composed of multiple. we may want
-    // to have actual asset files that are separate or something and those get the guids idk. or can have *both*.
-    // or can store these as separate sprites but that's confusing for animations i think? maybe doesn't matter?
-    sprites: AssetMap(SpriteId, Sprite),
+    sprites: std.EnumArray(SpriteId, Sprite),
     frames: std.ArrayListUnmanaged(SpriteId),
-
-    // XXX: make sure this hash is stable across releases or use custom one/specify one, can ask andy
-    // XXX: also support way to re-hash everything as is?
-    fn AssetMap(comptime Id: type, comptime Asset: type) type {
-        return struct {
-            // XXX: don't need to wrap anymore? unless to make nullable? can make nullable more efficiently...
-            // but right now I'm planning on loading everything anyway?
-            data: std.EnumArray(Id, ?Asset) = std.EnumArray(Id, ?Asset).initFill(null),
-
-            const Self = @This();
-
-            // XXX: ...
-            pub fn putNoClobber(self: *Self, id: Id, asset: Asset) Allocator.Error!void {
-                // XXX: ...
-                // assert(self.data.get(id) == null);
-                self.data.set(id, asset);
-            }
-
-            // XXX: returning by value?
-            // XXX: it's confusing that we don't know the actual name here...can we at least get a stack trace or something?
-            // or try to recover it from the list of all assets and log that? wait also, we don't want to error every frame, so i guess
-            // we should include it after this?
-            // XXX: annoying that this modifies it since this means it can't be done from multiple threads. there's probably some kinda
-            // rw lock we could use where contention could only occur on errors.
-            // XXX: checked version?
-            pub fn get(self: *Self, id: Id) Asset {
-                return self.data.get(id).?;
-            }
-        };
-    }
 
     const Frame = struct {
         sprite: SpriteId,
@@ -2252,11 +2187,18 @@ const Assets = struct {
             });
         };
 
+        var sprites = std.EnumArray(SpriteId, Sprite).initUndefined();
+        inline for (@typeInfo(SpriteId).Enum.fields) |field| {
+            const id: SpriteId = @enumFromInt(field.value);
+            // XXX: can panic on failure, shouldn't fail now right??
+            sprites.set(id, try loadSprite(gpa, dir, renderer, id));
+        }
+
         return .{
             .gpa = gpa,
             .renderer = renderer,
             .dir = dir,
-            .sprites = AssetMap(SpriteId, Sprite){},
+            .sprites = sprites,
             .frames = .{},
         };
     }
@@ -2269,7 +2211,7 @@ const Assets = struct {
 
     // XXX: this can go direclty in the system code now, or at least be a free function, a lot of other
     // stuff can too!
-    fn animate(anim: *Animation.Playback, delta_s: f32) ?Frame {
+    fn animate(anim: *Animation, delta_s: f32) ?Frame {
         // XXX: naming vs anim above etc
         // Get the animation, early out if none
         if (anim.id == null) return null;
@@ -2299,10 +2241,9 @@ const Assets = struct {
         };
     }
 
-    // XXX: rename diffuse to sprite id or such?
-    // XXX: only allow calling from that loop! or just inline there, etc
-    fn loadSprite(a: *Assets, allocator: Allocator, diffuse: SpriteId) !SpriteId {
-        const config = asset_index.sprites.get(diffuse);
+    // XXX: move this code? is only called one place at init?
+    fn loadSprite(allocator: Allocator, dir: std.fs.Dir, renderer: *c.SDL_Renderer, sprite_id: SpriteId) !Sprite {
+        const config = asset_index.sprites.get(sprite_id);
         var tint_mask_path: ?[]const u8 = null;
         var tints: []const [3]u8 = &.{};
         if (config.tint) |tint| {
@@ -2330,26 +2271,17 @@ const Assets = struct {
             };
             tint_mask_path = tint.mask_path;
         }
-        const diffuse_png = try a.dir.readFileAlloc(a.gpa, asset_index.sprites.get(diffuse).path, 50 * 1024 * 1024);
-        defer a.gpa.free(diffuse_png);
+        const diffuse_png = try dir.readFileAlloc(allocator, asset_index.sprites.get(sprite_id).path, 50 * 1024 * 1024);
+        defer allocator.free(diffuse_png);
         const tint_mask_png = if (tint_mask_path) |m|
-            try a.dir.readFileAlloc(a.gpa, m, 50 * 1024 * 1024)
+            try dir.readFileAlloc(allocator, m, 50 * 1024 * 1024)
         else
             null;
-        defer if (tint_mask_png) |m| a.gpa.free(m);
-        const data = try spriteFromBytes(allocator, diffuse_png, tint_mask_png, a.renderer, tints);
-        // XXX: we probably do want a way to differentiate between clobbering and loading something that already exists right?
-        // we can probably just make sure at compiletime that all hashes are unique, then this is a non issue. (we probably don't want to
-        // reload stuff unless explciitly asked I guess, but, we do want to allow e.g. merging sets of assets from disparate sources
-        // to load eventually.)
-        // XXX: write now we're using main sprite as id and ignoring recolor...
-        try a.sprites.putNoClobber(diffuse, data);
-        // XXX: we don't really need to return this anymore, unless we give them unique ids somehow or wrap them
-        // in something indicating it's loaded
-        return diffuse;
+        defer if (tint_mask_png) |m| allocator.free(m);
+        return try spriteFromBytes(allocator, diffuse_png, tint_mask_png, renderer, tints, config.angle);
     }
 
-    fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, renderer: *c.SDL_Renderer, tints: []const [3]u8) !Sprite {
+    fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, renderer: *c.SDL_Renderer, tints: []const [3]u8, angle: f32) !Sprite {
         var width: c_int = undefined;
         var height: c_int = undefined;
         const channel_count = 4;
@@ -2463,6 +2395,7 @@ const Assets = struct {
                 panic("unable to convert surface to texture", .{}));
         }
         return .{
+            .angle = angle,
             .tints = textures.items,
             .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
         };
@@ -2568,6 +2501,7 @@ fn flash_off(entities: *const Entities, entity: EntityHandle) bool {
 }
 
 test {
+    _ = @import("asset_indexer.zig");
     _ = @import("slot_map.zig");
     _ = @import("minimum_alignment_allocator.zig");
     _ = ecs;

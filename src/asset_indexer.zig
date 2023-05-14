@@ -1,7 +1,3 @@
-// XXX: test this module?
-// XXX: allow speicfying the same input asset with different bake settings multiple times?
-// XXX: what about e.g. deleting an asset that wasn't yet released? we could have a way to mark them as such maye idk, on release
-// it can change whether they need to be persistent
 const std = @import("std");
 
 fn Descriptor(comptime Asset: type) type {
@@ -20,6 +16,7 @@ pub fn index(comptime Asset: type, comptime descriptors: []const Descriptor(Asse
         };
     }
 
+    // XXX: wrap this in a function that generates it so error messages get better names?
     const Id_ = @Type(.{
         .Enum = .{
             .tag_type = @Type(std.builtin.Type{
@@ -36,14 +33,40 @@ pub fn index(comptime Asset: type, comptime descriptors: []const Descriptor(Asse
 
     comptime var assets = std.EnumArray(Id_, Asset).initUndefined();
     for (descriptors, 0..) |descriptor, i| {
-        assets.set(@intToEnum(Id_, i), descriptor.asset);
+        assets.set(@enumFromInt(i), descriptor.asset);
     }
 
     return struct {
         pub const Id = Id_;
 
-        pub fn get(id: Id) Asset {
-            return assets.get(id);
+        pub fn get(id: Id) *const Asset {
+            return assets.getPtr(id);
         }
     };
+}
+
+test "basic index" {
+    const expectEqual = std.testing.expectEqual;
+
+    const Asset = []const u8;
+    const asset_index = index(Asset, &.{
+        .{
+            .id = "foo",
+            .asset = "bar",
+        },
+        .{
+            .id = "baz",
+            .asset = "qux",
+        },
+    });
+
+    // Check the generated enum
+    try expectEqual(@typeInfo(asset_index.Id).Enum.tag_type, u1);
+    try expectEqual(@typeInfo(asset_index.Id).Enum.fields.len, 2);
+    try expectEqual(@intFromEnum(asset_index.Id.foo), 0);
+    try expectEqual(@intFromEnum(asset_index.Id.baz), 1);
+
+    // Check the generated index
+    try expectEqual(asset_index.get(.foo).*, "bar");
+    try expectEqual(asset_index.get(.baz).*, "qux");
 }
