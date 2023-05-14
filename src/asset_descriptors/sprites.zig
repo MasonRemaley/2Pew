@@ -1,38 +1,4 @@
-// XXX: okay! so...this all works. I think we wanna add it for animations too to make sure it works well
-// in game before we start automating it?
-// - make an animations file
-// - it specifies paths to animation configs, which could just be zig files that reference sprite ids?? making modding harder
-//   again but eh?
-// - okay yeah so I'm just gonna inline the data right now, later we can import zig files if we want!
-// XXX: allow groups to be there own sort of asset, for picking randomly from a set? e.g. rocks, shrapnel
-// XXX: we could generate an intermediat representation, json or something, that represents this
-// in a more concise and editable way, and then generate this from that if we want.
-// XXX: next step is to use this in game (and just auto load everything for now?)
-// XXX: rename to images/image id? or are these explicitly sprites..?
-// XXX: again consider that assets could all be in one enum if we wanted, if we're gonna chagne id type anyway, but
-// exporting is different for different ones?
-// XXX: consider things like animations where the number of frames change. i think it makes sense for aniamtions
-// and maybe even sprites to reference images or something. and then maybe to differentiate between loaded and unloaded ones.
-// but all config should be done bake time!
-// XXX: all in one file, or new file for each asset type?
-// XXX: consider whether to make non exhaustive with some marker to allow for non compiled in stuff?
-// XXX: also consider some concept of like asset packs where we define ids for things that are loaded all together
-// or such
-// XXX: allow speicfying the same input asset with different bake settings multiple times?
-// XXX: what about e.g. deleting an asset that wasn't yet released? we could have a way to mark them as such maye idk, on release
-// it can change whether they need to be persistent
-const std = @import("std");
-const assets = @import("assets.zig");
-
-const Sprite = struct {
-    path: []const u8,
-    // XXX: eventually pull this out and do it at bake time!
-    tint: ?struct {
-        mask_path: ?[]const u8 = null,
-    } = null,
-};
-
-pub const generated = assets.generate(Sprite, &.{
+pub const descriptors = &.{
     .{
         .id = "img/particle.png",
         .asset = .{
@@ -397,8 +363,4 @@ pub const generated = assets.generate(Sprite, &.{
             .path = "img/star/small.png",
         },
     },
-});
-
-pub const SpriteId = generated.Id;
-// XXX: naming...? or just expose getter?
-pub const data = generated.assets;
+};

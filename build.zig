@@ -81,6 +81,12 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // XXX: pull out into its own step or something that we can just call from here!
+    // XXX: eventually do baking of things like tints here
+    // XXX: allow asset groups for purposes of choosing random versions of things? e.g. an artist can
+    // add a file to a group via a config file or folder structure, and it shows up in game without the
+    // game needing to modify internal arrays of things. may also be useful for things like animations?
+    // XXX: asset packs for loading groups of assets together? (and verifying they exist?) if we make some of
+    // this dynamic instead of static we may want the missing asset fallbacks again?
     // {
     //     const bake_exe = b.addExecutable(.{
     //         .name = "bake",

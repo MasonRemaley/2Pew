@@ -1,14 +1,17 @@
+// XXX: test this module?
+// XXX: allow speicfying the same input asset with different bake settings multiple times?
+// XXX: what about e.g. deleting an asset that wasn't yet released? we could have a way to mark them as such maye idk, on release
+// it can change whether they need to be persistent
 const std = @import("std");
 
-fn AssetDescriptor(comptime Asset: type) type {
+fn Descriptor(comptime Asset: type) type {
     return struct {
         id: []const u8,
         asset: Asset,
     };
 }
 
-// XXX: anything in assets to test..?
-pub fn generate(comptime Asset: type, comptime descriptors: []const AssetDescriptor(Asset)) type {
+pub fn index(comptime Asset: type, comptime descriptors: []const Descriptor(Asset)) type {
     comptime var ids: [descriptors.len]std.builtin.Type.EnumField = undefined;
     for (descriptors, &ids, 0..) |descriptor, *id, i| {
         id.* = .{
@@ -31,13 +34,16 @@ pub fn generate(comptime Asset: type, comptime descriptors: []const AssetDescrip
         },
     });
 
-    comptime var assets_ = std.EnumArray(Id_, Asset).initUndefined();
+    comptime var assets = std.EnumArray(Id_, Asset).initUndefined();
     for (descriptors, 0..) |descriptor, i| {
-        assets_.set(@intToEnum(Id_, i), descriptor.asset);
+        assets.set(@intToEnum(Id_, i), descriptor.asset);
     }
 
     return struct {
         pub const Id = Id_;
-        pub const assets = assets_;
+
+        pub fn get(id: Id) Asset {
+            return assets.get(id);
+        }
     };
 }

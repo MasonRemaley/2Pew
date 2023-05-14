@@ -1,19 +1,7 @@
 const std = @import("std");
 const math = std.math;
-const sprites = @import("sprites.zig");
-const assets = @import("assets.zig");
 
-const SpriteId = sprites.SpriteId;
-
-const Animation = struct {
-    frames: []const SpriteId,
-    loop_start: ?u16 = null,
-    fps: f32,
-    angle: f32,
-};
-
-// XXX: could pull these out into their own files if we want, will eventually
-pub const generated = assets.generate(Animation, &.{
+pub const descriptors = &.{
     .{
         .id = "ship/ranger/thrusters",
         .asset = .{
@@ -139,9 +127,4 @@ pub const generated = assets.generate(Animation, &.{
             .angle = math.pi / 2.0,
         },
     },
-});
-
-// XXX: just name id?
-pub const AnimationId = generated.Id;
-// XXX: naming...? or just expose getter?
-pub const data = generated.assets;
+};

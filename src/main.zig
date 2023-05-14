@@ -64,10 +64,9 @@ const PrefabHandle = prefabs.Handle;
 
 const dead_zone = 10000;
 
-const sprites = @import("sprites.zig");
-const SpriteId = sprites.SpriteId;
-const animations = @import("animations.zig");
-const AnimationId = animations.AnimationId;
+const asset_index = @import("asset_index.zig");
+const SpriteId = asset_index.sprites.Id;
+const AnimationId = asset_index.animations.Id;
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
 // screen including this, the number of live entities, etc. We also want warnings/errors to show up
@@ -2274,7 +2273,7 @@ const Assets = struct {
         // XXX: naming vs anim above etc
         // Get the animation, early out if none
         if (anim.id == null) return null;
-        const animation = animations.data.get(anim.id.?);
+        const animation = asset_index.animations.get(anim.id.?);
 
         // Figure out the current frame
         var frame_index: u32 = @intFromFloat(anim.time_passed * animation.fps);
@@ -2303,7 +2302,7 @@ const Assets = struct {
     // XXX: rename diffuse to sprite id or such?
     // XXX: only allow calling from that loop! or just inline there, etc
     fn loadSprite(a: *Assets, allocator: Allocator, diffuse: SpriteId) !SpriteId {
-        const config = sprites.data.get(diffuse);
+        const config = asset_index.sprites.get(diffuse);
         var tint_mask_path: ?[]const u8 = null;
         var tints: []const [3]u8 = &.{};
         if (config.tint) |tint| {
@@ -2331,7 +2330,7 @@ const Assets = struct {
             };
             tint_mask_path = tint.mask_path;
         }
-        const diffuse_png = try a.dir.readFileAlloc(a.gpa, sprites.data.get(diffuse).path, 50 * 1024 * 1024);
+        const diffuse_png = try a.dir.readFileAlloc(a.gpa, asset_index.sprites.get(diffuse).path, 50 * 1024 * 1024);
         defer a.gpa.free(diffuse_png);
         const tint_mask_png = if (tint_mask_path) |m|
             try a.dir.readFileAlloc(a.gpa, m, 50 * 1024 * 1024)
