@@ -1449,7 +1449,7 @@ const Game = struct {
                 .animate_on_input = AnimateOnInput{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = .@"ship/ranger/thrusters/0",
+                    .activated = .@"ship/ranger/thrusters",
                     .deactivated = null,
                 },
                 .animation = .{
@@ -1523,7 +1523,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = .@"ship/triangle/thrusters/0",
+                    .activated = .@"ship/triangle/thrusters",
                     .deactivated = null,
                 },
                 .animation = .{
@@ -1597,7 +1597,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = .@"ship/militia/thrusters/0",
+                    .activated = .@"ship/militia/thrusters",
                     .deactivated = null,
                 },
                 .animation = .{
@@ -1700,7 +1700,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = .@"ship/kevin/thrusters/0",
+                    .activated = .@"ship/kevin/thrusters",
                     .deactivated = null,
                 },
                 .animation = .{
@@ -1774,7 +1774,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_y,
                     .direction = .positive,
-                    .activated = .@"ship/wendy/thrusters/left/0",
+                    .activated = .@"ship/wendy/thrusters/left",
                     .deactivated = null,
                 },
                 .animation = .{
@@ -1793,7 +1793,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_y,
                     .direction = .negative,
-                    .activated = .@"ship/wendy/thrusters/right/0",
+                    .activated = .@"ship/wendy/thrusters/right",
                     .deactivated = null,
                 },
                 .animation = .{
@@ -1812,7 +1812,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_x,
                     .direction = .negative,
-                    .activated = .@"ship/wendy/thrusters/top/0",
+                    .activated = .@"ship/wendy/thrusters/top",
                     .deactivated = null,
                 },
                 .animation = .{
@@ -1831,7 +1831,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_x,
                     .direction = .positive,
-                    .activated = .@"ship/wendy/thrusters/bottom/0",
+                    .activated = .@"ship/wendy/thrusters/bottom",
                     .deactivated = null,
                 },
                 .animation = .{
@@ -2271,20 +2271,31 @@ const Assets = struct {
     // XXX: this can go direclty in the system code now, or at least be a free function, a lot of other
     // stuff can too!
     fn animate(anim: *Animation.Playback, delta_s: f32) ?Frame {
-        if (anim.id == null) return null;
         // XXX: naming vs anim above etc
+        // Get the animation, early out if none
+        if (anim.id == null) return null;
         const animation = animations.data.get(anim.id.?);
-        const frame_index: u32 = @intFromFloat(@floor(anim.time_passed * animation.fps));
-        // XXX: for large delta_s can cause out of bounds index (preexisting bug)
-        const frame_sprite = animation.frames[frame_index];
-        anim.time_passed += delta_s;
-        const end_time = @as(f32, @floatFromInt(animation.frames.len)) / animation.fps;
-        if (anim.time_passed >= end_time) {
-            anim.time_passed -= end_time;
-            anim.id = animation.next;
+
+        // Figure out the current frame
+        var frame_index: u32 = @intFromFloat(anim.time_passed * animation.fps);
+
+        // Loop or stop if past the end
+        if (frame_index >= animation.frames.len) {
+            if (animation.loop_start) |loop_start| {
+                frame_index = loop_start;
+                anim.time_passed -= @as(f32, @floatFromInt(animation.frames.len - loop_start)) / animation.fps;
+            } else {
+                anim.id = null;
+                return null;
+            }
         }
+
+        // Update the timer
+        anim.time_passed += delta_s;
+
+        // Return the current frame data
         return .{
-            .sprite = frame_sprite,
+            .sprite = animation.frames[frame_index],
             .angle = animation.angle,
         };
     }
