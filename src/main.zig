@@ -2303,7 +2303,7 @@ const Assets = struct {
     // XXX: rename diffuse to sprite id or such?
     // XXX: only allow calling from that loop! or just inline there, etc
     fn loadSprite(a: *Assets, allocator: Allocator, diffuse: SpriteId) !SpriteId {
-        const config = sprites.config.get(diffuse);
+        const config = sprites.data.get(diffuse);
         var tint_mask_path: ?[]const u8 = null;
         var tints: []const [3]u8 = &.{};
         if (config.tint) |tint| {
@@ -2331,7 +2331,7 @@ const Assets = struct {
             };
             tint_mask_path = tint.mask_path;
         }
-        const diffuse_png = try a.dir.readFileAlloc(a.gpa, sprites.paths.get(diffuse), 50 * 1024 * 1024);
+        const diffuse_png = try a.dir.readFileAlloc(a.gpa, sprites.data.get(diffuse).path, 50 * 1024 * 1024);
         defer a.gpa.free(diffuse_png);
         const tint_mask_png = if (tint_mask_path) |m|
             try a.dir.readFileAlloc(a.gpa, m, 50 * 1024 * 1024)
