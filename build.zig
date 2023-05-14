@@ -80,8 +80,30 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    // XXX: pull out into its own step or something that we can just call from here!
+    // {
+    //     const bake_exe = b.addExecutable(.{
+    //         .name = "bake",
+    //         .root_source_file = .{ .path = "bake/main.zig" },
+    //         // XXX: set these?
+    //         .target = target,
+    //         .optimize = optimize,
+    //     });
+
+    //     const bake_run = b.addRunArtifact(bake_exe);
+    //     const baked_output = bake_run.addOutputFileArg("baked.zig");
+
+    //     const bake_write = b.addWriteFiles();
+    //     bake_write.addCopyFileToSource(baked_output, "src/baked.zig");
+    //     bake_write.step.dependOn(&bake_run.step);
+
+    //     const bake_step = b.step("bake", "Bake the data files");
+    //     bake_step.dependOn(&bake_write.step);
+
+    //     exe.step.dependOn(bake_step);
+    // }
+
     // Creates a step for unit testing.
-    // TODO(mason): add all source files here?
     const exe_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
@@ -95,7 +117,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     bench_exe.override_dest_dir = .prefix;
-    b.installArtifact(bench_exe);
     const bench_step = b.step("bench", "Run benchmarks");
     const bench_cmd = b.addRunArtifact(bench_exe);
     bench_step.dependOn(&bench_cmd.step);

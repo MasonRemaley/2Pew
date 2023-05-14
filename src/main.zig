@@ -39,7 +39,11 @@ const Entities = ecs.entities.Entities(.{
     .player_index = u2,
     .team_index = u2,
     .lifetime = Lifetime,
-    .sprite = Assets.Id(Sprite),
+    .sprite = struct {
+        id: SpriteId,
+        // XXX: ...wrap into rb or transform or whatever?
+        angle: f32 = 0.0,
+    },
     .animation = Animation.Playback,
     .collider = Collider,
     .turret = Turret,
@@ -59,6 +63,11 @@ const prefabs = ecs.prefabs.init(Entities);
 const PrefabHandle = prefabs.Handle;
 
 const dead_zone = 10000;
+
+const sprites = @import("sprites.zig");
+const SpriteId = sprites.SpriteId;
+const animations = @import("animations.zig");
+const AnimationId = animations.AnimationId;
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
 // screen including this, the number of live entities, etc. We also want warnings/errors to show up
@@ -318,8 +327,8 @@ fn update(
                 const shrapnel_center = entity.transform.pos.plus(other.transform.pos).scaled(0.5);
                 const avg_vel = entity.rb.vel.plus(other.rb.vel).scaled(0.5);
                 for (0..shrapnel_amt) |_| {
-                    const shrapnel_animation = game.shrapnel_animations[
-                        std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                    const shrapnel_sprite = Game.shrapnel_sprites[
+                        std.crypto.random.uintLessThanBiased(usize, Game.shrapnel_sprites.len)
                     ];
                     // Spawn slightly off center from collision point.
                     const random_offset = V.unit(std.crypto.random.float(f32) * math.pi * 2)
@@ -340,13 +349,10 @@ fn update(
                             .rb = .{
                                 .vel = avg_vel.plus(random_vel),
                                 .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                                .radius = game.animationRadius(shrapnel_animation),
+                                .radius = game.assets.sprites.get(shrapnel_sprite).radius(),
                                 .density = 0.001,
                             },
-                            .animation = .{
-                                .index = shrapnel_animation,
-                                .destroys_entity = true,
-                            },
+                            .sprite = .{ .id = shrapnel_sprite },
                         },
                     });
                 }
@@ -494,9 +500,10 @@ fn update(
                     health_entity.rb.radius * health_entity.rb.radius + damage_entity.rb.radius * damage_entity.rb.radius)
                 {
                     if (health_entity.health.damage(damage_entity.damage.hp) > 0.0) {
+                        // XXX: pull out into function?
                         // spawn shrapnel here
-                        const shrapnel_animation = game.shrapnel_animations[
-                            std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                        const shrapnel_sprite = Game.shrapnel_sprites[
+                            std.crypto.random.uintLessThanBiased(usize, Game.shrapnel_sprites.len)
                         ];
                         const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
@@ -512,13 +519,10 @@ fn update(
                                 .rb = .{
                                     .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
                                     .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
-                                    .radius = game.animationRadius(shrapnel_animation),
+                                    .radius = game.assets.sprites.get(shrapnel_sprite).radius(),
                                     .density = 0.001,
                                 },
-                                .animation = .{
-                                    .index = shrapnel_animation,
-                                    .destroys_entity = true,
-                                },
+                                .sprite = .{ .id = shrapnel_sprite },
                             },
                         });
 
@@ -560,7 +564,7 @@ fn update(
                                 .density = 0.001,
                             },
                             .animation = .{
-                                .index = game.explosion_animation,
+                                .id = .explosion,
                                 .destroys_entity = true,
                             },
                         },
@@ -647,11 +651,11 @@ fn update(
             const input_state = &game.input_state[entity.player_index.*];
             if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
                 entity.animation.* = .{
-                    .index = entity.animate_on_input.activated,
+                    .id = entity.animate_on_input.activated,
                 };
             } else if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .deactivated)) {
                 entity.animation.* = .{
-                    .index = entity.animate_on_input.deactivated,
+                    .id = entity.animate_on_input.deactivated,
                 };
             }
         }
@@ -721,7 +725,7 @@ fn update(
                                 .density = 0.001,
                             },
                             // TODO: ...
-                            // .sprite = game.bullet_small,
+                            // .sprite = .@"img/bullet/small.png",
                         });
                         pos.add(dir.scaled(segment_len));
                     }
@@ -750,7 +754,7 @@ fn update(
                         },
                         .hook = hook,
                         // TODO: ...
-                        // .sprite = game.bullet_small,
+                        // .sprite = .@"img/bullet/small.png",
                     });
                     for (0..(gg.live.?.springs.len)) |i| {
                         gg.live.?.springs[i] = entities.create(.{
@@ -778,7 +782,7 @@ fn update(
     {
         var it = entities.iterator(.{ .animation = .{} });
         while (it.next()) |entity| {
-            if (entity.animation.destroys_entity and entity.animation.index == .none) {
+            if (entity.animation.destroys_entity and entity.animation.id == null) {
                 command_buffer.appendRemove(it.handle());
             }
         }
@@ -823,11 +827,11 @@ fn update(
         while (it.next()) |entity| {
             var angle = entity.transform.angle_world_cached;
             var vel = V.unit(angle).scaled(entity.turret.projectile_speed).plus(entity.rb.vel);
-            var sprite = game.bullet_small;
+            var sprite: SpriteId = .@"img/bullet/small.png";
             if (entity.turret.aim_opposite_movement) {
                 angle = entity.rb.vel.angle() + std.math.pi;
                 vel = V.zero;
-                sprite = game.bullet_shiny;
+                sprite = .@"img/bullet/shiny.png";
             }
             const fire_pos = entity.transform.pos_world_cached.plus(V.unit(angle + entity.turret.angle).scaled(entity.turret.radius + entity.turret.projectile_radius));
             const ready = switch (entity.turret.cooldown) {
@@ -863,7 +867,7 @@ fn update(
                             // TODO(mason): modify math to accept 0 and inf mass
                             .density = entity.turret.projectile_density,
                         },
-                        .sprite = sprite,
+                        .sprite = .{ .id = sprite },
                         .collider = .{
                             // Lasers gain energy when bouncing off of rocks
                             .collision_damping = 1,
@@ -899,9 +903,9 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
     // Draw stars
     for (game.stars) |star| {
         const sprite = assets.sprites.get(switch (star.kind) {
-            .small => game.star_small,
-            .large => game.star_large,
-            .planet_red => game.planet_red,
+            .small => .@"img/star/small.png",
+            .large => .@"img/star/large.png",
+            .planet_red => .@"img/planet-red.png",
         });
         const dst_rect: c.SDL_Rect = .{
             .x = star.x,
@@ -919,7 +923,7 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
 
     // Draw ring
     {
-        const sprite = assets.sprites.get(game.ring_bg);
+        const sprite = assets.sprites.get(.@"img/ring.png");
         sdlAssertZero(c.SDL_RenderCopy(
             renderer,
             sprite.tints[0],
@@ -939,30 +943,13 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
             .parent = .{ .optional = true },
         });
         draw: while (it.next()) |entity| {
-            // Skip rendering if flashing, or if any parent is flashing.
-            //
-            // We should probably make the sprites half opacity instead of turning them off when
-            // flashing for a less jarring effect, but that is difficult right now.
-            {
-                var parent_it = parenting.iterator(entities, it.handle());
-                while (parent_it.next()) |current| {
-                    if (entities.getComponent(current, .health)) |health| {
-                        if (health.invulnerable_s > 0.0) {
-                            var flashes_ps: f32 = 2;
-                            if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
-                                flashes_ps = 4;
-                            }
-                            if (std.math.sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
-                                continue :draw;
-                            }
-                        }
-                    }
-                }
+            if (flash_off(entities, it.handle())) {
+                continue :draw;
             }
 
-            if (entity.animation.index != .none) {
-                const frame = assets.animate(entity.animation, delta_s);
-                const unscaled_sprite_size = frame.sprite.size();
+            if (Assets.animate(entity.animation, delta_s)) |frame| {
+                const sprite = assets.sprites.get(frame.sprite);
+                const unscaled_sprite_size = sprite.size();
                 const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
                 const size_coefficient = entity.rb.radius / sprite_radius;
                 const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
@@ -970,7 +957,7 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
 
                 sdlAssertZero(c.SDL_RenderCopyEx(
                     renderer,
-                    frame.sprite.getTint(if (entity.team_index) |i| i.* else null),
+                    sprite.getTint(if (entity.team_index) |i| i.* else null),
                     null, // source rectangle
                     &dest_rect,
                     toDegrees(entity.transform.angle_world_cached + frame.angle),
@@ -1019,8 +1006,11 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
             .transform = .{},
             .team_index = .{ .optional = true },
         });
-        while (it.next()) |entity| {
-            const sprite = assets.sprites.get(entity.sprite.*);
+        draw: while (it.next()) |entity| {
+            if (flash_off(entities, it.handle())) {
+                continue :draw;
+            }
+            const sprite = assets.sprites.get(entity.sprite.id);
             const unscaled_sprite_size = sprite.size();
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = entity.rb.radius / sprite_radius;
@@ -1031,7 +1021,7 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
                 sprite.getTint(if (entity.team_index) |i| i.* else null),
                 null, // source rectangle
                 &dest_rect,
-                toDegrees(entity.transform.angle),
+                toDegrees(entity.transform.angle + entity.sprite.angle),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -1066,7 +1056,7 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
 
         for (game.teams, 0..) |team, team_index| {
             {
-                const sprite = assets.sprites.get(game.particle);
+                const sprite = assets.sprites.get(.@"img/particle.png");
                 const pos = top_left.plus(.{
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = 0,
@@ -1082,7 +1072,7 @@ fn render(assets: *Assets, entities: *Entities, game: Game, delta_s: f32, fx_loo
                 const dead = team.ship_progression_index > display_prog_index;
                 if (dead) continue;
 
-                const sprite = assets.sprites.get(game.shipLifeSprite(class));
+                const sprite = assets.sprites.get(Game.shipLifeSprite(class));
                 const pos = top_left.plus(.{
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
@@ -1149,26 +1139,10 @@ const Lifetime = struct {
     seconds: f32,
 };
 
+// XXX: nesting no longer necessary...
 const Animation = struct {
-    /// Index into frames array
-    start: u32,
-    /// Number of frames elements used in this animation.
-    len: u32,
-    /// After finishing, will jump to this next animation (which may be
-    /// itself, in which case it will loop).
-    next: Index,
-    /// frames per second
-    fps: f32,
-    angle: f32 = 0.0,
-
-    /// Index into animations array.
-    const Index = enum(u32) {
-        none = math.maxInt(u32),
-        _,
-    };
-
     const Playback = struct {
-        index: Index,
+        id: ?AnimationId,
         /// number of seconds passed since Animation start.
         time_passed: f32 = 0,
         destroys_entity: bool = false,
@@ -1253,8 +1227,8 @@ const Transform = struct {
 const AnimateOnInput = struct {
     action: input_system.Action,
     direction: input_system.Direction,
-    activated: Animation.Index,
-    deactivated: Animation.Index,
+    activated: ?AnimationId,
+    deactivated: ?AnimationId,
 };
 
 const RigidBody = struct {
@@ -1387,56 +1361,32 @@ const Game = struct {
     teams_buffer: [4]Team,
     teams: []Team,
 
-    shrapnel_animations: [shrapnel_sprite_names.len]Animation.Index,
-    explosion_animation: Animation.Index,
-
-    ring_bg: Assets.Id(Sprite),
-    star_small: Assets.Id(Sprite),
-    star_large: Assets.Id(Sprite),
-    planet_red: Assets.Id(Sprite),
-    bullet_small: Assets.Id(Sprite),
-    bullet_shiny: Assets.Id(Sprite),
-
-    rock_sprites: [rock_sprite_names.len]Assets.Id(Sprite),
-
-    ranger_animations: ShipAnimations,
     ranger_radius: f32,
-
-    militia_animations: ShipAnimations,
     militia_radius: f32,
-
-    triangle_animations: ShipAnimations,
     triangle_radius: f32,
-
-    kevin_animations: ShipAnimations,
     kevin_radius: f32,
-
-    wendy_animations: ShipAnimations,
     wendy_radius: f32,
 
     stars: [150]Star,
 
-    particle: Assets.Id(Sprite),
-
     const ShipAnimations = struct {
-        still: Animation.Index,
-        accel: Animation.Index,
+        thrusters_forward: ?Animation.Index = null,
         thrusters_left: ?Animation.Index = null,
         thrusters_right: ?Animation.Index = null,
         thrusters_top: ?Animation.Index = null,
         thrusters_bottom: ?Animation.Index = null,
     };
 
-    const shrapnel_sprite_names = [_][]const u8{
-        "img/shrapnel/01.png",
-        "img/shrapnel/02.png",
-        "img/shrapnel/03.png",
+    const shrapnel_sprites = [_]SpriteId{
+        .@"img/shrapnel/01.png",
+        .@"img/shrapnel/02.png",
+        .@"img/shrapnel/03.png",
     };
 
-    const rock_sprite_names = [_][]const u8{
-        "img/rock-a.png",
-        "img/rock-b.png",
-        "img/rock-c.png",
+    const rock_sprites = [_]SpriteId{
+        .@"img/rock-a.png",
+        .@"img/rock-b.png",
+        .@"img/rock-c.png",
     };
 
     fn createRanger(
@@ -1473,8 +1423,9 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .animation = .{
-                    .index = self.ranger_animations.still,
+                .sprite = .{
+                    .id = .@"img/ship/ranger/diffuse.png",
+                    .angle = math.pi / 2.0,
                 },
                 .turret = .{
                     .angle = 0,
@@ -1495,14 +1446,14 @@ const Game = struct {
                     .radius = self.ranger_radius,
                     .density = std.math.inf(f32),
                 },
-                .animate_on_input = .{
+                .animate_on_input = AnimateOnInput{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = self.ranger_animations.accel,
-                    .deactivated = .none,
+                    .activated = .@"ship/ranger/thrusters/0",
+                    .deactivated = null,
                 },
                 .animation = .{
-                    .index = .none,
+                    .id = null,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1546,8 +1497,9 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .animation = .{
-                    .index = self.triangle_animations.still,
+                .sprite = .{
+                    .id = .@"img/ship/triangle/diffuse.png",
+                    .angle = math.pi / 2.0,
                 },
                 .turret = .{
                     .angle = 0,
@@ -1571,11 +1523,12 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = self.triangle_animations.accel,
-                    .deactivated = .none,
+                    .activated = .@"ship/triangle/thrusters/0",
+                    .deactivated = null,
                 },
                 .animation = .{
-                    .index = .none,
+                    // XXX: have a null id or no?
+                    .id = null,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1617,8 +1570,9 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .animation = .{
-                    .index = self.militia_animations.still,
+                .sprite = .{
+                    .id = .@"img/ship/militia/diffuse.png",
+                    .angle = math.pi / 2.0,
                 },
                 // .grapple_gun = .{
                 //     .radius = self.ranger_radius * 10.0,
@@ -1643,11 +1597,11 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = self.militia_animations.accel,
-                    .deactivated = .none,
+                    .activated = .@"ship/militia/thrusters/0",
+                    .deactivated = null,
                 },
                 .animation = .{
-                    .index = .none,
+                    .id = null,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1691,8 +1645,9 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .animation = .{
-                    .index = self.kevin_animations.still,
+                .sprite = .{
+                    .id = .@"img/ship/kevin/diffuse.png",
+                    .angle = math.pi / 2.0,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1745,11 +1700,11 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = self.kevin_animations.accel,
-                    .deactivated = .none,
+                    .activated = .@"ship/kevin/thrusters/0",
+                    .deactivated = null,
                 },
                 .animation = .{
-                    .index = .none,
+                    .id = null,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1791,8 +1746,9 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .animation = .{
-                    .index = self.wendy_animations.still,
+                .sprite = .{
+                    .id = .@"img/ship/wendy/diffuse.png",
+                    .angle = math.pi / 2.0,
                 },
                 .turret = .{
                     .radius = self.wendy_radius,
@@ -1818,11 +1774,11 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_y,
                     .direction = .positive,
-                    .activated = self.wendy_animations.thrusters_left.?,
-                    .deactivated = .none,
+                    .activated = .@"ship/wendy/thrusters/left/0",
+                    .deactivated = null,
                 },
                 .animation = .{
-                    .index = .none,
+                    .id = null,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1837,11 +1793,11 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_y,
                     .direction = .negative,
-                    .activated = self.wendy_animations.thrusters_right.?,
-                    .deactivated = .none,
+                    .activated = .@"ship/wendy/thrusters/right/0",
+                    .deactivated = null,
                 },
                 .animation = .{
-                    .index = .none,
+                    .id = null,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1856,11 +1812,11 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_x,
                     .direction = .negative,
-                    .activated = self.wendy_animations.thrusters_top.?,
-                    .deactivated = .none,
+                    .activated = .@"ship/wendy/thrusters/top/0",
+                    .deactivated = null,
                 },
                 .animation = .{
-                    .index = .none,
+                    .id = null,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1875,11 +1831,11 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_x,
                     .direction = .positive,
-                    .activated = self.wendy_animations.thrusters_bottom.?,
-                    .deactivated = .none,
+                    .activated = .@"ship/wendy/thrusters/bottom/0",
+                    .deactivated = null,
                 },
                 .animation = .{
-                    .index = .none,
+                    .id = null,
                 },
                 .player_index = player_index,
                 .team_index = team_index,
@@ -1888,197 +1844,19 @@ const Game = struct {
     }
 
     fn init(allocator: Allocator, assets: *Assets) !Game {
-        const team_tints = &.{
-            .{
-                16,
-                124,
-                196,
-            },
-            .{
-                237,
-                210,
-                64,
-            },
-            .{
-                224,
-                64,
-                237,
-            },
-            .{
-                83,
-                237,
-                64,
-            },
-        };
-        const no_tint = &.{};
-
-        const ring_bg = try assets.loadSprite(allocator, "img/ring.png", null, no_tint);
-        const star_small = try assets.loadSprite(allocator, "img/star/small.png", null, no_tint);
-        const star_large = try assets.loadSprite(allocator, "img/star/large.png", null, no_tint);
-        const planet_red = try assets.loadSprite(allocator, "img/planet-red.png", null, no_tint);
-        const bullet_small = try assets.loadSprite(allocator, "img/bullet/small.png", null, no_tint);
-        const bullet_shiny = try assets.loadSprite(allocator, "img/bullet/shiny.png", null, no_tint);
-
-        var shrapnel_sprites: [shrapnel_sprite_names.len]Assets.Id(Sprite) = undefined;
-        for (&shrapnel_sprites, shrapnel_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(allocator, name, null, no_tint);
+        inline for (@typeInfo(SpriteId).Enum.fields) |field| {
+            const id: SpriteId = @enumFromInt(field.value);
+            // XXX: can panic on failure, shouldn't fail now right??
+            // XXX: also map doesn't need to be optional anymore I think? don't need treturn fvalue here either
+            _ = try assets.loadSprite(allocator, id);
         }
 
-        var rock_sprites: [rock_sprite_names.len]Assets.Id(Sprite) = undefined;
-        for (&rock_sprites, rock_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(allocator, name, null, no_tint);
-        }
-
-        const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
-            try assets.addAnimation(&.{shrapnel_sprites[0]}, null, 30, 0.0),
-            try assets.addAnimation(&.{shrapnel_sprites[1]}, null, 30, 0.0),
-            try assets.addAnimation(&.{shrapnel_sprites[2]}, null, 30, 0.0),
-        };
-
-        const ranger_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/ranger/diffuse.png", "img/ship/ranger/recolor.png", team_tints),
-            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/ranger/thrusters/2.png", null, no_tint),
-        };
-        const ranger_still = try assets.addAnimation(&.{
-            ranger_sprites[0],
-        }, null, 30, math.pi / 2.0);
-        const ranger_steady_thrust = try assets.addAnimation(&.{
-            ranger_sprites[2],
-            ranger_sprites[3],
-        }, null, 10, math.pi / 2.0);
-        const ranger_accel = try assets.addAnimation(&.{
-            ranger_sprites[1],
-        }, ranger_steady_thrust, 10, math.pi / 2.0);
-
-        const militia_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/militia/diffuse.png", "img/ship/militia/recolor.png", team_tints),
-            try assets.loadSprite(allocator, "img/ship/militia/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/militia/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/militia/thrusters/2.png", null, no_tint),
-        };
-        const militia_still = try assets.addAnimation(&.{
-            militia_sprites[0],
-        }, null, 30, math.pi / 2.0);
-        const militia_steady_thrust = try assets.addAnimation(&.{
-            militia_sprites[2],
-            militia_sprites[3],
-        }, null, 10, math.pi / 2.0);
-        const militia_accel = try assets.addAnimation(&.{
-            militia_sprites[1],
-        }, militia_steady_thrust, 10, math.pi / 2.0);
-
-        const explosion_animation = try assets.addAnimation(&.{
-            try assets.loadSprite(allocator, "img/explosion/01.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/02.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/03.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/04.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/05.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/06.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/07.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/08.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/09.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/10.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/11.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/explosion/12.png", null, no_tint),
-        }, .none, 30, 0.0);
-
-        const triangle_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/triangle/diffuse.png", "img/ship/triangle/recolor.png", team_tints),
-            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/triangle/thrusters/2.png", null, no_tint),
-        };
-        const triangle_still = try assets.addAnimation(&.{
-            triangle_sprites[0],
-        }, null, 30, math.pi / 2.0);
-        const triangle_steady_thrust = try assets.addAnimation(&.{
-            triangle_sprites[2],
-            triangle_sprites[3],
-        }, null, 10, math.pi / 2.0);
-        const triangle_accel = try assets.addAnimation(&.{
-            triangle_sprites[1],
-        }, triangle_steady_thrust, 10, math.pi / 2.0);
-
-        const kevin_sprites = .{
-            try assets.loadSprite(allocator, "img/ship/kevin/diffuse.png", "img/ship/kevin/recolor.png", team_tints),
-            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/kevin/thrusters/2.png", null, no_tint),
-        };
-        const kevin_still = try assets.addAnimation(&.{
-            kevin_sprites[0],
-        }, null, 30, math.pi / 2.0);
-        const kevin_steady_thrust = try assets.addAnimation(&.{
-            kevin_sprites[2],
-            kevin_sprites[3],
-        }, null, 10, math.pi / 2.0);
-        const kevin_accel = try assets.addAnimation(&.{
-            kevin_sprites[1],
-        }, kevin_steady_thrust, 10, math.pi / 2.0);
-
-        const wendy_sprite = try assets.loadSprite(allocator, "img/ship/wendy/diffuse.png", "img/ship/wendy/recolor.png", team_tints);
-        const wendy_thrusters_left = .{
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/0.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/1.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/left/2.png", null, no_tint),
-        };
-        const wendy_thrusters_right = .{
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/0.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/1.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/right/2.png", null, no_tint),
-        };
-        const wendy_thrusters_top = .{
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/0.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/1.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/top/2.png", null, no_tint),
-        };
-        const wendy_thrusters_bottom = .{
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/0.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/1.png", null, no_tint),
-            try assets.loadSprite(allocator, "img/ship/wendy/thrusters/bottom/2.png", null, no_tint),
-        };
-        const wendy_still = try assets.addAnimation(&.{
-            wendy_sprite,
-        }, null, 30, math.pi / 2.0);
-        const wendy_thrusters_left_steady = try assets.addAnimation(&.{
-            wendy_thrusters_left[1],
-            wendy_thrusters_left[2],
-        }, null, 10, math.pi / 2.0);
-        const wendy_thrusters_left_accel = try assets.addAnimation(&.{
-            wendy_thrusters_left[0],
-        }, wendy_thrusters_left_steady, 10, math.pi / 2.0);
-        const wendy_thrusters_right_steady = try assets.addAnimation(&.{
-            wendy_thrusters_right[1],
-            wendy_thrusters_right[2],
-        }, null, 10, math.pi / 2.0);
-        const wendy_thrusters_right_accel = try assets.addAnimation(&.{
-            wendy_thrusters_right[0],
-        }, wendy_thrusters_right_steady, 10, math.pi / 2.0);
-        const wendy_thrusters_top_steady = try assets.addAnimation(&.{
-            wendy_thrusters_top[1],
-            wendy_thrusters_top[2],
-        }, null, 10, math.pi / 2.0);
-        const wendy_thrusters_top_accel = try assets.addAnimation(&.{
-            wendy_thrusters_top[0],
-        }, wendy_thrusters_top_steady, 10, math.pi / 2.0);
-        const wendy_thrusters_bottom_steady = try assets.addAnimation(&.{
-            wendy_thrusters_bottom[1],
-            wendy_thrusters_bottom[2],
-        }, null, 10, math.pi / 2.0);
-        const wendy_thrusters_bottom_accel = try assets.addAnimation(&.{
-            wendy_thrusters_bottom[0],
-        }, wendy_thrusters_bottom_steady, 10, math.pi / 2.0);
-
-        const ranger_radius = @as(f32, @floatFromInt(assets.sprites.get(ranger_sprites[0]).rect.w)) / 2.0;
-        const militia_radius = @as(f32, @floatFromInt(assets.sprites.get(militia_sprites[0]).rect.w)) / 2.0;
-        const triangle_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).rect.w)) / 2.0;
+        const ranger_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/ranger/diffuse.png").rect.w)) / 2.0;
+        const militia_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/militia/diffuse.png").rect.w)) / 2.0;
+        const triangle_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/triangle/diffuse.png").rect.w)) / 2.0;
         // XXX: wrong, but looks better...fix this
-        const kevin_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).rect.w)) / 2.0;
-        const wendy_radius = @as(f32, @floatFromInt(assets.sprites.get(triangle_sprites[0]).rect.w)) / 2.0;
-
-        const particle = try assets.loadSprite(allocator, "img/particle.png", null, team_tints);
+        const kevin_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/triangle/diffuse.png").rect.w)) / 2.0;
+        const wendy_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/triangle/diffuse.png").rect.w)) / 2.0;
 
         const controller_default = input_system.ControlScheme.Controller{
             .turn = .{
@@ -2156,8 +1934,6 @@ const Game = struct {
             .assets = assets,
             .teams = undefined,
             .teams_buffer = undefined,
-            .shrapnel_animations = shrapnel_animations,
-            .explosion_animation = explosion_animation,
             .control_schemes = .{
                 .{
                     .controller_index = 0,
@@ -2182,51 +1958,14 @@ const Game = struct {
             },
             .input_state = .{input_system.InputState.init()} ** 4,
 
-            .ring_bg = ring_bg,
-            .star_small = star_small,
-            .star_large = star_large,
-            .planet_red = planet_red,
-            .bullet_small = bullet_small,
-            .bullet_shiny = bullet_shiny,
-            .rock_sprites = rock_sprites,
-
-            .ranger_animations = .{
-                .still = ranger_still,
-                .accel = ranger_accel,
-            },
+            // XXX: need to store these..? where are they used?
             .ranger_radius = ranger_radius,
-
-            .militia_animations = .{
-                .still = militia_still,
-                .accel = militia_accel,
-            },
             .militia_radius = militia_radius,
-
-            .triangle_animations = .{
-                .still = triangle_still,
-                .accel = triangle_accel,
-            },
             .triangle_radius = triangle_radius,
-
-            .kevin_animations = .{
-                .still = kevin_still,
-                .accel = kevin_accel,
-            },
             .kevin_radius = kevin_radius,
-
-            .wendy_animations = .{
-                .still = wendy_still,
-                .accel = wendy_still,
-                .thrusters_left = wendy_thrusters_left_accel,
-                .thrusters_right = wendy_thrusters_right_accel,
-                .thrusters_top = wendy_thrusters_top_accel,
-                .thrusters_bottom = wendy_thrusters_bottom_accel,
-            },
             .wendy_radius = wendy_radius,
 
             .stars = undefined,
-
-            .particle = particle,
         };
     }
 
@@ -2250,25 +1989,14 @@ const Game = struct {
         };
     }
 
-    fn shipLifeSprite(game: Game, class: Ship.Class) Assets.Id(Sprite) {
-        const animation_index = switch (class) {
-            .ranger => game.ranger_animations.still,
-            .militia => game.militia_animations.still,
-            .triangle => game.triangle_animations.still,
-            .kevin => game.kevin_animations.still,
-            .wendy => game.wendy_animations.still,
+    fn shipLifeSprite(class: Ship.Class) SpriteId {
+        return switch (class) {
+            .ranger => .@"img/ship/ranger/diffuse.png",
+            .militia => .@"img/ship/militia/diffuse.png",
+            .triangle => .@"img/ship/triangle/diffuse.png",
+            .kevin => .@"img/ship/kevin/diffuse.png",
+            .wendy => .@"img/ship/wendy/diffuse.png",
         };
-        const animation = game.assets.animations.items[@intFromEnum(animation_index)];
-        const sprite_index = game.assets.frames.items[animation.start];
-        return sprite_index;
-    }
-
-    fn animationRadius(game: Game, animation_index: Animation.Index) f32 {
-        const assets = game.assets;
-        const animation = assets.animations.items[@intFromEnum(animation_index)];
-        const sprite_id = assets.frames.items[animation.start];
-        const sprite = assets.sprites.get(sprite_id);
-        return sprite.radius();
     }
 
     const Scenario = enum {
@@ -2394,14 +2122,14 @@ const Game = struct {
         for (0..rock_amt) |_| {
             const speed = 20 + std.crypto.random.float(f32) * 300;
             const radius = 25 + std.crypto.random.float(f32) * 110;
-            const sprite = game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, game.rock_sprites.len)];
+            const sprite = Game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, Game.rock_sprites.len)];
             const pos = V.unit(std.crypto.random.float(f32) * math.pi * 2)
                 .scaled(lerp(display_radius, display_radius * 1.1, std.crypto.random.float(f32)))
                 .plus(display_center);
 
             _ = command_buffer.appendInstantiate(true, &.{
                 .{
-                    .sprite = sprite,
+                    .sprite = .{ .id = sprite },
                     .transform = .{
                         .pos = pos,
                     },
@@ -2424,6 +2152,7 @@ const Game = struct {
     }
 
     fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team_index: u2) void {
+        _ = game; // XXX: ...
         for (0..500) |_| {
             const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(300);
             _ = entities.create(.{
@@ -2440,7 +2169,7 @@ const Game = struct {
                     .radius = 16,
                     .density = 0.001,
                 },
-                .sprite = game.particle,
+                .sprite = .{ .id = .@"img/particle.png" },
                 .team_index = team_index,
             });
         }
@@ -2475,54 +2204,24 @@ const Assets = struct {
     // XXX: hmm it's a little weird for the key to be one file when the asset is really composed of multiple. we may want
     // to have actual asset files that are separate or something and those get the guids idk. or can have *both*.
     // or can store these as separate sprites but that's confusing for animations i think? maybe doesn't matter?
-    sprites: AssetMap(Sprite),
-    frames: std.ArrayListUnmanaged(Assets.Id(Sprite)),
-    // XXX: could define these as data, idk, is tricky cause we wanna be able to reference them too right?
-    animations: std.ArrayListUnmanaged(Animation),
-
-    // XXX: put on asset map or keep separate?
-    fn Id(comptime Asset: type) type {
-        _ = Asset;
-        return enum(u64) { _ };
-    }
+    sprites: AssetMap(SpriteId, Sprite),
+    frames: std.ArrayListUnmanaged(SpriteId),
 
     // XXX: make sure this hash is stable across releases or use custom one/specify one, can ask andy
     // XXX: also support way to re-hash everything as is?
-    fn AssetMap(comptime Asset: type) type {
-        const AssetContext = struct {
-            pub fn hash(_: @This(), id: Id(Asset)) u64 {
-                return @intFromEnum(id);
-            }
-            pub fn eql(_: @This(), a: Id(Asset), b: Id(Asset)) bool {
-                return a == b;
-            }
-        };
-
+    fn AssetMap(comptime Id: type, comptime Asset: type) type {
         return struct {
-            missing: Asset,
-            data: Map,
+            // XXX: don't need to wrap anymore? unless to make nullable? can make nullable more efficiently...
+            // but right now I'm planning on loading everything anyway?
+            data: std.EnumArray(Id, ?Asset) = std.EnumArray(Id, ?Asset).initFill(null),
 
             const Self = @This();
-            const Map = std.HashMap(Id(Asset), Asset, AssetContext, std.hash_map.default_max_load_percentage);
 
-            pub fn init(allocator: Allocator, missing: Asset) Self {
-                return .{
-                    .missing = missing,
-                    .data = Map.init(allocator),
-                };
-            }
-
-            pub fn deinit(self: *Self) void {
-                self.data.deinit();
-                self.* = undefined;
-            }
-
-            pub fn putNoClobber(self: *Self, id: Id(Asset), asset: Asset) Allocator.Error!void {
-                // XXX: we probably do want a way to differentiate between clobbering and loading something that already exists right?
-                // we can probably just make sure at compiletime that all hashes are unique, then this is a non issue. (we probably don't want to
-                // reload stuff unless explciitly asked I guess, but, we do want to allow e.g. merging sets of assets from disparate sources
-                // to load eventually.)
-                try self.data.putNoClobber(id, asset);
+            // XXX: ...
+            pub fn putNoClobber(self: *Self, id: Id, asset: Asset) Allocator.Error!void {
+                // XXX: ...
+                // assert(self.data.get(id) == null);
+                self.data.set(id, asset);
             }
 
             // XXX: returning by value?
@@ -2532,19 +2231,14 @@ const Assets = struct {
             // XXX: annoying that this modifies it since this means it can't be done from multiple threads. there's probably some kinda
             // rw lock we could use where contention could only occur on errors.
             // XXX: checked version?
-            pub fn get(self: *Self, id: Id(Asset)) Asset {
-                const result = self.data.getOrPut(id) catch panic("out of memory", .{});
-                if (!result.found_existing) {
-                    std.log.err("missing asset: {s}: {}", .{ @typeName(Asset), id });
-                    result.value_ptr.* = self.missing;
-                }
-                return result.value_ptr.*;
+            pub fn get(self: *Self, id: Id) Asset {
+                return self.data.get(id).?;
             }
         };
     }
 
     const Frame = struct {
-        sprite: Sprite,
+        sprite: SpriteId,
         angle: f32,
     };
 
@@ -2559,65 +2253,35 @@ const Assets = struct {
             });
         };
 
-        var missing_sprite = es: {
-            var width: c_int = 1;
-            var height: c_int = 1;
-            const channel_count = 4;
-            const bits_per_channel = 8;
-
-            var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(gpa, 1);
-            errdefer textures.deinit(gpa);
-            const pitch = width * channel_count;
-            var data: [4]u8 = .{ 255, 0, 255, 255 };
-            const surface = c.SDL_CreateRGBSurfaceFrom(
-                &data,
-                width,
-                height,
-                channel_count * bits_per_channel,
-                pitch,
-                0x000000ff,
-                0x0000ff00,
-                0x00ff0000,
-                0xff000000,
-            );
-            defer c.SDL_FreeSurface(surface);
-            try textures.append(gpa, c.SDL_CreateTextureFromSurface(renderer, surface) orelse
-                panic("unable to convert surface to texture", .{}));
-            break :es .{
-                .tints = textures.items,
-                .rect = .{ .x = 0, .y = 0, .w = 32, .h = 32 },
-            };
-        };
-
         return .{
             .gpa = gpa,
             .renderer = renderer,
             .dir = dir,
-            .sprites = AssetMap(Sprite).init(gpa, missing_sprite),
+            .sprites = AssetMap(SpriteId, Sprite){},
             .frames = .{},
-            .animations = .{},
         };
     }
 
     fn deinit(a: *Assets) void {
         a.dir.close();
-        a.sprites.deinit();
         a.frames.deinit(a.gpa);
-        a.animations.deinit(a.gpa);
         a.* = undefined;
     }
 
-    fn animate(a: *Assets, anim: *Animation.Playback, delta_s: f32) Frame {
-        const animation = a.animations.items[@intFromEnum(anim.index)];
+    // XXX: this can go direclty in the system code now, or at least be a free function, a lot of other
+    // stuff can too!
+    fn animate(anim: *Animation.Playback, delta_s: f32) ?Frame {
+        if (anim.id == null) return null;
+        // XXX: naming vs anim above etc
+        const animation = animations.data.get(anim.id.?);
         const frame_index: u32 = @intFromFloat(@floor(anim.time_passed * animation.fps));
-        const frame = animation.start + frame_index;
-        // TODO: for large delta_s can cause out of bounds index
-        const frame_sprite = a.sprites.get(a.frames.items[frame]);
+        // XXX: for large delta_s can cause out of bounds index (preexisting bug)
+        const frame_sprite = animation.frames[frame_index];
         anim.time_passed += delta_s;
-        const end_time = @as(f32, @floatFromInt(animation.len)) / animation.fps;
+        const end_time = @as(f32, @floatFromInt(animation.frames.len)) / animation.fps;
         if (anim.time_passed >= end_time) {
             anim.time_passed -= end_time;
-            anim.index = animation.next;
+            anim.id = animation.next;
         }
         return .{
             .sprite = frame_sprite,
@@ -2625,39 +2289,54 @@ const Assets = struct {
         };
     }
 
-    /// null next_animation means to loop.
-    fn addAnimation(
-        a: *Assets,
-        frames: []const Assets.Id(Sprite),
-        next_animation: ?Animation.Index,
-        fps: f32,
-        angle: f32,
-    ) !Animation.Index {
-        try a.frames.appendSlice(a.gpa, frames);
-        const result: Animation.Index = @enumFromInt(a.animations.items.len);
-        try a.animations.append(a.gpa, .{
-            .start = @intCast(a.frames.items.len - frames.len),
-            .len = @intCast(frames.len),
-            .next = next_animation orelse result,
-            .fps = fps,
-            .angle = angle,
-        });
-        return result;
-    }
-
-    fn loadSprite(a: *Assets, allocator: Allocator, diffuse_name: []const u8, recolor_name: ?[]const u8, tints: []const [3]u8) !Id(Sprite) {
-        const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
+    // XXX: rename diffuse to sprite id or such?
+    // XXX: only allow calling from that loop! or just inline there, etc
+    fn loadSprite(a: *Assets, allocator: Allocator, diffuse: SpriteId) !SpriteId {
+        const config = sprites.config.get(diffuse);
+        var tint_mask_path: ?[]const u8 = null;
+        var tints: []const [3]u8 = &.{};
+        if (config.tint) |tint| {
+            tints = &.{
+                .{
+                    16,
+                    124,
+                    196,
+                },
+                .{
+                    237,
+                    210,
+                    64,
+                },
+                .{
+                    224,
+                    64,
+                    237,
+                },
+                .{
+                    83,
+                    237,
+                    64,
+                },
+            };
+            tint_mask_path = tint.mask_path;
+        }
+        const diffuse_png = try a.dir.readFileAlloc(a.gpa, sprites.paths.get(diffuse), 50 * 1024 * 1024);
         defer a.gpa.free(diffuse_png);
-        const recolor = if (recolor_name != null) try a.dir.readFileAlloc(a.gpa, recolor_name.?, 50 * 1024 * 1024) else null;
-        defer if (recolor != null) a.gpa.free(recolor.?);
-        const data = try spriteFromBytes(allocator, diffuse_png, recolor, a.renderer, tints);
-        const sprite_id: Id(Sprite) = @enumFromInt(std.hash_map.hashString(diffuse_name));
+        const tint_mask_png = if (tint_mask_path) |m|
+            try a.dir.readFileAlloc(a.gpa, m, 50 * 1024 * 1024)
+        else
+            null;
+        defer if (tint_mask_png) |m| a.gpa.free(m);
+        const data = try spriteFromBytes(allocator, diffuse_png, tint_mask_png, a.renderer, tints);
         // XXX: we probably do want a way to differentiate between clobbering and loading something that already exists right?
         // we can probably just make sure at compiletime that all hashes are unique, then this is a non issue. (we probably don't want to
         // reload stuff unless explciitly asked I guess, but, we do want to allow e.g. merging sets of assets from disparate sources
         // to load eventually.)
-        try a.sprites.putNoClobber(sprite_id, data);
-        return sprite_id;
+        // XXX: write now we're using main sprite as id and ignoring recolor...
+        try a.sprites.putNoClobber(diffuse, data);
+        // XXX: we don't really need to return this anymore, unless we give them unique ids somehow or wrap them
+        // in something indicating it's loaded
+        return diffuse;
     }
 
     fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, renderer: *c.SDL_Renderer, tints: []const [3]u8) !Sprite {
@@ -2854,6 +2533,28 @@ fn remap_clamped(
     value: f32,
 ) f32 {
     return lerp(start_out, end_out, ilerp_clamped(start_in, end_in, value));
+}
+
+// To allow skipping rendering if flashing, or if any parent is flashing.
+//
+// We should probably make the sprites half opacity instead of turning them off when
+// flashing for a less jarring effect, but that is difficult right now.
+fn flash_off(entities: *const Entities, entity: EntityHandle) bool {
+    var parent_it = parenting.iterator(entities, entity);
+    while (parent_it.next()) |current| {
+        if (entities.getComponent(current, .health)) |health| {
+            if (health.invulnerable_s > 0.0) {
+                var flashes_ps: f32 = 2;
+                if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
+                    flashes_ps = 4;
+                }
+                if (std.math.sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 test {
