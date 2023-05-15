@@ -2596,7 +2596,7 @@ const Assets = struct {
         for (tints) |tint| {
             const diffuse_copy = try allocator.alloc(u8, @intCast(usize, width) * @intCast(usize, height) * channel_count);
             defer allocator.free(diffuse_copy);
-            @memcpy(diffuse_copy.ptr, diffuse_data, diffuse_copy.len);
+            @memcpy(diffuse_copy, diffuse_data[0..diffuse_copy.len]);
 
             for (0..diffuse_copy.len / channel_count) |pixel| {
                 var r = &diffuse_copy[pixel * channel_count];
