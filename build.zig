@@ -24,6 +24,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const use_llvm = b.option(bool, "use-llvm", "use zig's llvm backend");
+    exe.use_llvm = use_llvm;
+    exe.use_lld = use_llvm;
+
     if (target.isNativeOs() and target.getOsTag() == .linux) {
         // The SDL package doesn't work for Linux yet, so we rely on system
         // packages for now.
