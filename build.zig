@@ -28,6 +28,9 @@ pub fn build(b: *std.Build) void {
     exe.use_llvm = use_llvm;
     exe.use_lld = use_llvm;
 
+    // https://github.com/MasonRemaley/2Pew/issues/2
+    exe.want_lto = false;
+
     if (target.isNativeOs() and target.getOsTag() == .linux) {
         // The SDL package doesn't work for Linux yet, so we rely on system
         // packages for now.
