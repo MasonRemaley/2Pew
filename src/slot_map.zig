@@ -17,7 +17,7 @@ pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type
     const GenerationT = enum(GenerationTag) {
         const Self = @This();
 
-        // XXX: could i represent invalud efficeintly as absence of a generation? that'd be less
+        // TODO: could i represent invalid efficeintly as absence of a generation? that'd be less
         // weird in serialized data...
         /// An invalid generation.
         invalid = std.math.maxInt(GenerationTag),
@@ -166,7 +166,7 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             self.slots.clearRetainingCapacity();
         }
 
-        // XXX: test this
+        // TODO: test this
         pub fn len(self: *const Self) Index {
             return @intCast(self.slots.items.len - self.free.items.len);
         }

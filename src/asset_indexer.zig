@@ -16,7 +16,6 @@ pub fn index(comptime Asset: type, comptime descriptors: []const Descriptor(Asse
         };
     }
 
-    // XXX: wrap this in a function that generates it so error messages get better names?
     const Id_ = @Type(.{
         .Enum = .{
             .tag_type = @Type(std.builtin.Type{
