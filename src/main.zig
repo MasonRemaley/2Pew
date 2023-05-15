@@ -1356,12 +1356,6 @@ const Game = struct {
     teams_buffer: [4]Team,
     teams: []Team,
 
-    ranger_radius: f32,
-    militia_radius: f32,
-    triangle_radius: f32,
-    kevin_radius: f32,
-    wendy_radius: f32,
-
     stars: [150]Star,
 
     const ShipAnimations = struct {
@@ -1385,13 +1379,13 @@ const Game = struct {
     };
 
     fn createRanger(
-        self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
         team_index: u2,
         pos: V,
         angle: f32,
     ) PrefabHandle {
+        const radius = 16;
         const ship_handle = PrefabHandle.init(0);
         return command_buffer.appendInstantiate(true, &.{
             .{
@@ -1410,7 +1404,7 @@ const Game = struct {
                 },
                 .rb = .{
                     .vel = .{ .x = 0, .y = 0 },
-                    .radius = self.ranger_radius,
+                    .radius = radius,
                     .rotation_vel = 0.0,
                     .density = 0.02,
                 },
@@ -1421,7 +1415,7 @@ const Game = struct {
                 .sprite = .@"img/ship/ranger/diffuse.png",
                 .turret = .{
                     .angle = 0,
-                    .radius = self.ranger_radius,
+                    .radius = radius,
                     .cooldown = .{ .time = .{ .max_s = 0.1 } },
                     .projectile_speed = 550,
                     .projectile_lifetime = 1.0,
@@ -1435,7 +1429,7 @@ const Game = struct {
                 .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
-                    .radius = self.ranger_radius,
+                    .radius = radius,
                     .density = std.math.inf(f32),
                 },
                 .animate_on_input = AnimateOnInput{
@@ -1454,7 +1448,6 @@ const Game = struct {
     }
 
     fn createTriangle(
-        self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
         team_index: u2,
@@ -1506,7 +1499,7 @@ const Game = struct {
                 .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
-                    .radius = self.militia_radius,
+                    .radius = radius,
                     .density = std.math.inf(f32),
                 },
                 .animate_on_input = .{
@@ -1523,13 +1516,13 @@ const Game = struct {
     }
 
     fn createMilitia(
-        self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
         team_index: u2,
         pos: V,
         angle: f32,
     ) PrefabHandle {
+        const radius = 24;
         const ship_handle = PrefabHandle.init(0);
         return command_buffer.appendInstantiate(true, &.{
             .{
@@ -1549,7 +1542,7 @@ const Game = struct {
                 .rb = .{
                     .vel = .{ .x = 0, .y = 0 },
                     .rotation_vel = 0.0,
-                    .radius = self.militia_radius,
+                    .radius = radius,
                     .density = 0.06,
                 },
                 .collider = .{
@@ -1558,7 +1551,7 @@ const Game = struct {
                 },
                 .sprite = .@"img/ship/militia/diffuse.png",
                 // .grapple_gun = .{
-                //     .radius = self.ranger_radius * 10.0,
+                //     .radius = radius * 10.0,
                 //     .angle = 0,
                 //     .cooldown_s = 0,
                 //     .max_cooldown_s = 0.2,
@@ -1574,7 +1567,7 @@ const Game = struct {
                 .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
-                    .radius = self.militia_radius,
+                    .radius = radius,
                     .density = std.math.inf(f32),
                 },
                 .animate_on_input = .{
@@ -1593,7 +1586,6 @@ const Game = struct {
     }
 
     fn createKevin(
-        self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
         team_index: u2,
@@ -1674,7 +1666,8 @@ const Game = struct {
                 .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
-                    .radius = self.kevin_radius,
+                    // XXX: shouldn't calculate radius from pngs...
+                    .radius = radius,
                     .density = std.math.inf(f32),
                 },
                 .animate_on_input = .{
@@ -1693,13 +1686,13 @@ const Game = struct {
     }
 
     fn createWendy(
-        self: *const @This(),
         command_buffer: *CommandBuffer,
         player_index: u2,
         team_index: u2,
         pos: V,
         _: f32,
     ) PrefabHandle {
+        const radius = 32;
         const ship_handle = PrefabHandle.init(0);
         return command_buffer.appendInstantiate(true, &.{
             .{
@@ -1718,7 +1711,7 @@ const Game = struct {
                 },
                 .rb = .{
                     .vel = .{ .x = 0, .y = 0 },
-                    .radius = self.wendy_radius,
+                    .radius = radius,
                     .rotation_vel = 0.0,
                     .density = 0.02,
                 },
@@ -1728,7 +1721,7 @@ const Game = struct {
                 },
                 .sprite = .@"img/ship/wendy/diffuse.png",
                 .turret = .{
-                    .radius = self.wendy_radius,
+                    .radius = radius,
                     .angle = 0,
                     .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
                     .projectile_speed = 0,
@@ -1745,7 +1738,7 @@ const Game = struct {
                 .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
-                    .radius = self.wendy_radius,
+                    .radius = radius,
                     .density = std.math.inf(f32),
                 },
                 .animate_on_input = .{
@@ -1764,7 +1757,7 @@ const Game = struct {
                 .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
-                    .radius = self.wendy_radius,
+                    .radius = radius,
                     .density = std.math.inf(f32),
                 },
                 .animate_on_input = .{
@@ -1783,7 +1776,7 @@ const Game = struct {
                 .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
-                    .radius = self.wendy_radius,
+                    .radius = radius,
                     .density = std.math.inf(f32),
                 },
                 .animate_on_input = .{
@@ -1802,7 +1795,7 @@ const Game = struct {
                 .parent = ship_handle.relative,
                 .transform = .{},
                 .rb = .{
-                    .radius = self.wendy_radius,
+                    .radius = radius,
                     .density = std.math.inf(f32),
                 },
                 .animate_on_input = .{
@@ -1820,14 +1813,8 @@ const Game = struct {
         }).?;
     }
 
+    // XXX: asset_index vs (live) assets, naming confusing
     fn init(assets: *Assets) !Game {
-        const ranger_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/ranger/diffuse.png").rect.w)) / 2.0;
-        const militia_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/militia/diffuse.png").rect.w)) / 2.0;
-        const triangle_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/triangle/diffuse.png").rect.w)) / 2.0;
-        // XXX: wrong, but looks better...fix this
-        const kevin_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/triangle/diffuse.png").rect.w)) / 2.0;
-        const wendy_radius = @as(f32, @floatFromInt(assets.sprites.get(.@"img/ship/triangle/diffuse.png").rect.w)) / 2.0;
-
         const controller_default = input_system.ControlScheme.Controller{
             .turn = .{
                 .axis = .{
@@ -1928,13 +1915,6 @@ const Game = struct {
             },
             .input_state = .{input_system.InputState.init()} ** 4,
 
-            // XXX: need to store these..? where are they used?
-            .ranger_radius = ranger_radius,
-            .militia_radius = militia_radius,
-            .triangle_radius = triangle_radius,
-            .kevin_radius = kevin_radius,
-            .wendy_radius = wendy_radius,
-
             .stars = undefined,
         };
     }
@@ -1951,11 +1931,11 @@ const Game = struct {
         const progression_index = team.ship_progression_index;
         team.ship_progression_index += 1;
         return switch (team.ship_progression[progression_index]) {
-            .ranger => game.createRanger(command_buffer, player_index, team_index, pos, angle),
-            .militia => game.createMilitia(command_buffer, player_index, team_index, pos, angle),
-            .triangle => game.createTriangle(command_buffer, player_index, team_index, pos, angle),
-            .kevin => game.createKevin(command_buffer, player_index, team_index, pos, angle),
-            .wendy => game.createWendy(command_buffer, player_index, team_index, pos, angle),
+            .ranger => Game.createRanger(command_buffer, player_index, team_index, pos, angle),
+            .militia => Game.createMilitia(command_buffer, player_index, team_index, pos, angle),
+            .triangle => Game.createTriangle(command_buffer, player_index, team_index, pos, angle),
+            .kevin => Game.createKevin(command_buffer, player_index, team_index, pos, angle),
+            .wendy => Game.createWendy(command_buffer, player_index, team_index, pos, angle),
         };
     }
 
