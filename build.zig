@@ -48,8 +48,10 @@ pub fn build(b: *std.Build) void {
     exe.addCSourceFile("src/stb_image.c", &.{"-std=c99"});
     exe.addIncludePath("src");
 
+    // XXX: right now this installs some data that's no longer needed at runtime, that won't be true
+    // once we create the bake step, this also may not need to be in src then
     b.installDirectory(.{
-        .source_dir = "data",
+        .source_dir = "src/data",
         .install_dir = .prefix,
         .install_subdir = "data",
     });
