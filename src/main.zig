@@ -2209,7 +2209,7 @@ const Renderer = struct {
         var height: c_int = undefined;
         const channel_count = 4;
         const bits_per_channel = 8;
-        const diffuse_data = c.stbi_load_from_memory(
+        const diffuse_buffer = c.stbi_load_from_memory(
             png_diffuse.ptr,
             @intCast(png_diffuse.len),
             &width,
@@ -2217,7 +2217,8 @@ const Renderer = struct {
             null,
             channel_count,
         );
-        defer c.stbi_image_free(diffuse_data);
+        defer c.stbi_image_free(diffuse_buffer);
+        const diffuse_data = diffuse_buffer[0 .. @as(usize, @intCast(width)) * @as(usize, @intCast(height)) * channel_count];
         var recolor_width: c_int = undefined;
         var recolor_height: c_int = undefined;
         const recolor_data = if (png_recolor != null) c.stbi_load_from_memory(
@@ -2236,9 +2237,8 @@ const Renderer = struct {
         var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(allocator, tints.len);
         errdefer textures.deinit(allocator);
         for (tints) |tint| {
-            const diffuse_copy = try allocator.alloc(u8, @intCast(width * height * channel_count));
+            const diffuse_copy = try allocator.dupe(u8, diffuse_data);
             defer allocator.free(diffuse_copy);
-            @memcpy(diffuse_copy, diffuse_data[0..diffuse_copy.len]);
 
             for (0..diffuse_copy.len / channel_count) |pixel| {
                 var r = &diffuse_copy[pixel * channel_count];
@@ -2303,7 +2303,7 @@ const Renderer = struct {
         } else {
             const pitch = width * channel_count;
             const surface = c.SDL_CreateRGBSurfaceFrom(
-                diffuse_data,
+                diffuse_data.ptr,
                 width,
                 height,
                 channel_count * bits_per_channel,

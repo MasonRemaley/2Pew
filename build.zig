@@ -1,9 +1,11 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -49,9 +51,9 @@ pub fn build(b: *std.Build) void {
     exe.addIncludePath("src");
 
     // XXX: right now this installs some data that's no longer needed at runtime, that won't be true
-    // once we create the bake step, this also may not need to be in src then
+    // once we create the bake step
     b.installDirectory(.{
-        .source_dir = "src/data",
+        .source_dir = "data",
         .install_dir = .prefix,
         .install_subdir = "data",
     });
@@ -82,7 +84,8 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // XXX: pull out into its own step or something that we can just call from here!
+    // XXX: pull this code out into its own step or something that we can put in library code
+    // XXX: organize other code into modules?
     // XXX: eventually do baking of things like tints here
     // XXX: allow asset groups for purposes of choosing random versions of things? e.g. an artist can
     // add a file to a group via a config file or folder structure, and it shows up in game without the
@@ -92,27 +95,75 @@ pub fn build(b: *std.Build) void {
     // XXX: allow speicfying the same input asset with different bake settings multiple times?
     // XXX: what about e.g. deleting an asset that wasn't yet released? we could have a way to mark them as such maye idk, on release
     // it can change whether they need to be persistent
-    // {
-    //     const bake_exe = b.addExecutable(.{
-    //         .name = "bake",
-    //         .root_source_file = .{ .path = "bake/main.zig" },
-    //         // XXX: set these?
-    //         .target = target,
-    //         .optimize = optimize,
-    //     });
+    // XXX: may eventually do something like foo.anim.zig and foo.bake.json? or just use those extensions? but can be
+    // dups if same name different types still for bake file so like foo.anim and foo.anim.bake I think is most readable! but
+    // is annoying that doesn't say json/zig for easier syntax highlighting, that'd be foo.anim.zig and foo.anim.bake.json
+    // can just config editors that way it's not a big deal...and will visually recognize/work with the formats etc don't need to specify.
+    // XXX: make sure we can do e.g. zig build bake to just bake, add stdout so we can see what's happening even if clear after each line
+    {
+        var copy_assets = b.addWriteFiles();
+        var index_bytes = ArrayListUnmanaged(u8){};
+        defer index_bytes.deinit(b.allocator);
 
-    //     const bake_run = b.addRunArtifact(bake_exe);
-    //     const baked_output = bake_run.addOutputFileArg("baked.zig");
+        try index_bytes.appendSlice(b.allocator, "pub const descriptors = &.{\n");
 
-    //     const bake_write = b.addWriteFiles();
-    //     bake_write.addCopyFileToSource(baked_output, "src/baked.zig");
-    //     bake_write.step.dependOn(&bake_run.step);
+        const BakeConfig = struct { id: []const u8 };
 
-    //     const bake_step = b.step("bake", "Bake the data files");
-    //     bake_step.dependOn(&bake_write.step);
+        // XXX: look into how the build runner parses build.zon, maybe do that instead of json here!
+        // XXX: cache the index in source control as well in something readable (.zon or .json) and use
+        // it as input when available to verify that assets weren't missing and such?
+        const extension = ".json";
+        const data_path = "data";
+        // XXX: don't use cwd here, is place build was run from!
+        var animations_iterable = try std.fs.cwd().makeOpenPathIterable(data_path, .{});
+        defer animations_iterable.close();
+        var walker = try animations_iterable.walk(b.allocator);
+        defer walker.deinit();
+        while (try walker.next()) |entry| {
+            if (entry.kind == .file) {
+                if (std.mem.endsWith(u8, entry.path, extension)) {
+                    var asset_path = try std.fmt.allocPrint(b.allocator, "{s}.zig", .{entry.path[0 .. entry.path.len - extension.len]});
+                    std.mem.replaceScalar(u8, asset_path, '\\', '/');
+                    var zig_in_path = try std.fmt.allocPrint(b.allocator, "{s}/{s}", .{ data_path, asset_path });
+                    var zig_out_path = try std.fmt.allocPrint(b.allocator, "data/{s}", .{asset_path});
 
-    //     exe.step.dependOn(bake_step);
-    // }
+                    _ = copy_assets.addCopyFile(.{ .path = zig_in_path }, zig_out_path);
+
+                    var file = try animations_iterable.dir.openFile(entry.path, .{});
+                    defer file.close();
+                    var source = try file.readToEndAlloc(b.allocator, 1000000);
+                    defer b.allocator.free(source);
+                    var config = try std.json.parseFromSlice(BakeConfig, b.allocator, source, .{});
+                    defer config.deinit();
+
+                    // XXX: can look into how build.zig.zon is loaded?
+                    try index_bytes.appendSlice(b.allocator,
+                        \\    .{
+                        \\        .id = "
+                    );
+                    try index_bytes.appendSlice(b.allocator, config.value.id);
+                    try index_bytes.appendSlice(b.allocator,
+                        \\",
+                        \\        .asset = @import("data/
+                    );
+                    try index_bytes.appendSlice(b.allocator, asset_path);
+                    try index_bytes.appendSlice(b.allocator,
+                        \\").asset,
+                        \\    },
+                        \\
+                    );
+                }
+            }
+        }
+        try index_bytes.appendSlice(b.allocator, "};\n");
+
+        const index_file = copy_assets.add("index.zig", index_bytes.items);
+
+        exe.step.dependOn(&copy_assets.step);
+        exe.addModule("asset_descriptors", b.createModule(.{
+            .source_file = index_file,
+        }));
+    }
 
     // Creates a step for unit testing.
     const exe_tests = b.addTest(.{

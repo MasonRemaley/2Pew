@@ -1,6 +1,6 @@
 const std = @import("std");
 
-fn Descriptor(comptime Asset: type) type {
+pub fn Descriptor(comptime Asset: type) type {
     return struct {
         id: []const u8,
         asset: Asset,
