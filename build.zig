@@ -1,5 +1,6 @@
 const std = @import("std");
-const BakeAssets = @import("bake/BakeAssets.zig");
+// XXX: move into engine?
+const BakeAssets = @import("src/bake/BakeAssets.zig");
 const Allocator = std.mem.Allocator;
 
 // Although this function looks imperative, note that its job is to
@@ -17,11 +18,13 @@ pub fn build(b: *std.Build) !void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    // XXX: I think I want separate build scripts for the game, engine, other games, this is
+    // gonna get too hard to follow quickly otherwise
     const exe = b.addExecutable(.{
         .name = "pew",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "src/game/src/game.zig" },
         .target = target,
         .optimize = optimize,
     });
@@ -33,6 +36,9 @@ pub fn build(b: *std.Build) !void {
     // https://github.com/MasonRemaley/2Pew/issues/2
     exe.want_lto = false;
 
+    var engine = b.createModule(.{
+        .source_file = .{ .path = "src/engine/engine.zig" },
+    });
     if (target.isNativeOs() and target.getOsTag() == .linux) {
         // The SDL package doesn't work for Linux yet, so we rely on system
         // packages for now.
@@ -44,16 +50,19 @@ pub fn build(b: *std.Build) !void {
             .optimize = .ReleaseFast,
         });
         exe.linkLibrary(zig_sdl.artifact("SDL2"));
+        // try engine.dependencies.put("zig_sdl", zig_sdl.module("zig_sdl"));
     }
 
+    exe.addModule("engine", engine);
+
     // TODO extract this into a proper zig package
-    exe.addCSourceFile("src/stb_image.c", &.{"-std=c99"});
-    exe.addIncludePath("src");
+    exe.addCSourceFile("src/game/src/stb_image.c", &.{"-std=c99"});
+    exe.addIncludePath("src/game/src");
 
     // XXX: right now this installs some data that's no longer needed at runtime, that won't be true
     // once we create the bake step
     b.installDirectory(.{
-        .source_dir = "data",
+        .source_dir = "src/game/data",
         .install_dir = .prefix,
         .install_subdir = "data",
     });
@@ -85,7 +94,7 @@ pub fn build(b: *std.Build) !void {
     run_step.dependOn(&run_cmd.step);
 
     // Bake the animations
-    const bake_animations = try BakeAssets.create(b, "data");
+    const bake_animations = try BakeAssets.create(b, "src/game/data");
     exe.step.dependOn(bake_animations.step);
     exe.addModule("animation_descriptors", b.createModule(.{
         .source_file = bake_animations.index,
