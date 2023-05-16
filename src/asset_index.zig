@@ -19,4 +19,4 @@ pub const Animation = struct {
 // being read/written by the build system etc. can do that as a next step though. it's possible it should actually be jsonfor
 // that purpose and then changed to zig after.
 pub const sprites = indexer.index(Sprite, @import("asset_descriptors/sprites.zig").descriptors);
-pub const animations = indexer.index(Animation, @import("asset_descriptors").descriptors);
+pub const animations = indexer.index(Animation, @import("animation_descriptors").descriptors);
