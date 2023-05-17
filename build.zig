@@ -39,6 +39,8 @@ pub fn build(b: *std.Build) !void {
     var engine = b.createModule(.{
         .source_file = .{ .path = "src/engine/engine.zig" },
     });
+    exe.addModule("engine", engine);
+
     if (target.isNativeOs() and target.getOsTag() == .linux) {
         // The SDL package doesn't work for Linux yet, so we rely on system
         // packages for now.
@@ -50,10 +52,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = .ReleaseFast,
         });
         exe.linkLibrary(zig_sdl.artifact("SDL2"));
-        // try engine.dependencies.put("zig_sdl", zig_sdl.module("zig_sdl"));
     }
-
-    exe.addModule("engine", engine);
 
     // TODO extract this into a proper zig package
     exe.addCSourceFile("src/game/src/stb_image.c", &.{"-std=c99"});
@@ -94,7 +93,7 @@ pub fn build(b: *std.Build) !void {
     run_step.dependOn(&run_cmd.step);
 
     // Bake the animations
-    const bake_animations = try BakeAssets.create(b, "src/game/data");
+    const bake_animations = try BakeAssets.create(b, "src/game/data", ".anim.zig");
     exe.step.dependOn(bake_animations.step);
     exe.addModule("animation_descriptors", b.createModule(.{
         .source_file = bake_animations.index,

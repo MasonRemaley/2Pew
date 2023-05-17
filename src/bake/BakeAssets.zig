@@ -2,6 +2,7 @@ const std = @import("std");
 const BakeAssets = @This();
 const Step = std.Build.Step;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const BakeConfig = struct { id: []const u8 };
 
 step: *Step,
 // XXX: naming index vs asset_descriptors?
@@ -24,62 +25,78 @@ index: std.Build.FileSource,
 // is annoying that doesn't say json/zig for easier syntax highlighting, that'd be foo.anim.zig and foo.anim.bake.json
 // can just config editors that way it's not a big deal...and will visually recognize/work with the formats etc don't need to specify.
 // XXX: make sure we can do e.g. zig build bake to just bake, add stdout so we can see what's happening even if clear after each line
-pub fn create(owner: *std.Build, data_path: []const u8) !BakeAssets {
+pub fn create(owner: *std.Build, data_path: []const u8, asset_extension: []const u8) !BakeAssets {
     var copy_assets = owner.addWriteFiles();
+
     var index_bytes = ArrayListUnmanaged(u8){};
     defer index_bytes.deinit(owner.allocator);
-
     try index_bytes.appendSlice(owner.allocator, "pub const descriptors = &.{\n");
 
-    const BakeConfig = struct { id: []const u8 };
-
-    // XXX: look into how the build runner parses build.zon, maybe do that instead of json here!
+    // XXX: look into how the build runner parses build.zon, maybe do that instead of json here! note that
+    // we may eventually want to have extra fields that are only read during baking not when just getting the id.
+    // though my thinking isn't clear on that part right now.
     // XXX: cache the index in source control as well in something readable (.zon or .json) and use
     // it as input when available to verify that assets weren't missing and such?
-    const extension = ".json";
-    // XXX: don't use cwd here, is place build was run from!
-    var assets_iterable = try std.fs.cwd().makeOpenPathIterable(data_path, .{});
+    const config_extension = ".json";
+    var data_path_absolute = try owner.build_root.join(owner.allocator, &.{data_path});
+    defer owner.allocator.free(data_path_absolute);
+    var assets_iterable = try std.fs.openIterableDirAbsolute(data_path_absolute, .{});
     defer assets_iterable.close();
     var walker = try assets_iterable.walk(owner.allocator);
     defer walker.deinit();
     while (try walker.next()) |entry| {
         if (entry.kind == .file) {
-            if (std.mem.endsWith(u8, entry.path, extension)) {
-                var asset_path = try std.fmt.allocPrint(owner.allocator, "{s}.zig", .{entry.path[0 .. entry.path.len - extension.len]});
-                std.mem.replaceScalar(u8, asset_path, '\\', '/');
-                var zig_in_path = try std.fmt.allocPrint(owner.allocator, "{s}/{s}", .{ data_path, asset_path });
-                var zig_out_path = try std.fmt.allocPrint(owner.allocator, "data/{s}", .{asset_path});
-
-                _ = copy_assets.addCopyFile(.{ .path = zig_in_path }, zig_out_path);
-
-                var file = try assets_iterable.dir.openFile(entry.path, .{});
-                defer file.close();
-                var source = try file.readToEndAlloc(owner.allocator, 1000000);
-                defer owner.allocator.free(source);
-                var config = try std.json.parseFromSlice(BakeConfig, owner.allocator, source, .{});
-                defer config.deinit();
-
-                // XXX: can look into how build.zig.zon is loaded?
-                try index_bytes.appendSlice(owner.allocator,
-                    \\    .{
-                    \\        .id = "
-                );
-                try index_bytes.appendSlice(owner.allocator, config.value.id);
-                try index_bytes.appendSlice(owner.allocator,
-                    \\",
-                    \\        .asset = @import("data/
-                );
-                try index_bytes.appendSlice(owner.allocator, asset_path);
-                try index_bytes.appendSlice(owner.allocator,
-                    \\").asset,
-                    \\    },
-                    \\
-                );
+            // Skip irrelevent files
+            if (!std.mem.endsWith(u8, entry.path, config_extension)) {
+                continue;
             }
+            if (!std.mem.endsWith(u8, entry.path[0 .. entry.path.len - config_extension.len], asset_extension)) {
+                continue;
+            }
+
+            // XXX: can't free these strings right..?
+            // Determine the file paths
+            var config_path_in = try std.fs.path.join(owner.allocator, &.{ data_path, entry.path });
+            // defer owner.allocator.free(config_path_in);
+            const asset_path_in = config_path_in[0 .. config_path_in.len - config_extension.len];
+            var asset_path_out = try std.fs.path.join(owner.allocator, &.{ "data", entry.path[0 .. entry.path.len - config_extension.len] });
+            // defer owner.allocator.free(asset_path_out);
+            std.mem.replaceScalar(u8, asset_path_out, '\\', '/');
+
+            // XXX: sometimes need to actually bake here instead of just copy--allow passing in a step that will be given the
+            // in and out paths?
+            // Copy the config to the output
+            _ = copy_assets.addCopyFile(.{ .path = asset_path_in }, asset_path_out);
+
+            // Parse the ID from the bake config
+            var file = try assets_iterable.dir.openFile(entry.path, .{});
+            defer file.close();
+            var source = try file.readToEndAlloc(owner.allocator, 1000000);
+            defer owner.allocator.free(source);
+            var config = try std.json.parseFromSlice(BakeConfig, owner.allocator, source, .{});
+            defer config.deinit();
+
+            // Write to the index
+            try index_bytes.appendSlice(owner.allocator,
+                \\    .{
+                \\        .id = "
+            );
+            try index_bytes.appendSlice(owner.allocator, config.value.id);
+            try index_bytes.appendSlice(owner.allocator,
+                \\",
+                \\        .asset = @import("
+            );
+            try index_bytes.appendSlice(owner.allocator, asset_path_out);
+            try index_bytes.appendSlice(owner.allocator,
+                \\").asset,
+                \\    },
+                \\
+            );
         }
     }
     try index_bytes.appendSlice(owner.allocator, "};\n");
 
+    // Store the index
     const index = copy_assets.add("index.zig", index_bytes.items);
 
     return .{
