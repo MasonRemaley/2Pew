@@ -2197,141 +2197,141 @@ const Renderer = struct {
         //     tint_mask_path = tint.mask_path;
         // }
         // XXX: ...
-        const diffuse_png = switch (config) {
+        const diffuse = switch (config) {
             .data => |data| data,
             .path => |path| try dir.readFileAlloc(allocator, path, 50 * 1024 * 1024),
         };
         defer switch (config) {
             .data => {},
-            .path => allocator.free(diffuse_png),
+            .path => allocator.free(diffuse),
         };
         // const tint_mask_png = if (tint_mask_path) |m|
         //     try dir.readFileAlloc(allocator, m, 50 * 1024 * 1024)
         // else
         //     null;
         // defer if (tint_mask_png) |m| allocator.free(m);
-        const tint_mask_png = diffuse_png;
+        const tint_mask_png = diffuse;
         // XXX: ...
-        return try spriteFromBytes(allocator, diffuse_png, tint_mask_png, sdl, tints, 0.0);
+        return try spriteFromBytes(allocator, diffuse, tint_mask_png, sdl, tints, 0.0);
     }
 
-    fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, sdl: *c.SDL_Renderer, tints: []const [3]u8, angle: f32) !Sprite {
-        var width: c_int = undefined;
-        var height: c_int = undefined;
+    fn spriteFromBytes(allocator: Allocator, diffuse: []const u8, png_recolor: ?[]const u8, sdl: *c.SDL_Renderer, tints: []const [3]u8, angle: f32) !Sprite {
+        // XXX: make a file for this format that does encoding and decoding, solves endianness issues, etc?
+        const width: u16 = @bitCast(diffuse[0..2].*);
+        const height: u16 = @bitCast(diffuse[2..4].*);
+        const diffuse_data = diffuse[4..];
         const channel_count = 4;
         const bits_per_channel = 8;
-        const diffuse_buffer = c.stbi_load_from_memory(
-            png_diffuse.ptr,
-            @intCast(png_diffuse.len),
-            &width,
-            &height,
-            null,
-            channel_count,
-        );
-        defer c.stbi_image_free(diffuse_buffer);
-        const diffuse_data = diffuse_buffer[0 .. @as(usize, @intCast(width)) * @as(usize, @intCast(height)) * channel_count];
-        var recolor_width: c_int = undefined;
-        var recolor_height: c_int = undefined;
-        const recolor_data = if (png_recolor != null) c.stbi_load_from_memory(
-            png_recolor.?.ptr,
-            @intCast(png_recolor.?.len),
-            &recolor_width,
-            &recolor_height,
-            null,
-            1,
-        ) else null;
-        defer if (recolor_data != null) c.stbi_image_free(recolor_data.?);
-        if (recolor_data != null) {
-            assert(width == recolor_width and height == recolor_height);
-        }
+        // var recolor_width: c_int = undefined;
+        // var recolor_height: c_int = undefined;
+        // const recolor_data = if (png_recolor != null) c.stbi_load_from_memory(
+        //     png_recolor.?.ptr,
+        //     @intCast(c_int, png_recolor.?.len),
+        //     &recolor_width,
+        //     &recolor_height,
+        //     null,
+        //     1,
+        // ) else null;
+        // defer if (recolor_data != null) c.stbi_image_free(recolor_data.?);
+        // if (recolor_data != null) {
+        //     assert(width == recolor_width and height == recolor_height);
+        // }
 
         var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(allocator, tints.len);
         errdefer textures.deinit(allocator);
-        for (tints) |tint| {
-            const diffuse_copy = try allocator.dupe(u8, diffuse_data);
-            defer allocator.free(diffuse_copy);
+        // for (tints) |tint| {
+        //     const diffuse_copy = try allocator.dupe(u8, diffuse_data);
+        //     defer allocator.free(diffuse_copy);
 
-            for (0..diffuse_copy.len / channel_count) |pixel| {
-                var r = &diffuse_copy[pixel * channel_count];
-                var g = &diffuse_copy[pixel * channel_count + 1];
-                var b = &diffuse_copy[pixel * channel_count + 2];
+        //     for (0..diffuse_copy.len / channel_count) |pixel| {
+        //         var r = &diffuse_copy[pixel * channel_count];
+        //         var g = &diffuse_copy[pixel * channel_count + 1];
+        //         var b = &diffuse_copy[pixel * channel_count + 2];
 
-                var color: [3]f32 = .{
-                    @as(f32, @floatFromInt(r.*)) / 255.0,
-                    @as(f32, @floatFromInt(g.*)) / 255.0,
-                    @as(f32, @floatFromInt(b.*)) / 255.0,
-                };
+        //         var color: [3]f32 = .{
+        //             @intToFloat(f32, r.*) / 255.0,
+        //             @intToFloat(f32, g.*) / 255.0,
+        //             @intToFloat(f32, b.*) / 255.0,
+        //         };
 
-                // Change gama
-                const gamma = 2.2;
-                for (&color) |*color_channel| {
-                    color_channel.* = math.pow(f32, color_channel.*, 1.0 / gamma);
-                }
+        //         // Change gama
+        //         const gamma = 2.2;
+        //         for (&color) |*color_channel| {
+        //             color_channel.* = math.pow(f32, color_channel.*, 1.0 / gamma);
+        //         }
 
-                // Convert to grayscale or determine recolor amount
-                var amount: f32 = 1.0;
-                if (recolor_data) |recolor| {
-                    amount = @as(f32, @floatFromInt(recolor[pixel])) / 255.0;
-                } else {
-                    var luminosity = 0.299 * color[0] + 0.587 * color[1] + 0.0722 * color[2] / 255.0;
-                    luminosity = math.pow(f32, luminosity, 1.0 / gamma);
-                    for (&color) |*color_channel| {
-                        color_channel.* = luminosity;
-                    }
-                }
+        //         // Convert to grayscale or determine recolor amount
+        //         var amount: f32 = 1.0;
+        //         if (recolor_data) |recolor| {
+        //             amount = @intToFloat(f32, recolor[pixel]) / 255.0;
+        //         } else {
+        //             var luminosity = 0.299 * color[0] + 0.587 * color[1] + 0.0722 * color[2] / 255.0;
+        //             luminosity = math.pow(f32, luminosity, 1.0 / gamma);
+        //             for (&color) |*color_channel| {
+        //                 color_channel.* = luminosity;
+        //             }
+        //         }
 
-                // Apply tint
-                for (&color, tint) |*color_channel, tint_channel| {
-                    var recolored = math.pow(f32, @as(f32, @floatFromInt(tint_channel)) / 255.0, 1.0 / gamma);
-                    color_channel.* = lerp(color_channel.*, color_channel.* * recolored, amount);
-                }
+        //         // Apply tint
+        //         for (&color, tint) |*color_channel, tint_channel| {
+        //             var recolored = math.pow(f32, @intToFloat(f32, tint_channel) / 255.0, 1.0 / gamma);
+        //             color_channel.* = lerp(color_channel.*, color_channel.* * recolored, amount);
+        //         }
 
-                // Change gamma back
-                for (&color) |*color_channel| {
-                    color_channel.* = math.pow(f32, color_channel.*, gamma);
-                }
+        //         // Change gamma back
+        //         for (&color) |*color_channel| {
+        //             color_channel.* = math.pow(f32, color_channel.*, gamma);
+        //         }
 
-                // Apply changes
-                r.* = @intFromFloat(color[0] * 255.0);
-                g.* = @intFromFloat(color[1] * 255.0);
-                b.* = @intFromFloat(color[2] * 255.0);
-            }
-            const pitch = width * channel_count;
-            const surface = c.SDL_CreateRGBSurfaceFrom(
-                diffuse_copy.ptr,
-                width,
-                height,
-                channel_count * bits_per_channel,
-                pitch,
-                0x000000ff,
-                0x0000ff00,
-                0x00ff0000,
-                0xff000000,
-            );
-            defer c.SDL_FreeSurface(surface);
-            textures.appendAssumeCapacity(c.SDL_CreateTextureFromSurface(sdl, surface) orelse
-                panic("unable to convert surface to texture", .{}));
-        } else {
-            const pitch = width * channel_count;
-            const surface = c.SDL_CreateRGBSurfaceFrom(
-                diffuse_data.ptr,
-                width,
-                height,
-                channel_count * bits_per_channel,
-                pitch,
-                0x000000ff,
-                0x0000ff00,
-                0x00ff0000,
-                0xff000000,
-            );
-            defer c.SDL_FreeSurface(surface);
-            try textures.append(allocator, c.SDL_CreateTextureFromSurface(sdl, surface) orelse
-                panic("unable to convert surface to texture", .{}));
-        }
+        //         // Apply changes
+        //         r.* = @floatToInt(u8, color[0] * 255.0);
+        //         g.* = @floatToInt(u8, color[1] * 255.0);
+        //         b.* = @floatToInt(u8, color[2] * 255.0);
+        //     }
+        //     const pitch = width * channel_count;
+        //     const surface = c.SDL_CreateRGBSurfaceFrom(
+        //         diffuse_copy.ptr,
+        //         width,
+        //         height,
+        //         channel_count * bits_per_channel,
+        //         pitch,
+        //         0x000000ff,
+        //         0x0000ff00,
+        //         0x00ff0000,
+        //         0xff000000,
+        //     );
+        //     defer c.SDL_FreeSurface(surface);
+        //     textures.appendAssumeCapacity(c.SDL_CreateTextureFromSurface(sdl, surface) orelse
+        //         panic("unable to convert surface to texture", .{}));
+        // } else {
+        const pitch = width * channel_count;
+        const surface = c.SDL_CreateRGBSurfaceFrom(
+            @ptrCast(@constCast(diffuse_data.ptr)),
+            // XXX: why do I need intcast here?
+            @intCast(width),
+            @intCast(height),
+            channel_count * bits_per_channel,
+            @intCast(pitch),
+            0x000000ff,
+            0x0000ff00,
+            0x00ff0000,
+            0xff000000,
+        );
+        defer c.SDL_FreeSurface(surface);
+        try textures.append(allocator, c.SDL_CreateTextureFromSurface(sdl, surface) orelse
+            panic("unable to convert surface to texture", .{}));
+        // }
+        _ = png_recolor;
         return .{
             .angle = angle,
             .tints = textures.items,
-            .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
+            .rect = .{
+                .x = 0,
+                .y = 0,
+                // XXX: why c_int?
+                .w = @intCast(width),
+                .h = @intCast(height),
+            },
         };
     }
 };

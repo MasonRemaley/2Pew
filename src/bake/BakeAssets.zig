@@ -40,6 +40,8 @@ index: std.Build.FileSource,
 // XXX: make sure we can do e.g. zig build bake to just bake, add stdout so we can see what's happening even if clear after each line
 // XXX: okay so to bake the different colors..I guess we'll make multiple json files?? or we can make it an array that
 // processes the same input multiple times? it's a bit confusing...think it through.
+// XXX: files seemingly never get DELETED from zig-out, is that expected..? seems like it could get us into
+// trouble.
 pub fn create(
     owner: *std.Build,
     data_path: []const u8,
@@ -98,7 +100,12 @@ pub fn create(
             // Store the data
             switch (storage) {
                 .import, .embed => _ = copy_assets.addCopyFile(processed_asset, asset_path_out),
-                .install => owner.installFile(asset_path_in, asset_path_out),
+                .install => {
+                    var install = owner.addInstallFile(processed_asset, asset_path_out);
+                    // XXX: does this make sense? we just need something to depend on it so it gets
+                    // done...
+                    copy_assets.step.dependOn(&install.step);
+                },
             }
 
             // Parse the ID from the bake config

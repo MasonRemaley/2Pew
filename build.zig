@@ -55,8 +55,8 @@ pub fn build(b: *std.Build) !void {
     }
 
     // TODO extract this into a proper zig package
-    exe.addCSourceFile("src/game/src/stb_image.c", &.{"-std=c99"});
-    exe.addIncludePath("src/game/src");
+    // exe.addCSourceFile("src/game/src/stb_image.c", &.{"-std=c99"});
+    // exe.addIncludePath("src/game/src");
 
     // XXX: right now this installs some data that's no longer needed at runtime, that won't be true
     // once we create the bake step
@@ -100,18 +100,26 @@ pub fn build(b: *std.Build) !void {
     }));
 
     // XXX: make an init that does this or no?
-    const noop = .{
+    const bake_sprite = .{
         .exe = b.addExecutable(.{
-            .name = "noop",
-            .root_source_file = .{ .path = "src/bake/NoOpTest.zig" },
+            .name = "bake-sprite",
+            .root_source_file = .{ .path = "src/game/bake/bake_sprite.zig" },
             // XXX: ...
             .target = target,
             .optimize = optimize,
         }),
         // XXX: don't include the . in these, make it automatic, so you can't leave it off
-        .output_extension = ".png",
+        .output_extension = ".sprite",
     };
-    const bake_sprites = try BakeAssets.create(b, "src/game/data", ".png", noop, .embed);
+    // XXX: only do here not on exe, and move code to here...but also don't store this in the bake
+    // library folder store it in like game/bake or something?
+    // TODO extract this into a proper zig package
+    bake_sprite.exe.addCSourceFile("src/game/src/stb_image.c", &.{"-std=c99"});
+    bake_sprite.exe.addIncludePath("src/game/src");
+    bake_sprite.exe.linkLibC(); // XXX: this IS needed on the game as well for sdl right?
+    // XXX: why does it work on embed but fail on install? and why are the installed files..
+    // hey! they're still pngs! lol
+    const bake_sprites = try BakeAssets.create(b, "src/game/data", ".png", bake_sprite, .embed);
     exe.step.dependOn(bake_sprites.step);
     exe.addModule("sprite_descriptors", b.createModule(.{
         .source_file = bake_sprites.index,

@@ -1,3 +1,9 @@
+const c = @cImport({
+    @cDefine("STBI_ONLY_PNG", "");
+    @cDefine("STBI_NO_STDIO", "");
+    @cInclude("stb_image.h");
+});
+
 // XXX: delete this or replace with real bake step once the basics work!
 // XXX: test reading stuff from the json eventually!
 // XXX: don't name file this way unless it's a struct
@@ -29,6 +35,39 @@ pub fn main() !void {
     const in_path = args[1];
     const out_path = args[2];
 
+    // XXX: is cwd correct here, or does running zig build from different places mess it up?
+    var dir = std.fs.cwd();
+
+    var png = try dir.readFileAlloc(allocator, in_path, 50 * 1024 * 1024);
+
+    // XXX: can also give it a custom allocator if we really want (or is there a way to just give a buffer?)
+    var width_u: c_int = undefined;
+    var height_u: c_int = undefined;
+    const channel_count = 4;
+    const decoded_array = c.stbi_load_from_memory(
+        png.ptr,
+        @intCast(png.len),
+        &width_u,
+        &height_u,
+        null,
+        channel_count,
+    );
+    defer c.stbi_image_free(decoded_array);
+
+    const width: u16 = @intCast(width_u);
+    const height: u16 = @intCast(height_u);
+    const len = @as(usize, width) * @as(usize, height) * @as(usize, channel_count);
+    const decoded = decoded_array[0..len];
+
+    var out_file = try dir.createFile(out_path, .{});
+    defer out_file.close();
+
+    // XXX: can/should I do this in one write?
+    // XXX: make not depend on endianness
+    try out_file.writeAll(&(@as([2]u8, @bitCast(width)) ++ @as([2]u8, @bitCast(height))));
+    try out_file.writeAll(decoded);
+
+    // XXX: we'll use this eventually for tinting
     // var file = try std.fs.openFileAbsolute(json_path, .{});
     // defer file.close();
     // var source = try file.readToEndAlloc(allocator, 1000000);
@@ -43,7 +82,5 @@ pub fn main() !void {
     // std.debug.print("output! {s}\n", .{out_path});
 
     // XXX: options?
-    // XXX: is cwd correct here, or does running zig build from different places mess it up?
-    var cwd = std.fs.cwd();
-    try cwd.copyFile(in_path, cwd, out_path, .{});
+    // try dir.copyFile(in_path, dir, out_path, .{});
 }
