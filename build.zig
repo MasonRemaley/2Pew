@@ -54,18 +54,6 @@ pub fn build(b: *std.Build) !void {
         exe.linkLibrary(zig_sdl.artifact("SDL2"));
     }
 
-    // TODO extract this into a proper zig package
-    // exe.addCSourceFile("src/game/src/stb_image.c", &.{"-std=c99"});
-    // exe.addIncludePath("src/game/src");
-
-    // XXX: right now this installs some data that's no longer needed at runtime, that won't be true
-    // once we create the bake step
-    // b.installDirectory(.{
-    //     .source_dir = "src/game/data",
-    //     .install_dir = .prefix,
-    //     .install_subdir = "data",
-    // });
-
     exe.override_dest_dir = .prefix;
     b.installArtifact(exe);
 
@@ -114,8 +102,8 @@ pub fn build(b: *std.Build) !void {
     // XXX: only do here not on exe, and move code to here...but also don't store this in the bake
     // library folder store it in like game/bake or something?
     // TODO extract this into a proper zig package
-    bake_sprite.exe.addCSourceFile("src/game/src/stb_image.c", &.{"-std=c99"});
-    bake_sprite.exe.addIncludePath("src/game/src");
+    bake_sprite.exe.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
+    bake_sprite.exe.addIncludePath("src/game/bake");
     bake_sprite.exe.linkLibC(); // XXX: this IS needed on the game as well for sdl right?
     // XXX: why does it work on embed but fail on install? and why are the installed files..
     // hey! they're still pngs! lol

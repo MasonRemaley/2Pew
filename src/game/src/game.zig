@@ -1,6 +1,6 @@
 const std = @import("std");
 const engine = @import("engine");
-const c = @import("c.zig");
+const c = engine.c;
 const panic = std.debug.panic;
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;

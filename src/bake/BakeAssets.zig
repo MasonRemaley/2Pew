@@ -24,7 +24,6 @@ index: std.Build.FileSource,
 
 // XXX: naming of file vs of other stuff that will be here?
 // XXX: organize other code into modules? separate build scripts..??
-// XXX: eventually do baking of things like tints here by making a format that stores layers
 // XXX: allow asset groups for purposes of choosing random versions of things? e.g. an artist can
 // add a file to a group via a config file or folder structure, and it shows up in game without the
 // game needing to modify internal arrays of things. may also be useful for things like animations?

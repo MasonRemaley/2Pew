@@ -1,3 +1,10 @@
+// XXX: eventually do baking of things like tints here by making a format that stores layers
+// XXX: >>> Or...just bake the recolor mask into the file so we don't have to ship 4x the amount
+// of data for something trivially computable! the png decoding and custom decisions around what
+// has the map and not are what we're trying to avoid, this interface works out basically the same
+// or slightly better since the game controls the color then! remember to assert that the images
+// are the same size.
+
 const c = @cImport({
     @cDefine("STBI_ONLY_PNG", "");
     @cDefine("STBI_NO_STDIO", "");
