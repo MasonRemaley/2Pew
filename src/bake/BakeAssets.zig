@@ -4,17 +4,18 @@ const Step = std.Build.Step;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const BakeConfig = struct { id: []const u8 };
 
-// XXX: CURRENT: Okay, next up is allowing for custom build steps to be inserted into here to do actual
-// baking. They'll take the current file as input, and provide an output path with a configured extension
-// and then feed that to the rest of this as before.
-// XXX: custom: *std.Build.CompileStep,
 // XXX: instead of writing index directly, accumulate in array that can be used for further
 // processing or combined with bake steps for files from other locations or baked in other ways
 // etc.
-pub const Baker = union(enum) {
+pub const StorageMode = union(enum) {
     install: void,
     import: void,
     embed: void,
+};
+
+pub const AssetProcessor = struct {
+    exe: *std.Build.CompileStep,
+    output_extension: []const u8,
 };
 
 step: *Step,
@@ -23,7 +24,7 @@ index: std.Build.FileSource,
 
 // XXX: naming of file vs of other stuff that will be here?
 // XXX: organize other code into modules? separate build scripts..??
-// XXX: eventually do baking of things like tints here
+// XXX: eventually do baking of things like tints here by making a format that stores layers
 // XXX: allow asset groups for purposes of choosing random versions of things? e.g. an artist can
 // add a file to a group via a config file or folder structure, and it shows up in game without the
 // game needing to modify internal arrays of things. may also be useful for things like animations?
@@ -37,7 +38,15 @@ index: std.Build.FileSource,
 // is annoying that doesn't say json/zig for easier syntax highlighting, that'd be foo.anim.zig and foo.anim.bake.json
 // can just config editors that way it's not a big deal...and will visually recognize/work with the formats etc don't need to specify.
 // XXX: make sure we can do e.g. zig build bake to just bake, add stdout so we can see what's happening even if clear after each line
-pub fn create(owner: *std.Build, data_path: []const u8, asset_extension: []const u8, baker: Baker) !BakeAssets {
+// XXX: okay so to bake the different colors..I guess we'll make multiple json files?? or we can make it an array that
+// processes the same input multiple times? it's a bit confusing...think it through.
+pub fn create(
+    owner: *std.Build,
+    data_path: []const u8,
+    asset_extension: []const u8,
+    processor: ?AssetProcessor,
+    storage: StorageMode,
+) !BakeAssets {
     var copy_assets = owner.addWriteFiles();
 
     var index_bytes = ArrayListUnmanaged(u8){};
@@ -75,12 +84,20 @@ pub fn create(owner: *std.Build, data_path: []const u8, asset_extension: []const
             // defer owner.allocator.free(config_path_in);
             const asset_path_in = config_path_in[0 .. config_path_in.len - config_extension.len];
             var asset_path_out = try std.fs.path.join(owner.allocator, &.{ "data", entry.path[0 .. entry.path.len - config_extension.len] });
-            // defer owner.allocator.free(asset_path_out);
+            // XXX: ... defer owner.allocator.free(asset_path_out); also gonna overwrite..weird pattern, make new var?
             std.mem.replaceScalar(u8, asset_path_out, '\\', '/');
 
-            // Perform the bake
-            switch (baker) {
-                .import, .embed => _ = copy_assets.addCopyFile(.{ .path = asset_path_in }, asset_path_out),
+            // Process the asset
+            var processed_asset = if (processor) |p| b: {
+                asset_path_out = try std.fmt.allocPrint(owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - asset_extension.len], p.output_extension });
+                const process = owner.addRunArtifact(p.exe);
+                process.addArg(asset_path_in);
+                break :b process.addOutputFileArg(asset_path_out);
+            } else std.Build.FileSource{ .path = asset_path_in };
+
+            // Store the data
+            switch (storage) {
+                .import, .embed => _ = copy_assets.addCopyFile(processed_asset, asset_path_out),
                 .install => owner.installFile(asset_path_in, asset_path_out),
             }
 
@@ -95,7 +112,7 @@ pub fn create(owner: *std.Build, data_path: []const u8, asset_extension: []const
             // Write to the index
             try std.fmt.format(index_bytes_writer, "    .{{\n", .{});
             try std.fmt.format(index_bytes_writer, "        .id = \"{s}\",\n", .{config.value.id});
-            switch (baker) {
+            switch (storage) {
                 .import => {
                     try std.fmt.format(index_bytes_writer, "        .asset = @import(\"{s}\").asset,\n", .{asset_path_out});
                 },
@@ -119,47 +136,3 @@ pub fn create(owner: *std.Build, data_path: []const u8, asset_extension: []const
         .index = index,
     };
 }
-
-// const std = @import("std");
-// // XXX: these deps okay..?
-// // const asset_index = @import("asset_index.zig");
-// // const asset_indexer = @import("asset_indexer.zig");
-// // const Animation = asset_index.Animation;
-// // const Descriptor = asset_indexer.Descriptor;
-
-// const BakeConfig = struct { id: []const u8 };
-
-// // XXX: move to main src, figure out how to isolate, maybe move some of the build logic into a function in here
-// // XXX: never free memory here it's a short lived process, just use a fixed buffer allocator from some pages or something
-// // XXX: this reader is buffered right?
-// pub fn main() !void {
-//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-//     const allocator = gpa.allocator();
-
-//     const args = try std.process.argsAlloc(allocator);
-//     defer std.process.argsFree(allocator, args);
-
-//     if (args.len != 4) {
-//         std.debug.panic("expected three arguments", .{});
-//     }
-
-//     const json_path = args[1];
-//     const zig_path = args[2];
-//     const out_path = args[3];
-
-//     var file = try std.fs.openFileAbsolute(json_path, .{});
-//     defer file.close();
-//     var source = try file.readToEndAlloc(allocator, 1000000);
-//     var tokens = std.json.TokenStream.init(source);
-//     const parse_options = .{ .allocator = allocator };
-//     var config = try std.json.parse(BakeConfig, &tokens, parse_options);
-//     defer std.json.parseFree(BakeConfig, config, parse_options);
-
-//     // XXX: rename to persistent_id so it's clear you shouldn't change it?
-//     std.debug.print("bake id {s}\n", .{config.id});
-//     std.debug.print("zig {s}\n", .{zig_path});
-//     std.debug.print("output! {s}\n", .{out_path});
-
-//     // XXX: options?
-//     try std.fs.copyFileAbsolute(zig_path, out_path, .{});
-// }

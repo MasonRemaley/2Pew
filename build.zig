@@ -93,13 +93,25 @@ pub fn build(b: *std.Build) !void {
     run_step.dependOn(&run_cmd.step);
 
     // Bake the animations
-    const bake_animations = try BakeAssets.create(b, "src/game/data", ".anim.zig", .import);
+    const bake_animations = try BakeAssets.create(b, "src/game/data", ".anim.zig", null, .import);
     exe.step.dependOn(bake_animations.step);
     exe.addModule("animation_descriptors", b.createModule(.{
         .source_file = bake_animations.index,
     }));
 
-    const bake_sprites = try BakeAssets.create(b, "src/game/data", ".png", .embed);
+    // XXX: make an init that does this or no?
+    const noop = .{
+        .exe = b.addExecutable(.{
+            .name = "noop",
+            .root_source_file = .{ .path = "src/bake/NoOpTest.zig" },
+            // XXX: ...
+            .target = target,
+            .optimize = optimize,
+        }),
+        // XXX: don't include the . in these, make it automatic, so you can't leave it off
+        .output_extension = ".png",
+    };
+    const bake_sprites = try BakeAssets.create(b, "src/game/data", ".png", noop, .embed);
     exe.step.dependOn(bake_sprites.step);
     exe.addModule("sprite_descriptors", b.createModule(.{
         .source_file = bake_sprites.index,
