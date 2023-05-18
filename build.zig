@@ -60,11 +60,11 @@ pub fn build(b: *std.Build) !void {
 
     // XXX: right now this installs some data that's no longer needed at runtime, that won't be true
     // once we create the bake step
-    b.installDirectory(.{
-        .source_dir = "src/game/data",
-        .install_dir = .prefix,
-        .install_subdir = "data",
-    });
+    // b.installDirectory(.{
+    //     .source_dir = "src/game/data",
+    //     .install_dir = .prefix,
+    //     .install_subdir = "data",
+    // });
 
     exe.override_dest_dir = .prefix;
     b.installArtifact(exe);
@@ -93,10 +93,16 @@ pub fn build(b: *std.Build) !void {
     run_step.dependOn(&run_cmd.step);
 
     // Bake the animations
-    const bake_animations = try BakeAssets.create(b, "src/game/data", ".anim.zig");
+    const bake_animations = try BakeAssets.create(b, "src/game/data", ".anim.zig", .import);
     exe.step.dependOn(bake_animations.step);
     exe.addModule("animation_descriptors", b.createModule(.{
         .source_file = bake_animations.index,
+    }));
+
+    const bake_sprites = try BakeAssets.create(b, "src/game/data", ".png", .embed);
+    exe.step.dependOn(bake_sprites.step);
+    exe.addModule("sprite_descriptors", b.createModule(.{
+        .source_file = bake_sprites.index,
     }));
 
     // Creates a step for unit testing.

@@ -1,13 +1,34 @@
 const std = @import("std");
 
-pub fn Descriptor(comptime Asset: type) type {
+// XXX: https://github.com/ziglang/zig/issues/1945
+pub const AssetSource = union(enum) {
+    // XXX: naming of these..?
+    value: type,
+    file: void,
+
+    fn instanceType(comptime self: @This()) type {
+        return switch (self) {
+            .value => |ty| ty,
+            .file => AssetFile,
+        };
+    }
+};
+
+pub const AssetFile = union(enum) {
+    path: []const u8,
+    data: []const u8,
+};
+
+pub fn Descriptor(comptime source: AssetSource) type {
     return struct {
         id: []const u8,
-        asset: Asset,
+        asset: source.instanceType(),
     };
 }
 
-pub fn index(comptime Asset: type, comptime descriptors: []const Descriptor(Asset)) type {
+pub fn index(comptime source: AssetSource, comptime descriptors: []const Descriptor(source)) type {
+    const Instance = source.instanceType();
+
     comptime var ids: [descriptors.len]std.builtin.Type.EnumField = undefined;
     for (descriptors, &ids, 0..) |descriptor, *id, i| {
         id.* = .{
@@ -30,7 +51,7 @@ pub fn index(comptime Asset: type, comptime descriptors: []const Descriptor(Asse
         },
     });
 
-    comptime var assets = std.EnumArray(Id_, Asset).initUndefined();
+    comptime var assets = std.EnumArray(Id_, Instance).initUndefined();
     for (descriptors, 0..) |descriptor, i| {
         assets.set(@enumFromInt(i), descriptor.asset);
     }
@@ -38,7 +59,7 @@ pub fn index(comptime Asset: type, comptime descriptors: []const Descriptor(Asse
     return struct {
         pub const Id = Id_;
 
-        pub fn get(id: Id) *const Asset {
+        pub fn get(id: Id) *const Instance {
             return assets.getPtr(id);
         }
     };

@@ -19,5 +19,6 @@ pub const Animation = struct {
 // XXX: delete manual decriptors once this works...though actually the index should be going into source I think!! and
 // being read/written by the build system etc. can do that as a next step though. it's possible it should actually be jsonfor
 // that purpose and then changed to zig after.
-pub const sprites = indexer.index(Sprite, @import("asset_descriptors/sprites.zig").descriptors);
-pub const animations = indexer.index(Animation, @import("animation_descriptors").descriptors);
+// pub const sprites = indexer.index(Sprite, @import("asset_descriptors/sprites.zig").descriptors);
+pub const sprites = indexer.index(.{ .file = {} }, @import("sprite_descriptors").descriptors);
+pub const animations = indexer.index(.{ .value = Animation }, @import("animation_descriptors").descriptors);

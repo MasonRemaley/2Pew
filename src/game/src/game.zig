@@ -2154,8 +2154,8 @@ const Renderer = struct {
     fn init(gpa: Allocator, sdl: *c.SDL_Renderer) !Renderer {
         const self_exe_dir_path = try std.fs.selfExeDirPathAlloc(gpa);
         defer gpa.free(self_exe_dir_path);
-        const assets_dir_path = try std.fs.path.join(gpa, &.{ self_exe_dir_path, "data" });
-        defer gpa.free(assets_dir_path);
+        const assets_dir_path = self_exe_dir_path; // // XXX: try std.fs.path.join(gpa, &.{ self_exe_dir_path, "data" });
+        // defer gpa.free(assets_dir_path);
         var dir = std.fs.openDirAbsolute(assets_dir_path, .{}) catch |err| {
             panic("unable to open assets directory '{s}': {s}", .{
                 assets_dir_path, @errorName(err),
@@ -2183,26 +2183,36 @@ const Renderer = struct {
     }
 
     fn loadSprite(allocator: Allocator, dir: std.fs.Dir, sdl: *c.SDL_Renderer, sprite_id: SpriteId) !Sprite {
-        const config = asset_index.sprites.get(sprite_id);
-        var tint_mask_path: ?[]const u8 = null;
+        const config = asset_index.sprites.get(sprite_id).*;
+        // var tint_mask_path: ?[]const u8 = null;
         var tints: []const [3]u8 = &.{};
-        if (config.tint) |tint| {
-            tints = &.{
-                .{ 16, 124, 196 },
-                .{ 237, 210, 64 },
-                .{ 224, 64, 237 },
-                .{ 83, 237, 64 },
-            };
-            tint_mask_path = tint.mask_path;
-        }
-        const diffuse_png = try dir.readFileAlloc(allocator, asset_index.sprites.get(sprite_id).path, 50 * 1024 * 1024);
-        defer allocator.free(diffuse_png);
-        const tint_mask_png = if (tint_mask_path) |m|
-            try dir.readFileAlloc(allocator, m, 50 * 1024 * 1024)
-        else
-            null;
-        defer if (tint_mask_png) |m| allocator.free(m);
-        return try spriteFromBytes(allocator, diffuse_png, tint_mask_png, sdl, tints, config.angle);
+        // XXX: ...
+        // if (false) |tint| {
+        //     tints = &.{
+        //         .{ 16, 124, 196 },
+        //         .{ 237, 210, 64 },
+        //         .{ 224, 64, 237 },
+        //         .{ 83, 237, 64 },
+        //     };
+        //     tint_mask_path = tint.mask_path;
+        // }
+        // XXX: ...
+        const diffuse_png = switch (config) {
+            .data => |data| data,
+            .path => |path| try dir.readFileAlloc(allocator, path, 50 * 1024 * 1024),
+        };
+        defer switch (config) {
+            .data => {},
+            .path => allocator.free(diffuse_png),
+        };
+        // const tint_mask_png = if (tint_mask_path) |m|
+        //     try dir.readFileAlloc(allocator, m, 50 * 1024 * 1024)
+        // else
+        //     null;
+        // defer if (tint_mask_png) |m| allocator.free(m);
+        const tint_mask_png = diffuse_png;
+        // XXX: ...
+        return try spriteFromBytes(allocator, diffuse_png, tint_mask_png, sdl, tints, 0.0);
     }
 
     fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, sdl: *c.SDL_Renderer, tints: []const [3]u8, angle: f32) !Sprite {
