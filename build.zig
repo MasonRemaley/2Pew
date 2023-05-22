@@ -105,9 +105,8 @@ pub fn build(b: *std.Build) !void {
     bake_sprite.exe.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
     bake_sprite.exe.addIncludePath("src/game/bake");
     bake_sprite.exe.linkLibC(); // XXX: this IS needed on the game as well for sdl right?
-    // XXX: why does it work on embed but fail on install? and why are the installed files..
-    // hey! they're still pngs! lol
-    const bake_sprites = try BakeAssets.create(b, "src/game/data", ".png", bake_sprite, .embed);
+    // XXX: which is faster for dev time?
+    const bake_sprites = try BakeAssets.create(b, "src/game/data", ".png", bake_sprite, .install);
     exe.step.dependOn(bake_sprites.step);
     exe.addModule("sprite_descriptors", b.createModule(.{
         .source_file = bake_sprites.index,

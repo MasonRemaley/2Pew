@@ -112,7 +112,11 @@ pub fn create(
             defer file.close();
             var source = try file.readToEndAlloc(owner.allocator, 1000000);
             defer owner.allocator.free(source);
-            var config = try std.json.parseFromSlice(BakeConfig, owner.allocator, source, .{});
+            const parse_options = .{
+                // XXX: make sure it's obvious what file caused the problem if this parse fails!
+                .ignore_unknown_fields = processor != null,
+            };
+            var config = try std.json.parseFromSlice(BakeConfig, owner.allocator, source, parse_options);
             defer config.deinit();
 
             // Write to the index
