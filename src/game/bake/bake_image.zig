@@ -29,6 +29,7 @@ const std = @import("std");
 // XXX: error on any unused masks?
 // XXX: add angle and bake in the change? can make it a 90 degree increment only sorta thing if that's easier--just
 // specify the up direction or something
+// XXX: remove img/ and anim/ prefixes from ids, not useful, also remove extensions..also organize to object instead of file type!
 const BakeConfig = struct {
     id: []const u8,
     // XXX: set kevin to 45 degrees to see if actually affects anything. make sure that editing json
@@ -42,7 +43,8 @@ const BakeConfig = struct {
     // easily assert that the sizes line up while baking at least not from here?
     // XXX: if we wantd to be able to do more..we'd need a way to communicate dependencies to the baker. idk if we
     // actually want that kinda complexity though.
-    degrees: f32 = 0.0,
+    // XXX: don't actually need degrees here, it's on sprite now
+    // degrees: f32 = 0.0,
     // XXX: have a luminosity_tint field that tints based on luminosity or something? but in general if there's a mask use it!
     // tint: ?struct {
     //     mask: ?[]const u8 = null,
@@ -51,6 +53,7 @@ const BakeConfig = struct {
 
 // XXX: allow writing out directly to where we want? or i guess we don't know the size yet..
 // but there's probably a way to read it!
+// XXX: only created cause i was loading more than one but maybe still useful?
 const Png = struct {
     const Self = @This();
 
@@ -125,23 +128,24 @@ pub fn main() !void {
     var decoded = Png.init(png);
     defer decoded.deinit();
 
+    // XXX: remove...
     // XXX: do all in block return single optional
-    var mask_path = try std.fmt.allocPrint(allocator, "{s}.mask.png", .{in_path[0 .. in_path.len - std.fs.path.extension(in_path).len]});
-    var mask_encoded: ?[]u8 = dir.readFileAlloc(allocator, mask_path, 50 * 1024 * 1024) catch |err| switch (err) {
-        // XXX: why need error prefix?
-        error.FileNotFound => null,
-        else => return err,
-    };
-    defer if (mask_encoded) |m| allocator.free(m);
-    var mask_decoded = if (mask_encoded) |m| Png.init(m) else null;
-    defer if (mask_decoded) |*m| m.deinit();
+    // var mask_path = try std.fmt.allocPrint(allocator, "{s}.mask.png", .{in_path[0 .. in_path.len - std.fs.path.extension(in_path).len]});
+    // var mask_encoded: ?[]u8 = dir.readFileAlloc(allocator, mask_path, 50 * 1024 * 1024) catch |err| switch (err) {
+    //     // XXX: why need error prefix?
+    //     error.FileNotFound => null,
+    //     else => return err,
+    // };
+    // defer if (mask_encoded) |m| allocator.free(m);
+    // var mask_decoded = if (mask_encoded) |m| Png.init(m) else null;
+    // defer if (mask_decoded) |*m| m.deinit();
 
-    // XXX: error handling...
-    if (mask_decoded) |m| {
-        if (m.width != decoded.width or m.height != decoded.height) {
-            @panic("dimensions of mask to not match");
-        }
-    }
+    // // XXX: error handling...
+    // if (mask_decoded) |m| {
+    //     if (m.width != decoded.width or m.height != decoded.height) {
+    //         @panic("dimensions of mask to not match");
+    //     }
+    // }
 
     // XXX: options?
     var out_file = try dir.createFile(out_path, .{});
@@ -169,11 +173,11 @@ pub fn main() !void {
     //     try out_file_writer.writeByte(0);
     // }
     // XXX: specify in degrees but convert to radians on bake?
-    const radians = std.math.degreesToRadians(f32, config.value.degrees);
-    try out_file_writer.writeAll(&@as([4]u8, @bitCast(radians)));
-    try out_file_writer.writeByte(if (mask_decoded == null) 0 else 1);
+    // const radians = std.math.degreesToRadians(f32, config.degrees);
+    // try out_file_writer.writeAll(&@bitCast([4]u8, radians));
+    // try out_file_writer.writeByte(if (mask_decoded == null) 0 else 1);
     try out_file_writer.writeAll(decoded.pixels);
-    if (mask_decoded) |m| {
-        try out_file_writer.writeAll(m.pixels);
-    }
+    // if (mask_decoded) |m| {
+    //     try out_file_writer.writeAll(m.pixels);
+    // }
 }

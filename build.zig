@@ -1,6 +1,7 @@
 const std = @import("std");
 // XXX: don't merge until build system PR (or alternative) is merged)
 // XXX: move into engine?
+// XXX: does deleting stuff update the build properly?
 const BakeAssets = @import("src/bake/BakeAssets.zig");
 const Allocator = std.mem.Allocator;
 
@@ -82,42 +83,35 @@ pub fn build(b: *std.Build) !void {
     run_step.dependOn(&run_cmd.step);
 
     // Bake images
-    // XXX: make an init that does this or no?
-    // XXX: only do here not on exe, and move code to here...but also don't store this in the bake
-    // library folder store it in like game/bake or something?
-    // TODO extract this into a proper zig package
-    // XXX: which is faster for dev time?
     var bake_images = BakeAssets.create(b);
+    defer bake_images.deinit();
     try bake_images.addAssets("src/game/data", ".png", .install, .{
         .exe = exe: {
-            var p = b.addExecutable(.{
+            var bake_image = b.addExecutable(.{
                 .name = "bake-image",
                 .root_source_file = .{ .path = "src/game/bake/bake_image.zig" },
                 // XXX: ...
                 .target = target,
                 .optimize = optimize,
             });
-            p.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
-            p.addIncludePath("src/game/bake");
-            p.linkLibC(); // XXX: this IS needed on the game as well for sdl right?
-            break :exe p;
+            bake_image.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
+            bake_image.addIncludePath("src/game/bake");
+            bake_image.linkLibC();
+            break :exe bake_image;
         },
         // XXX: don't include the . in these, make it automatic, so you can't leave it off
         .output_extension = ".sprite",
     });
-    defer bake_images.deinit();
     exe.addModule("image_descriptors", try bake_images.createModule());
 
     // XXX: make sure to make the win/header particle able to be tinted! we could also just set this
     // per sprite instance instead of per sprite asset and have it be the mask or not that's set on the
     // instance, idk.
-    // XXX: CURRENT: we can add multiple types of bakes to a bake step now!! so we just need to
-    // rename the pngs to .sprite.png so we can auto find them, and then make the ones that need
-    // extra options into just .png and then do .sprite.zig for those! and maybe iterate over and
-    // error if any are duplicated?
+    // XXX: maybe check that no .sprite.pngs are references from .sprite.zigs since that's probably a mistake?
     // Bake sprites
     var bake_sprites = BakeAssets.create(b);
-    try bake_sprites.addAssets("src/game/data", ".png", .import, .{
+    defer bake_sprites.deinit();
+    try bake_sprites.addAssets("src/game/data", ".sprite.png", .import, .{
         .exe = b.addExecutable(.{
             .name = "bake-sprite",
             .root_source_file = .{ .path = "src/game/bake/bake_sprite.zig" },
@@ -127,13 +121,19 @@ pub fn build(b: *std.Build) !void {
         }),
         .output_extension = ".sprite.zig",
     });
-    defer bake_sprites.deinit();
+    // XXX: add a baker for verification purposes: check image sizes, check that we don't depend on a .sprite.png since that's probably a mistake. note that we only need to load the header to check sizes!
+    // XXX: need to auto create the json files if missing...also need to depend on them properly so changing them
+    // triggers rebuilds when needed! and need to error on unused fields if the bake exe doesn't use them etc or require
+    // it use them idk
+    // XXX: too many extensions is annoying...just have one and require unique/add or modify to be .zig when needed?
+    // XXX: why are we outputting .sprite.sprite files..?
+    try bake_sprites.addAssets("src/game/data", ".sprite.zig", .import, null);
     exe.addModule("sprite_descriptors", try bake_sprites.createModule());
 
     // Bake animations
     var bake_animations = BakeAssets.create(b);
-    try bake_animations.addAssets("src/game/data", ".anim.zig", .import, null);
     defer bake_animations.deinit();
+    try bake_animations.addAssets("src/game/data", ".anim.zig", .import, null);
     exe.addModule("animation_descriptors", try bake_animations.createModule());
 
     // Creates a step for unit testing.

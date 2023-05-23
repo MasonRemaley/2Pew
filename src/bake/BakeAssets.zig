@@ -4,9 +4,6 @@ const Step = std.Build.Step;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const BakeConfig = struct { id: []const u8 };
 
-// XXX: instead of writing index directly, accumulate in array that can be used for further
-// processing or combined with bake steps for files from other locations or baked in other ways
-// etc.
 pub const StorageMode = union(enum) {
     install: void,
     import: void,
@@ -28,7 +25,6 @@ pub const Asset = struct {
 };
 
 write_file: *Step.WriteFile,
-// XXX: naming index vs asset_descriptors?
 assets: ArrayListUnmanaged(Asset),
 
 // XXX: require to specify whether it's a path or a import up front? or whatever that's called in game? or is
@@ -41,22 +37,14 @@ pub fn create(owner: *std.Build) BakeAssets {
 }
 
 // XXX: naming of file vs of other stuff that will be here?
-// XXX: organize other code into modules? separate build scripts..??
 // XXX: allow asset groups for purposes of choosing random versions of things? e.g. an artist can
 // add a file to a group via a config file or folder structure, and it shows up in game without the
 // game needing to modify internal arrays of things. may also be useful for things like animations?
 // XXX: asset packs for loading groups of assets together? (and verifying they exist?) if we make some of
 // this dynamic instead of static we may want the missing asset fallbacks again?
-// XXX: allow speicfying the same input asset with different bake settings multiple times?
 // XXX: what about e.g. deleting an asset that wasn't yet released? we could have a way to mark them as such maye idk, on release
 // it can change whether they need to be persistent
-// XXX: may eventually do something like foo.anim.zig and foo.bake.json? or just use those extensions? but can be
-// dups if same name different types still for bake file so like foo.anim and foo.anim.bake I think is most readable! but
-// is annoying that doesn't say json/zig for easier syntax highlighting, that'd be foo.anim.zig and foo.anim.bake.json
-// can just config editors that way it's not a big deal...and will visually recognize/work with the formats etc don't need to specify.
 // XXX: make sure we can do e.g. zig build bake to just bake, add stdout so we can see what's happening even if clear after each line
-// XXX: okay so to bake the different colors..I guess we'll make multiple json files?? or we can make it an array that
-// processes the same input multiple times? it's a bit confusing...think it through.
 // XXX: files seemingly never get DELETED from zig-out, is that expected..? seems like it could get us into
 // trouble.
 pub fn addAssets(
@@ -66,7 +54,6 @@ pub fn addAssets(
     storage: StorageMode,
     processor: ?AssetProcessor,
 ) !void {
-    // XXX: generate missing json files
     // XXX: look into how the build runner parses build.zon, maybe do that instead of json here! note that
     // we may eventually want to have extra fields that are only read during baking not when just getting the id.
     // though my thinking isn't clear on that part right now.

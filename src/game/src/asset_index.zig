@@ -1,12 +1,16 @@
 const engine = @import("engine");
 const indexer = engine.asset_indexer;
 
+pub const Tint = union(enum) {
+    none,
+    luminosity,
+    mask: images.Id,
+};
+
 pub const Sprite = struct {
     diffuse: images.Id,
-    angle: f32 = 0.0,
-    tint: ?struct {
-        mask_path: ?[]const u8 = null,
-    } = null,
+    degrees: f32 = 0.0,
+    tint: Tint = .none,
 };
 
 pub const Animation = struct {

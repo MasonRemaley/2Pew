@@ -682,7 +682,7 @@ fn update(
                                 .density = 0.001,
                             },
                             // TODO: ...
-                            // .sprite_renderer = .@"img/bullet/small.png",
+                            // .sprite_renderer = .@"bullet/small",
                         });
                         pos.add(dir.scaled(segment_len));
                     }
@@ -711,7 +711,7 @@ fn update(
                         },
                         .hook = hook,
                         // TODO: ...
-                        // .sprite_renderer = .@"img/bullet/small.png",
+                        // .sprite_renderer = .@"bullet/small",
                     });
                     for (0..(gg.live.?.springs.len)) |i| {
                         gg.live.?.springs[i] = entities.create(.{
@@ -784,11 +784,11 @@ fn update(
         while (it.next()) |entity| {
             var angle = entity.transform.angle_world_cached;
             var vel = V.unit(angle).scaled(entity.turret.projectile_speed).plus(entity.rb.vel);
-            var sprite: SpriteId = .@"img/bullet/small.png";
+            var sprite: SpriteId = .@"bullet/small";
             if (entity.turret.aim_opposite_movement) {
                 angle = entity.rb.vel.angle() + std.math.pi;
                 vel = V.zero;
-                sprite = .@"img/bullet/shiny.png";
+                sprite = .@"bullet/shiny";
             }
             const fire_pos = entity.transform.pos_world_cached.plus(V.unit(angle + entity.turret.angle).scaled(entity.turret.radius + entity.turret.projectile_radius));
             const ready = switch (entity.turret.cooldown) {
@@ -858,9 +858,9 @@ fn render(renderer: *Renderer, entities: *Entities, game: Game, delta_s: f32, fx
     // Draw stars
     for (game.stars) |star| {
         const sprite = renderer.sprites.get(switch (star.kind) {
-            .small => .@"img/star/small.png",
-            .large => .@"img/star/large.png",
-            .planet_red => .@"img/planet-red.png",
+            .small => .@"star/small",
+            .large => .@"star/large",
+            .planet_red => .@"planet/red",
         });
         const dst_rect: c.SDL_Rect = .{
             .x = star.x,
@@ -878,7 +878,7 @@ fn render(renderer: *Renderer, entities: *Entities, game: Game, delta_s: f32, fx
 
     // Draw ring
     {
-        const sprite = renderer.sprites.get(.@"img/ring.png");
+        const sprite = renderer.sprites.get(.ring);
         sdlAssertZero(c.SDL_RenderCopy(
             renderer.sdl,
             sprite.tints[0],
@@ -1034,7 +1034,7 @@ fn render(renderer: *Renderer, entities: *Entities, game: Game, delta_s: f32, fx
 
         for (game.teams, 0..) |team, team_index| {
             {
-                const sprite = renderer.sprites.get(.@"img/particle.png");
+                const sprite = renderer.sprites.get(.particle);
                 const pos = top_left.plus(.{
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = 0,
@@ -1348,15 +1348,15 @@ const Game = struct {
     };
 
     const shrapnel_sprites = [_]SpriteId{
-        .@"img/shrapnel/01.png",
-        .@"img/shrapnel/02.png",
-        .@"img/shrapnel/03.png",
+        .@"shrapnel/01",
+        .@"shrapnel/02",
+        .@"shrapnel/03",
     };
 
     const rock_sprites = [_]SpriteId{
-        .@"img/rock-a.png",
-        .@"img/rock-b.png",
-        .@"img/rock-c.png",
+        .@"rock/a",
+        .@"rock/b",
+        .@"rock/c",
     };
 
     fn createRanger(
@@ -1393,7 +1393,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite_renderer = .@"img/ship/ranger/diffuse.png",
+                .sprite_renderer = .ranger,
                 .turret = .{
                     .angle = 0,
                     .radius = radius,
@@ -1416,7 +1416,7 @@ const Game = struct {
                 .animate_on_input = AnimateOnInput{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = .@"ship/ranger/thrusters",
+                    .activated = .@"ranger/thrusters",
                     .deactivated = null,
                 },
                 .animation_player = .{
@@ -1463,7 +1463,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite_renderer = .@"img/ship/triangle/diffuse.png",
+                .sprite_renderer = .triangle,
                 .turret = .{
                     .angle = 0,
                     .radius = radius,
@@ -1486,7 +1486,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = .@"ship/triangle/thrusters",
+                    .activated = .@"triangle/thrusters",
                     .deactivated = null,
                 },
                 .animation_player = .{ .id = null },
@@ -1530,7 +1530,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite_renderer = .@"img/ship/militia/diffuse.png",
+                .sprite_renderer = .militia,
                 // .grapple_gun = .{
                 //     .radius = radius * 10.0,
                 //     .angle = 0,
@@ -1554,7 +1554,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = .@"ship/militia/thrusters",
+                    .activated = .@"militia/thrusters",
                     .deactivated = null,
                 },
                 .animation_player = .{
@@ -1601,7 +1601,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite_renderer = .@"img/ship/kevin/diffuse.png",
+                .sprite_renderer = .kevin,
                 .player_index = player_index,
                 .team_index = team_index,
             },
@@ -1653,7 +1653,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_forward,
                     .direction = .positive,
-                    .activated = .@"ship/kevin/thrusters",
+                    .activated = .@"kevin/thrusters",
                     .deactivated = null,
                 },
                 .animation_player = .{
@@ -1699,7 +1699,7 @@ const Game = struct {
                     .collision_damping = 0.4,
                     .layer = .vehicle,
                 },
-                .sprite_renderer = .@"img/ship/wendy/diffuse.png",
+                .sprite_renderer = .wendy,
                 .turret = .{
                     .radius = radius,
                     .angle = 0,
@@ -1724,7 +1724,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_y,
                     .direction = .positive,
-                    .activated = .@"ship/wendy/thrusters/left",
+                    .activated = .@"wendy/thrusters/left",
                     .deactivated = null,
                 },
                 .animation_player = .{
@@ -1743,7 +1743,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_y,
                     .direction = .negative,
-                    .activated = .@"ship/wendy/thrusters/right",
+                    .activated = .@"wendy/thrusters/right",
                     .deactivated = null,
                 },
                 .animation_player = .{
@@ -1762,7 +1762,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_x,
                     .direction = .negative,
-                    .activated = .@"ship/wendy/thrusters/top",
+                    .activated = .@"wendy/thrusters/top",
                     .deactivated = null,
                 },
                 .animation_player = .{
@@ -1781,7 +1781,7 @@ const Game = struct {
                 .animate_on_input = .{
                     .action = .thrust_x,
                     .direction = .positive,
-                    .activated = .@"ship/wendy/thrusters/bottom",
+                    .activated = .@"wendy/thrusters/bottom",
                     .deactivated = null,
                 },
                 .animation_player = .{
@@ -1943,11 +1943,11 @@ const Game = struct {
 
     fn shipLifeSprite(class: Ship.Class) SpriteId {
         return switch (class) {
-            .ranger => .@"img/ship/ranger/diffuse.png",
-            .militia => .@"img/ship/militia/diffuse.png",
-            .triangle => .@"img/ship/triangle/diffuse.png",
-            .kevin => .@"img/ship/kevin/diffuse.png",
-            .wendy => .@"img/ship/wendy/diffuse.png",
+            .ranger => .ranger,
+            .militia => .militia,
+            .triangle => .triangle,
+            .kevin => .kevin,
+            .wendy => .wendy,
         };
     }
 
@@ -2120,7 +2120,7 @@ const Game = struct {
                     .radius = 16,
                     .density = 0.001,
                 },
-                .sprite_renderer = .@"img/particle.png",
+                .sprite_renderer = .particle,
                 .team_index = team_index,
             });
         }
@@ -2193,36 +2193,44 @@ const Renderer = struct {
             .data => {},
             .path => allocator.free(diffuse_bytes),
         };
-        return try spriteFromBytes(allocator, diffuse_bytes, sdl);
+        const tint = switch (sprite.tint) {
+            .none => false,
+            .luminosity, .mask => true,
+        };
+        const mask_bytes = switch (sprite.tint) {
+            .mask => |mask| switch (asset_index.images.get(mask).*) {
+                .data => |data| data,
+                .path => |path| try dir.readFileAlloc(allocator, path, 50 * 1024 * 1024),
+            },
+            .luminosity, .none => null,
+        };
+        // XXX: better way to do this defer?
+        defer switch (sprite.tint) {
+            .mask => |mask| switch (asset_index.images.get(mask).*) {
+                .data => {},
+                .path => allocator.free(mask_bytes.?),
+            },
+            .luminosity, .none => {},
+        };
+        return try spriteFromBytes(
+            allocator,
+            diffuse_bytes,
+            mask_bytes,
+            tint,
+            std.math.degreesToRadians(f32, sprite.degrees),
+            sdl,
+        );
     }
 
-    fn spriteFromBytes(allocator: Allocator, diffuse: []const u8, sdl: *c.SDL_Renderer) !Sprite {
+    fn spriteFromBytes(allocator: Allocator, diffuse: []const u8, mask: ?[]const u8, apply_tint: bool, radians: f32, sdl: *c.SDL_Renderer) !Sprite {
         // XXX: make a file for this format that does encoding and decoding, solves endianness issues, etc?
         const width: u16 = @bitCast(diffuse[0..2].*);
         const height: u16 = @bitCast(diffuse[2..4].*);
         // XXX: does alignment matter for this? (could allocate aligned initially if we needed to!)
-        const angle: f32 = @bitCast(diffuse[4..8].*);
-        const tint_mode = diffuse[8];
-        const all_data = diffuse[9..];
+        const diffuse_pixels = diffuse[4..];
         const channel_count = 4;
         const bits_per_channel = 8;
-
-        // XXX: we could actually figure this out just from the length of the file, could just have a bool
-        // tint or no
-        var diffuse_data: []const u8 = undefined;
-        var mask_data: ?[]const u8 = null;
-        switch (tint_mode) {
-            0 => diffuse_data = all_data,
-            1 => {
-                diffuse_data = all_data[0 .. all_data.len / 2];
-                mask_data = all_data[all_data.len / 2 ..];
-                // XXX: ...
-                assert(diffuse_data.len == mask_data.?.len);
-                assert(4 * (diffuse_data.len / 4) == diffuse_data.len);
-                assert(width * height * 4 == diffuse_data.len);
-            },
-            else => unreachable,
-        }
+        assert(diffuse_pixels.len == @as(u32, width) * @as(u32, height) * @as(u32, channel_count)); // XXX: ...
 
         // XXX: ...
         const tints: [4][3]u8 = .{
@@ -2233,9 +2241,9 @@ const Renderer = struct {
         };
         var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(allocator, tints.len);
         errdefer textures.deinit(allocator);
-        if (tint_mode != 0) {
+        if (apply_tint) {
             for (tints) |tint| {
-                const diffuse_copy = try allocator.dupe(u8, diffuse_data);
+                const diffuse_copy = try allocator.dupe(u8, diffuse_pixels);
                 defer allocator.free(diffuse_copy);
 
                 for (0..diffuse_copy.len / channel_count) |pixel| {
@@ -2257,8 +2265,8 @@ const Renderer = struct {
 
                     // Convert to grayscale or determine recolor amount
                     var amount: f32 = 1.0;
-                    if (mask_data) |mask| {
-                        amount = @as(f32, @floatFromInt(mask[pixel * channel_count])) / 255.0;
+                    if (mask) |m| {
+                        amount = @as(f32, @floatFromInt(m[pixel * channel_count])) / 255.0;
                     } else {
                         var luminosity = 0.299 * color[0] + 0.587 * color[1] + 0.0722 * color[2] / 255.0;
                         luminosity = math.pow(f32, luminosity, 1.0 / gamma);
@@ -2302,7 +2310,7 @@ const Renderer = struct {
         } else {
             const pitch = width * channel_count;
             const surface = c.SDL_CreateRGBSurfaceFrom(
-                @ptrCast(@constCast(diffuse_data.ptr)),
+                @as(?*anyopaque, @ptrCast(@constCast(diffuse_pixels.ptr))),
                 // XXX: why do I need intcast here?
                 @intCast(width),
                 @intCast(height),
@@ -2318,7 +2326,7 @@ const Renderer = struct {
                 panic("unable to convert surface to texture", .{}));
         }
         return .{
-            .angle = angle,
+            .angle = radians,
             .tints = textures.items,
             .rect = .{
                 .x = 0,
