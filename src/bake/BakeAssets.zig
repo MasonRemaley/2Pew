@@ -18,9 +18,27 @@ pub const AssetProcessor = struct {
     output_extension: []const u8,
 };
 
-step: *Step,
+pub const Asset = struct {
+    id: []const u8,
+    data: union(enum) {
+        install: []const u8,
+        import: []const u8,
+        embed: []const u8,
+    },
+};
+
+write_file: *Step.WriteFile,
 // XXX: naming index vs asset_descriptors?
-index: std.Build.FileSource,
+assets: ArrayListUnmanaged(Asset),
+
+// XXX: require to specify whether it's a path or a import up front? or whatever that's called in game? or is
+// this fine?
+pub fn create(owner: *std.Build) BakeAssets {
+    return .{
+        .write_file = owner.addWriteFiles(),
+        .assets = ArrayListUnmanaged(Asset){},
+    };
+}
 
 // XXX: naming of file vs of other stuff that will be here?
 // XXX: organize other code into modules? separate build scripts..??
@@ -41,20 +59,13 @@ index: std.Build.FileSource,
 // processes the same input multiple times? it's a bit confusing...think it through.
 // XXX: files seemingly never get DELETED from zig-out, is that expected..? seems like it could get us into
 // trouble.
-pub fn create(
-    owner: *std.Build,
+pub fn addAssets(
+    self: *BakeAssets,
     data_path: []const u8,
     asset_extension: []const u8,
-    processor: ?AssetProcessor,
     storage: StorageMode,
-) !BakeAssets {
-    var copy_assets = owner.addWriteFiles();
-
-    var index_bytes = ArrayListUnmanaged(u8){};
-    defer index_bytes.deinit(owner.allocator);
-    var index_bytes_writer = index_bytes.writer(owner.allocator);
-    try std.fmt.format(index_bytes_writer, "pub const descriptors = &.{{\n", .{});
-
+    processor: ?AssetProcessor,
+) !void {
     // XXX: generate missing json files
     // XXX: look into how the build runner parses build.zon, maybe do that instead of json here! note that
     // we may eventually want to have extra fields that are only read during baking not when just getting the id.
@@ -63,11 +74,11 @@ pub fn create(
     // it as input when available to verify that assets weren't missing and such?
     // XXX: catch duplicate ids and such here?
     const config_extension = ".json";
-    var data_path_absolute = try owner.build_root.join(owner.allocator, &.{data_path});
-    defer owner.allocator.free(data_path_absolute);
+    var data_path_absolute = try self.write_file.step.owner.build_root.join(self.write_file.step.owner.allocator, &.{data_path});
+    defer self.write_file.step.owner.allocator.free(data_path_absolute);
     var assets_iterable = try std.fs.openIterableDirAbsolute(data_path_absolute, .{});
     defer assets_iterable.close();
-    var walker = try assets_iterable.walk(owner.allocator);
+    var walker = try assets_iterable.walk(self.write_file.step.owner.allocator);
     defer walker.deinit();
     while (try walker.next()) |entry| {
         if (entry.kind == .file) {
@@ -81,69 +92,90 @@ pub fn create(
 
             // XXX: can't free these strings right..?
             // Determine the file paths
-            var config_path_in = try std.fs.path.join(owner.allocator, &.{ data_path, entry.path });
-            // defer owner.allocator.free(config_path_in);
+            var config_path_in = try std.fs.path.join(self.write_file.step.owner.allocator, &.{ data_path, entry.path });
+            // defer self.write_file.step.owner.allocator.free(config_path_in);
             const asset_path_in = config_path_in[0 .. config_path_in.len - config_extension.len];
-            var asset_path_out = try std.fs.path.join(owner.allocator, &.{ "data", entry.path[0 .. entry.path.len - config_extension.len] });
-            // XXX: ... defer owner.allocator.free(asset_path_out); also gonna overwrite..weird pattern, make new var?
+            var asset_path_out = try std.fs.path.join(self.write_file.step.owner.allocator, &.{ "data", entry.path[0 .. entry.path.len - config_extension.len] });
+            // XXX: ... defer self.write_file.step.owner.allocator.free(asset_path_out); also gonna overwrite..weird pattern, make new var?
             std.mem.replaceScalar(u8, asset_path_out, '\\', '/');
 
             // Process the asset
             var processed_asset = if (processor) |p| b: {
-                asset_path_out = try std.fmt.allocPrint(owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - asset_extension.len], p.output_extension });
-                const process = owner.addRunArtifact(p.exe);
+                asset_path_out = try std.fmt.allocPrint(self.write_file.step.owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - asset_extension.len], p.output_extension });
+                const process = self.write_file.step.owner.addRunArtifact(p.exe);
                 process.addArg(asset_path_in);
                 break :b process.addOutputFileArg(asset_path_out);
             } else std.Build.FileSource{ .path = asset_path_in };
 
             // Store the data
             switch (storage) {
-                .import, .embed => _ = copy_assets.addCopyFile(processed_asset, asset_path_out),
+                .import, .embed => _ = self.write_file.addCopyFile(processed_asset, asset_path_out),
                 .install => {
-                    var install = owner.addInstallFile(processed_asset, asset_path_out);
+                    var install = self.write_file.step.owner.addInstallFile(processed_asset, asset_path_out);
                     // XXX: does this make sense? we just need something to depend on it so it gets
                     // done...
-                    copy_assets.step.dependOn(&install.step);
+                    self.write_file.step.dependOn(&install.step);
                 },
             }
 
             // Parse the ID from the bake config
             var file = try assets_iterable.dir.openFile(entry.path, .{});
             defer file.close();
-            var json_reader = std.json.reader(owner.allocator, file.reader());
+            var json_reader = std.json.reader(self.write_file.step.owner.allocator, file.reader());
             defer json_reader.deinit();
             // XXX: make sure it's obvious what file caused the problem if this parse fails! use the new
             // line number API too?
-            var config = try std.json.parseFromTokenSource(BakeConfig, owner.allocator, &json_reader, .{
+            var config = try std.json.parseFromTokenSource(BakeConfig, self.write_file.step.owner.allocator, &json_reader, .{
                 // XXX: have this be an option or keep it automatic?
                 .ignore_unknown_fields = processor != null,
             });
-            defer config.deinit();
+            // XXX: don't free if we're passing the id out...though could free when we free this maybe
+            // defer config.deinit();
 
             // Write to the index
-            try std.fmt.format(index_bytes_writer, "    .{{\n", .{});
-            try std.fmt.format(index_bytes_writer, "        .id = \"{s}\",\n", .{config.value.id});
-            switch (storage) {
-                .import => {
-                    try std.fmt.format(index_bytes_writer, "        .asset = @import(\"{s}\").asset,\n", .{asset_path_out});
+            try self.assets.append(self.write_file.step.owner.allocator, .{
+                // XXX: leaking so we don't free it too soon...
+                .id = try self.write_file.step.owner.allocator.dupe(u8, config.value.id),
+                .data = switch (storage) {
+                    .install => .{ .install = asset_path_out },
+                    .import => .{ .import = asset_path_out },
+                    .embed => .{ .embed = asset_path_out },
                 },
-                .embed => {
-                    try std.fmt.format(index_bytes_writer, "        .asset = .{{ .data = @embedFile(\"{s}\") }},\n", .{asset_path_out});
-                },
-                .install => {
-                    try std.fmt.format(index_bytes_writer, "        .asset = .{{ .path = \"{s}\" }},\n", .{asset_path_out});
-                },
-            }
-            try std.fmt.format(index_bytes_writer, "    }},\n", .{});
+            });
         }
     }
-    try std.fmt.format(index_bytes_writer, "}};\n", .{});
+}
 
-    // Store the index
-    const index = copy_assets.add("index.zig", index_bytes.items);
+pub fn deinit(self: *BakeAssets) void {
+    self.assets.deinit(self.write_file.step.owner.allocator);
+    self.* = undefined;
+}
 
-    return .{
-        .step = &copy_assets.step,
-        .index = index,
-    };
+pub fn createModule(self: *const BakeAssets) !*std.Build.Module {
+    var index_bytes = ArrayListUnmanaged(u8){};
+    var index_bytes_writer = index_bytes.writer(self.write_file.step.owner.allocator);
+    try std.fmt.format(index_bytes_writer, "pub const descriptors = &.{{\n", .{});
+
+    for (self.assets.items) |asset| {
+        try std.fmt.format(index_bytes_writer, "    .{{\n", .{});
+        // XXX: what if the id/such has a quote in it..??
+        try std.fmt.format(index_bytes_writer, "        .id = \"{s}\",\n", .{asset.id});
+        switch (asset.data) {
+            .import => |path| {
+                try std.fmt.format(index_bytes_writer, "        .asset = @import(\"{s}\").asset,\n", .{path});
+            },
+            .embed => |path| {
+                try std.fmt.format(index_bytes_writer, "        .asset = .{{ .data = @embedFile(\"{s}\") }},\n", .{path});
+            },
+            .install => |path| {
+                try std.fmt.format(index_bytes_writer, "        .asset = .{{ .path = \"{s}\" }},\n", .{path});
+            },
+        }
+        try std.fmt.format(index_bytes_writer, "    }},\n", .{});
+    }
+    try std.fmt.format(index_bytes_writer, "}};", .{});
+
+    return self.write_file.step.owner.createModule(.{
+        .source_file = self.write_file.add("index.zig", index_bytes.items),
+    });
 }

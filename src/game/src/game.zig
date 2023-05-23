@@ -2183,16 +2183,17 @@ const Renderer = struct {
     }
 
     fn loadSprite(allocator: Allocator, dir: std.fs.Dir, sdl: *c.SDL_Renderer, sprite_id: SpriteId) !Sprite {
-        const config = asset_index.sprites.get(sprite_id).*;
-        const diffuse = switch (config) {
+        const sprite = asset_index.sprites.get(sprite_id).*;
+        const diffuse_image = asset_index.images.get(sprite.diffuse);
+        const diffuse_bytes = switch (diffuse_image.*) {
             .data => |data| data,
             .path => |path| try dir.readFileAlloc(allocator, path, 50 * 1024 * 1024),
         };
-        defer switch (config) {
+        defer switch (diffuse_image.*) {
             .data => {},
-            .path => allocator.free(diffuse),
+            .path => allocator.free(diffuse_bytes),
         };
-        return try spriteFromBytes(allocator, diffuse, sdl);
+        return try spriteFromBytes(allocator, diffuse_bytes, sdl);
     }
 
     fn spriteFromBytes(allocator: Allocator, diffuse: []const u8, sdl: *c.SDL_Renderer) !Sprite {
