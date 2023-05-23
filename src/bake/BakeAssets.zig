@@ -110,13 +110,14 @@ pub fn create(
             // Parse the ID from the bake config
             var file = try assets_iterable.dir.openFile(entry.path, .{});
             defer file.close();
-            var source = try file.readToEndAlloc(owner.allocator, 1000000);
-            defer owner.allocator.free(source);
-            const parse_options = .{
-                // XXX: make sure it's obvious what file caused the problem if this parse fails!
+            var json_reader = std.json.reader(owner.allocator, file.reader());
+            defer json_reader.deinit();
+            // XXX: make sure it's obvious what file caused the problem if this parse fails! use the new
+            // line number API too?
+            var config = try std.json.parseFromTokenSource(BakeConfig, owner.allocator, &json_reader, .{
+                // XXX: have this be an option or keep it automatic?
                 .ignore_unknown_fields = processor != null,
-            };
-            var config = try std.json.parseFromSlice(BakeConfig, owner.allocator, source, parse_options);
+            });
             defer config.deinit();
 
             // Write to the index

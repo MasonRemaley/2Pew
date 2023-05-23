@@ -1,19 +1,18 @@
-// XXX: eventually do baking of things like tints here by making a format that stores layers
-// XXX: >>> Or...just bake the recolor mask into the file so we don't have to ship 4x the amount
-// of data for something trivially computable! the png decoding and custom decisions around what
-// has the map and not are what we're trying to avoid, this interface works out basically the same
-// or slightly better since the game controls the color then! remember to assert that the images
-// are the same size.
+// XXX: problem:
+// - this scheme depends on files without telling the build system
+// - we can just differentiate between images and sprites
+// - the problem with this is that we'd need to make way more json files,
+// one for each image, which is annoying. however...we could make like
+// .sprite.png files automatically be sprites AND images as a shortcut. if you wanna
+// combine multiple images then you gotta not.
+// - do we need to allow for multiple extensions, or do we need to allow for combining
+// indices? I mean both in the end but yeah figure out how to start on this!
 
 const c = @cImport({
     @cDefine("STBI_ONLY_PNG", "");
     @cDefine("STBI_NO_STDIO", "");
     @cInclude("stb_image.h");
 });
-
-// XXX: delete this or replace with real bake step once the basics work!
-// XXX: test reading stuff from the json eventually!
-// XXX: don't name file this way unless it's a struct
 
 const std = @import("std");
 // XXX: these deps okay..?
@@ -114,8 +113,9 @@ pub fn main() !void {
     // XXX: we'll use this eventually for tinting
     var json_file = try dir.openFile(json_path, .{});
     defer json_file.close();
-    var source = try json_file.readToEndAlloc(allocator, 1000000);
-    var config = try std.json.parseFromSlice(BakeConfig, allocator, source, .{});
+    var json_reader = std.json.reader(allocator, json_file.reader());
+    defer json_reader.deinit();
+    var config = try std.json.parseFromTokenSource(BakeConfig, allocator, &json_reader, .{});
     defer config.deinit();
 
     // Bake the texture
