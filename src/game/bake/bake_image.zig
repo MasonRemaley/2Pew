@@ -98,17 +98,14 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    if (args.len != 3) {
-        std.debug.panic("expected two arguments", .{});
+    if (args.len != 4) {
+        std.debug.panic("expected three arguments", .{});
     }
 
     const in_path = args[1];
-    const out_path = args[2];
-
-    // XXX: just pass in the json path as well...silly to have to do this in ever baker AND less
-    // encapsulated since it now depends on the outside calling it on files that line up
     // XXX: rename to config to options or bake options or bake config or such?
-    const json_path = try std.fmt.allocPrint(allocator, "{s}.json", .{in_path});
+    const json_path = args[2];
+    const out_path = args[3];
 
     // XXX: is cwd correct here, or does running zig build from different places mess it up?
     var dir = std.fs.cwd();

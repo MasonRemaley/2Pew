@@ -24,14 +24,18 @@ pub const Asset = struct {
     },
 };
 
-write_file: *Step.WriteFile,
+owner: *std.Build,
+cache_input: *Step.WriteFile,
+write_output: *Step.WriteFile,
 assets: ArrayListUnmanaged(Asset),
 
 // XXX: require to specify whether it's a path or a import up front? or whatever that's called in game? or is
 // this fine?
 pub fn create(owner: *std.Build) BakeAssets {
     return .{
-        .write_file = owner.addWriteFiles(),
+        .owner = owner,
+        .cache_input = owner.addWriteFiles(),
+        .write_output = owner.addWriteFiles(),
         .assets = ArrayListUnmanaged(Asset){},
     };
 }
@@ -61,11 +65,11 @@ pub fn addAssets(
     // it as input when available to verify that assets weren't missing and such?
     // XXX: catch duplicate ids and such here?
     const config_extension = ".json";
-    var data_path_absolute = try self.write_file.step.owner.build_root.join(self.write_file.step.owner.allocator, &.{data_path});
-    defer self.write_file.step.owner.allocator.free(data_path_absolute);
+    var data_path_absolute = try self.owner.build_root.join(self.owner.allocator, &.{data_path});
+    defer self.owner.allocator.free(data_path_absolute);
     var assets_iterable = try std.fs.openIterableDirAbsolute(data_path_absolute, .{});
     defer assets_iterable.close();
-    var walker = try assets_iterable.walk(self.write_file.step.owner.allocator);
+    var walker = try assets_iterable.walk(self.owner.allocator);
     defer walker.deinit();
     while (try walker.next()) |entry| {
         if (entry.kind == .file) {
@@ -77,52 +81,54 @@ pub fn addAssets(
                 continue;
             }
 
-            // XXX: can't free these strings right..?
             // Determine the file paths
-            var config_path_in = try std.fs.path.join(self.write_file.step.owner.allocator, &.{ data_path, entry.path });
-            // defer self.write_file.step.owner.allocator.free(config_path_in);
+            var config_path_in = try std.fs.path.join(self.owner.allocator, &.{ data_path, entry.path });
+            // defer self.owner.allocator.free(config_path_in); // XXX: ...
             const asset_path_in = config_path_in[0 .. config_path_in.len - config_extension.len];
-            var asset_path_out = try std.fs.path.join(self.write_file.step.owner.allocator, &.{ "data", entry.path[0 .. entry.path.len - config_extension.len] });
-            // XXX: ... defer self.write_file.step.owner.allocator.free(asset_path_out); also gonna overwrite..weird pattern, make new var?
+            var asset_path_out = try std.fs.path.join(self.owner.allocator, &.{ "data", entry.path[0 .. entry.path.len - config_extension.len] });
+            // XXX: ... defer self.owner.allocator.free(asset_path_out); also gonna overwrite..weird pattern, make new var?
             std.mem.replaceScalar(u8, asset_path_out, '\\', '/');
+
+            // XXX: make sure only stuff that needs to is getting rebuilt...
+            var config_cached = self.cache_input.addCopyFile(.{ .path = config_path_in }, config_path_in);
+            var asset_cached = self.cache_input.addCopyFile(.{ .path = asset_path_in }, asset_path_in);
 
             // Process the asset
             var processed_asset = if (processor) |p| b: {
-                asset_path_out = try std.fmt.allocPrint(self.write_file.step.owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - asset_extension.len], p.output_extension });
-                const process = self.write_file.step.owner.addRunArtifact(p.exe);
-                process.addArg(asset_path_in);
+                asset_path_out = try std.fmt.allocPrint(self.owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - asset_extension.len], p.output_extension });
+                const process = self.owner.addRunArtifact(p.exe);
+                process.addFileSourceArg(asset_cached);
+                process.addFileSourceArg(config_cached);
                 break :b process.addOutputFileArg(asset_path_out);
-            } else std.Build.FileSource{ .path = asset_path_in };
+            } else asset_cached;
 
             // Store the data
             switch (storage) {
-                .import, .embed => _ = self.write_file.addCopyFile(processed_asset, asset_path_out),
+                .import, .embed => _ = self.write_output.addCopyFile(processed_asset, asset_path_out),
                 .install => {
-                    var install = self.write_file.step.owner.addInstallFile(processed_asset, asset_path_out);
-                    // XXX: does this make sense? we just need something to depend on it so it gets
-                    // done...
-                    self.write_file.step.dependOn(&install.step);
+                    const install = self.owner.addInstallFile(processed_asset, asset_path_out);
+                    self.write_output.step.dependOn(&install.step);
                 },
             }
 
             // Parse the ID from the bake config
             var file = try assets_iterable.dir.openFile(entry.path, .{});
             defer file.close();
-            var json_reader = std.json.reader(self.write_file.step.owner.allocator, file.reader());
+            var json_reader = std.json.reader(self.owner.allocator, file.reader());
             defer json_reader.deinit();
             // XXX: make sure it's obvious what file caused the problem if this parse fails! use the new
             // line number API too?
-            var config = try std.json.parseFromTokenSource(BakeConfig, self.write_file.step.owner.allocator, &json_reader, .{
+            var config = try std.json.parseFromTokenSource(BakeConfig, self.owner.allocator, &json_reader, .{
                 // XXX: have this be an option or keep it automatic?
                 .ignore_unknown_fields = processor != null,
             });
             // XXX: don't free if we're passing the id out...though could free when we free this maybe
-            // defer config.deinit();
+            // defer std.json.parseFree(BakeConfig, self.owner.allocator, config);
 
             // Write to the index
-            try self.assets.append(self.write_file.step.owner.allocator, .{
-                // XXX: leaking so we don't free it too soon...
-                .id = try self.write_file.step.owner.allocator.dupe(u8, config.value.id),
+            try self.assets.append(self.owner.allocator, .{
+                // XXX: leaking to avoid freeing too early...
+                .id = try self.owner.allocator.dupe(u8, config.value.id),
                 .data = switch (storage) {
                     .install => .{ .install = asset_path_out },
                     .import => .{ .import = asset_path_out },
@@ -134,13 +140,13 @@ pub fn addAssets(
 }
 
 pub fn deinit(self: *BakeAssets) void {
-    self.assets.deinit(self.write_file.step.owner.allocator);
+    self.assets.deinit(self.owner.allocator);
     self.* = undefined;
 }
 
 pub fn createModule(self: *const BakeAssets) !*std.Build.Module {
     var index_bytes = ArrayListUnmanaged(u8){};
-    var index_bytes_writer = index_bytes.writer(self.write_file.step.owner.allocator);
+    var index_bytes_writer = index_bytes.writer(self.owner.allocator);
     try std.fmt.format(index_bytes_writer, "pub const descriptors = &.{{\n", .{});
 
     for (self.assets.items) |asset| {
@@ -162,7 +168,7 @@ pub fn createModule(self: *const BakeAssets) !*std.Build.Module {
     }
     try std.fmt.format(index_bytes_writer, "}};", .{});
 
-    return self.write_file.step.owner.createModule(.{
-        .source_file = self.write_file.add("index.zig", index_bytes.items),
+    return self.owner.createModule(.{
+        .source_file = self.write_output.add("index.zig", index_bytes.items),
     });
 }
