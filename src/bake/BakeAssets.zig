@@ -4,10 +4,10 @@ const Step = std.Build.Step;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const BakeConfig = struct { id: []const u8 };
 
-pub const StorageMode = union(enum) {
-    install: void,
-    import: void,
-    embed: void,
+pub const StorageMode = enum {
+    install,
+    import,
+    embed,
 };
 
 pub const AssetProcessor = struct {
