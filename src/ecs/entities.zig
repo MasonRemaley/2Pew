@@ -252,8 +252,8 @@ pub fn Entities(comptime registered_components: anytype) type {
                 return ?C;
             }
 
-            fn default_value(comptime _: ComponentTag, comptime _: type) ?*const anyopaque {
-                return &null;
+            fn default_value(comptime _: ComponentTag, comptime T: type) ?*const anyopaque {
+                return &@as(T, null);
             }
         });
         pub const ArchetypeChange = struct {
@@ -411,8 +411,8 @@ pub fn Entities(comptime registered_components: anytype) type {
                 return ?IteratorComponentDescriptor;
             }
 
-            fn default_value(comptime _: ComponentTag, comptime _: type) ?*const anyopaque {
-                return &null;
+            fn default_value(comptime _: ComponentTag, comptime T: type) ?*const anyopaque {
+                return &@as(T, null);
             }
         });
 
@@ -446,11 +446,12 @@ pub fn Entities(comptime registered_components: anytype) type {
                         return Result;
                     }
 
-                    fn default_value(comptime component: ComponentTag, comptime _: type) ?*const anyopaque {
+                    fn default_value(comptime component: ComponentTag, comptime T: type) ?*const anyopaque {
                         if (!required_components.isSet(component)) {
                             return null;
                         } else {
-                            return &null;
+                            _ = T;
+                            return null;
                         }
                     }
 
