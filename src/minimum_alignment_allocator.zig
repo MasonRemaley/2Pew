@@ -15,7 +15,7 @@ pub fn MinimumAlignmentAllocator(comptime min_alignment: u8) type {
         }
 
         fn adjustAlignment(log2_alignment: u8) u8 {
-            return std.math.max(log2_alignment, log2_min_alignment);
+            return @max(log2_alignment, log2_min_alignment);
         }
 
         fn alloc(ctx: *anyopaque, n: usize, log2_ptr_align: u8, ra: usize) ?[*]u8 {

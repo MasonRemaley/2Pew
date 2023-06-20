@@ -155,7 +155,7 @@ pub fn main() !void {
         const delta_rwa_bias = 0.05;
         const max_frame_time = 1.0 / 30.0;
         var last_delta_s = @intToFloat(f32, timer.lap()) / std.time.ns_per_s;
-        delta_s = lerp(delta_s, std.math.min(last_delta_s, max_frame_time), delta_rwa_bias);
+        delta_s = lerp(delta_s, @min(last_delta_s, max_frame_time), delta_rwa_bias);
         fx_loop_s = @mod(fx_loop_s + delta_s, max_fx_loop_s);
         if (profile) {
             std.debug.print("frame time: {d}ms ", .{last_delta_s * 1000.0});
@@ -289,7 +289,7 @@ fn update(
                         var shield_scale: f32 = 0.0;
                         if (entity.front_shield != null) {
                             var dot = V.unit(entity.transform.angle).dot(normal);
-                            shield_scale = std.math.max(dot, 0.0);
+                            shield_scale = @max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
                         if (damage >= 2) {
@@ -302,7 +302,7 @@ fn update(
                         var shield_scale: f32 = 0.0;
                         if (other.front_shield != null) {
                             var dot = V.unit(other.transform.angle).dot(normal);
-                            shield_scale = std.math.max(-dot, 0.0);
+                            shield_scale = @max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
                         if (damage >= 2) {
@@ -459,7 +459,7 @@ fn update(
 
     //         // TODO: min length 0 right now, could make min and max (before force) settable though?
     //         // const x = delta.length() - spring.length;
-    //         const x = std.math.max(delta.length() - entity.spring.length, 0.0);
+    //         const x = @max(delta.length() - entity.spring.length, 0.0);
     //         const spring_force = entity.spring.k * x;
 
     //         const relative_vel = end_rb.vel.dot(dir) - start_rb.vel.dot(dir);
@@ -597,12 +597,12 @@ fn update(
             var max_regen = entity.health.regen_ratio * entity.health.max_hp;
             var regen_speed = max_regen / entity.health.regen_s;
             if (entity.health.regen_cooldown_s <= 0.0 and entity.health.hp < max_regen) {
-                entity.health.hp = std.math.min(entity.health.hp + regen_speed * delta_s, max_regen);
+                entity.health.hp = @min(entity.health.hp + regen_speed * delta_s, max_regen);
             }
-            entity.health.regen_cooldown_s = std.math.max(entity.health.regen_cooldown_s - delta_s, 0.0);
+            entity.health.regen_cooldown_s = @max(entity.health.regen_cooldown_s - delta_s, 0.0);
 
             // Update invulnerability
-            entity.health.invulnerable_s = std.math.max(entity.health.invulnerable_s - delta_s, 0.0);
+            entity.health.invulnerable_s = @max(entity.health.invulnerable_s - delta_s, 0.0);
         }
     }
 

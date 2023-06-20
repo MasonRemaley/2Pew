@@ -23,8 +23,8 @@ pub fn SymmetricMatrix(comptime Enum: type, comptime Value: type) type {
             const a_int: usize = @enumToInt(a);
             const b_int: usize = @enumToInt(b);
 
-            const low = std.math.min(a_int, b_int);
-            const high = std.math.max(a_int, b_int);
+            const low: usize = @min(a_int, b_int);
+            const high: usize = @max(a_int, b_int);
 
             // Calculate the index (triangle number + offset into the row)
             const tri = high * (high + 1) / 2;

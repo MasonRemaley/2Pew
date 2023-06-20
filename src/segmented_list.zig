@@ -76,7 +76,7 @@ const Allocator = std.mem.Allocator;
 /// It supports preallocated elements, making it especially well suited when the expected maximum
 /// size is small. `prealloc_item_count` must be 0, or a power of 2.
 pub fn SegmentedList(comptime T: type, comptime prealloc_item_count: usize) type {
-    return SegmentedListFirstShelfCount(T, std.math.max(prealloc_item_count, 1), prealloc_item_count > 0);
+    return SegmentedListFirstShelfCount(T, @max(prealloc_item_count, 1), prealloc_item_count > 0);
 }
 
 pub fn SegmentedListFirstShelfCount(comptime T: type, comptime first_shelf_count: usize, comptime prealloc: bool) type {
@@ -264,7 +264,7 @@ pub fn SegmentedListFirstShelfCount(comptime T: type, comptime first_shelf_count
             while (i < end) {
                 const shelf_index = shelfIndex(i);
                 const copy_start = boxIndex(i, shelf_index);
-                const copy_end = std.math.min(shelfSize(shelf_index), copy_start + end - i);
+                const copy_end = @min(shelfSize(shelf_index), copy_start + end - i);
 
                 mem.copy(
                     T,
