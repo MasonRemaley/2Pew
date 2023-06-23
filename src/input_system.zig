@@ -34,7 +34,7 @@ pub fn init(comptime ActionT: type) type {
             pub fn update(self: *@This()) void {
                 for (&self.action_states.values) |*action_state| {
                     inline for (@typeInfo(Direction).Enum.fields) |field| {
-                        const direction = @intToEnum(Direction, field.value);
+                        const direction = @enumFromInt(Direction, field.value);
                         const phase = action_state.getPtr(direction);
                         switch (phase.*) {
                             .activated => phase.* = .active,
@@ -48,7 +48,7 @@ pub fn init(comptime ActionT: type) type {
             pub fn applyControlScheme(self: *@This(), control_scheme: *const ControlScheme, controllers: []?*c.SDL_GameController) void {
                 inline for (comptime std.meta.tags(Action)) |action| {
                     inline for (@typeInfo(Direction).Enum.fields) |field| {
-                        const direction = @intToEnum(Direction, field.value);
+                        const direction = @enumFromInt(Direction, field.value);
 
                         // Check if the keyboard or controller control is activated
                         const keyboard_action = @field(control_scheme.keyboard_scheme, @tagName(action));
@@ -105,8 +105,8 @@ pub fn init(comptime ActionT: type) type {
 
             pub fn getAxis(self: *const @This(), action: Action) f32 {
                 // TODO(mason): make most recent input take precedence on keyboard?
-                return @intToFloat(f32, @boolToInt(self.isAction(action, .positive, .active))) -
-                    @intToFloat(f32, @boolToInt(self.isAction(action, .negative, .active)));
+                return @floatFromInt(f32, @intFromBool(self.isAction(action, .positive, .active))) -
+                    @floatFromInt(f32, @intFromBool(self.isAction(action, .negative, .active)));
             }
 
             pub fn setAction(self: *@This(), action: Action, direction: Direction, phase: Phase) void {

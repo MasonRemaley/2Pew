@@ -91,25 +91,25 @@ pub fn init(comptime Entities: type) ?type {
 test "supported" {
     const expect = std.testing.expect;
 
-    try expect(init(ecs.entities.Entities(.{.parent = ?Handle})) != null);
-    try expect(init(ecs.entities.Entities(.{.parent = ?Handle, .y = f32})) != null);
-    try expect(init(ecs.entities.Entities(.{.parent = Handle, .y = f32})) == null);
-    try expect(init(ecs.entities.Entities(.{.parent = ?f32, .y = f32})) == null);
-    try expect(init(ecs.entities.Entities(.{.foo = ?Handle, .y = f32})) == null);
+    try expect(init(ecs.entities.Entities(.{ .parent = ?Handle })) != null);
+    try expect(init(ecs.entities.Entities(.{ .parent = ?Handle, .y = f32 })) != null);
+    try expect(init(ecs.entities.Entities(.{ .parent = Handle, .y = f32 })) == null);
+    try expect(init(ecs.entities.Entities(.{ .parent = ?f32, .y = f32 })) == null);
+    try expect(init(ecs.entities.Entities(.{ .foo = ?Handle, .y = f32 })) == null);
 }
 
 test "get parent" {
     const expectEqual = std.testing.expectEqual;
     var allocator = std.testing.allocator;
 
-    const Entities = ecs.entities.Entities(.{.parent = ?Handle });
+    const Entities = ecs.entities.Entities(.{ .parent = ?Handle });
     var entities = try Entities.init(allocator);
     defer entities.deinit();
     const parenting = init(Entities).?;
 
     const a = entities.create(.{});
-    const b = entities.create(.{.parent = a});
-    const c = entities.create(.{.parent = null});
+    const b = entities.create(.{ .parent = a });
+    const c = entities.create(.{ .parent = null });
 
     try expectEqual(parenting.get(&entities, a), null);
     try expectEqual(parenting.get(&entities, b).?, a);
@@ -121,7 +121,7 @@ test "set parent" {
     const expect = std.testing.expect;
     var allocator = std.testing.allocator;
 
-    const Entities = ecs.entities.Entities(.{.parent = ?Handle });
+    const Entities = ecs.entities.Entities(.{ .parent = ?Handle });
     var entities = try Entities.init(allocator);
     defer entities.deinit();
     const parenting = init(Entities).?;
@@ -162,19 +162,19 @@ test "remove orphans" {
     const expect = std.testing.expect;
     var allocator = std.testing.allocator;
 
-    const Entities = ecs.entities.Entities(.{.parent = ?Handle });
+    const Entities = ecs.entities.Entities(.{ .parent = ?Handle });
     var entities = try Entities.init(allocator);
     defer entities.deinit();
     const parenting = init(Entities).?;
 
     const keep = entities.create(.{});
     const root = entities.create(.{});
-    const root_child0 = entities.create(.{.parent = root});
-    const root_child1 = entities.create(.{.parent = root});
-    const root_child0_child0 = entities.create(.{.parent = root_child0});
-    const root_child0_child1 = entities.create(.{.parent = root_child0});
+    const root_child0 = entities.create(.{ .parent = root });
+    const root_child1 = entities.create(.{ .parent = root });
+    const root_child0_child0 = entities.create(.{ .parent = root_child0 });
+    const root_child0_child1 = entities.create(.{ .parent = root_child0 });
     const other_root = entities.create(.{});
-    const other_root_child = entities.create(.{.parent = other_root});
+    const other_root_child = entities.create(.{ .parent = other_root });
 
     entities.swapRemove(root_child0);
     entities.swapRemove(other_root);
@@ -195,15 +195,15 @@ test "iterator" {
     const expectEqual = std.testing.expectEqual;
     var allocator = std.testing.allocator;
 
-    const Entities = ecs.entities.Entities(.{.parent = ?Handle });
+    const Entities = ecs.entities.Entities(.{ .parent = ?Handle });
     var entities = try Entities.init(allocator);
     defer entities.deinit();
     const parenting = init(Entities).?;
 
     const a = entities.create(.{});
-    const b = entities.create(.{.parent = a});
-    const c = entities.create(.{.parent = b});
-    const d = entities.create(.{.parent = c});
+    const b = entities.create(.{ .parent = a });
+    const c = entities.create(.{ .parent = b });
+    const d = entities.create(.{ .parent = c });
 
     var iter = parenting.iterator(&entities, d);
     try expectEqual(iter.peek.?, d);

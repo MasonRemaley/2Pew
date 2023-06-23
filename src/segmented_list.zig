@@ -279,7 +279,7 @@ pub fn SegmentedListFirstShelfCount(comptime T: type, comptime first_shelf_count
         pub fn uncheckedAt(self: anytype, index: usize) AtType(@TypeOf(self)) {
             if (@sizeOf(T) == 0) {
                 // TODO: https://github.com/ziglang/zig/issues/3325
-                return @intToPtr(*T, 0xaaaaaaaaaaaaaaaa);
+                return @ptrFromInt(*T, 0xaaaaaaaaaaaaaaaa);
             }
 
             if (index < prealloc_count) {

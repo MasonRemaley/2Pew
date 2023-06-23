@@ -20,8 +20,8 @@ pub fn SymmetricMatrix(comptime Enum: type, comptime Value: type) type {
 
         fn index(a: Enum, b: Enum) usize {
             // Get the low and high indices
-            const a_int: usize = @enumToInt(a);
-            const b_int: usize = @enumToInt(b);
+            const a_int: usize = @intFromEnum(a);
+            const b_int: usize = @intFromEnum(b);
 
             const low: usize = @min(a_int, b_int);
             const high: usize = @max(a_int, b_int);

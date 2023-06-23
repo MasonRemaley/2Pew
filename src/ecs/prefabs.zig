@@ -408,7 +408,7 @@ test "patch all handles" {
     var handles = iter.next().?.handles.*;
     try expectEqual(iter.next(), null);
 
-    var expected = EntityHandle{ .index = 0, .generation = @intToEnum(EntityHandle.Generation, 0) };
+    var expected = EntityHandle{ .index = 0, .generation = @enumFromInt(EntityHandle.Generation, 0) };
     try expectEqual(handles.handle, expected);
     try expectEqual(handles.optional.?, expected);
     try expectEqual(handles.array[0], expected);

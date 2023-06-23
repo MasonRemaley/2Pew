@@ -28,13 +28,13 @@ pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type
 
         // TODO: support throwing it out when it wraps as well
         fn increment(self: *Self) void {
-            comptime assert(@enumToInt(Self.invalid) > 1);
+            comptime assert(@intFromEnum(Self.invalid) > 1);
             assert(self.* != .none);
             assert(self.* != .invalid);
 
-            self.* = @intToEnum(Self, @enumToInt(self.*) + 1);
+            self.* = @enumFromInt(Self, @intFromEnum(self.*) + 1);
             if (self.* == .none) {
-                self.* = @intToEnum(Self, 0);
+                self.* = @enumFromInt(Self, 0);
             }
         }
     };
@@ -82,7 +82,7 @@ pub fn SlotMap(comptime Item: type, comptime HandleT: type) type {
             for (slots.items.ptr[0..slots.capacity]) |*slot| {
                 slot.* = .{
                     .item = undefined,
-                    .generation = @intToEnum(Generation, 0),
+                    .generation = @enumFromInt(Generation, 0),
                 };
             }
 
@@ -178,11 +178,11 @@ test "slot map" {
     var sm = try SlotMap(u8, H).init(testing.allocator);
     defer sm.deinit(testing.allocator);
 
-    try testing.expect(sm.get(H{ .index = 0, .generation = @intToEnum(H.Generation, 0) }) == error.UseAfterFree);
+    try testing.expect(sm.get(H{ .index = 0, .generation = @enumFromInt(H.Generation, 0) }) == error.UseAfterFree);
 
     const a = try sm.create('a');
     const b = try sm.create('b');
-    try testing.expect(sm.get(H{ .index = 4, .generation = @intToEnum(H.Generation, 0) }) == error.UseAfterFree);
+    try testing.expect(sm.get(H{ .index = 4, .generation = @enumFromInt(H.Generation, 0) }) == error.UseAfterFree);
     const c = try sm.create('c');
     const d = try sm.create('d');
     const e = try sm.create('e');
@@ -226,20 +226,20 @@ test "slot map" {
     try testing.expect((try sm.get(f)).* == 'f');
     try testing.expect((try sm.get(g)).* == 'g');
 
-    try testing.expectEqual(H{ .index = 0, .generation = @intToEnum(H.Generation, 0) }, a);
-    try testing.expectEqual(H{ .index = 1, .generation = @intToEnum(H.Generation, 0) }, b);
-    try testing.expectEqual(H{ .index = 2, .generation = @intToEnum(H.Generation, 0) }, c);
-    try testing.expectEqual(H{ .index = 3, .generation = @intToEnum(H.Generation, 0) }, d);
-    try testing.expectEqual(H{ .index = 4, .generation = @intToEnum(H.Generation, 0) }, e);
-    try testing.expectEqual(H{ .index = 3, .generation = @intToEnum(H.Generation, 1) }, f);
-    try testing.expectEqual(H{ .index = 2, .generation = @intToEnum(H.Generation, 1) }, g);
+    try testing.expectEqual(H{ .index = 0, .generation = @enumFromInt(H.Generation, 0) }, a);
+    try testing.expectEqual(H{ .index = 1, .generation = @enumFromInt(H.Generation, 0) }, b);
+    try testing.expectEqual(H{ .index = 2, .generation = @enumFromInt(H.Generation, 0) }, c);
+    try testing.expectEqual(H{ .index = 3, .generation = @enumFromInt(H.Generation, 0) }, d);
+    try testing.expectEqual(H{ .index = 4, .generation = @enumFromInt(H.Generation, 0) }, e);
+    try testing.expectEqual(H{ .index = 3, .generation = @enumFromInt(H.Generation, 1) }, f);
+    try testing.expectEqual(H{ .index = 2, .generation = @enumFromInt(H.Generation, 1) }, g);
 
     var temp = g;
     for (0..253) |_| {
         try testing.expect(try sm.remove(temp) == 'g');
         temp = try sm.create('g');
     }
-    try testing.expectEqual(H{ .index = g.index, .generation = @intToEnum(H.Generation, 0) }, temp);
+    try testing.expectEqual(H{ .index = g.index, .generation = @enumFromInt(H.Generation, 0) }, temp);
 
     try testing.expect(sm.create('h') == error.OutOfMemory);
 
@@ -260,11 +260,11 @@ test "slot map" {
     const k = try sm.create('k');
     const l = try sm.create('l');
 
-    try testing.expectEqual(H{ .index = 0, .generation = @intToEnum(H.Generation, 1) }, h);
-    try testing.expectEqual(H{ .index = 1, .generation = @intToEnum(H.Generation, 1) }, i);
-    try testing.expectEqual(H{ .index = 2, .generation = @intToEnum(H.Generation, 1) }, j);
-    try testing.expectEqual(H{ .index = 3, .generation = @intToEnum(H.Generation, 2) }, k);
-    try testing.expectEqual(H{ .index = 4, .generation = @intToEnum(H.Generation, 1) }, l);
+    try testing.expectEqual(H{ .index = 0, .generation = @enumFromInt(H.Generation, 1) }, h);
+    try testing.expectEqual(H{ .index = 1, .generation = @enumFromInt(H.Generation, 1) }, i);
+    try testing.expectEqual(H{ .index = 2, .generation = @enumFromInt(H.Generation, 1) }, j);
+    try testing.expectEqual(H{ .index = 3, .generation = @enumFromInt(H.Generation, 2) }, k);
+    try testing.expectEqual(H{ .index = 4, .generation = @enumFromInt(H.Generation, 1) }, l);
 
     try testing.expect(sm.get(a) == error.UseAfterFree);
     try testing.expect(sm.get(b) == error.UseAfterFree);

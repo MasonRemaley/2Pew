@@ -169,11 +169,11 @@ pub fn Entities(comptime registered_components: anytype) type {
             setComponents(pointer, changes.add);
         }
 
-        pub fn getComponent(self: *const Self, entity: Handle, comptime component: ComponentTag) ?*component_types[@enumToInt(component)] {
+        pub fn getComponent(self: *const Self, entity: Handle, comptime component: ComponentTag) ?*component_types[@intFromEnum(component)] {
             return self.getComponentChecked(entity, component) catch unreachable;
         }
 
-        pub fn getComponentChecked(self: *const Self, entity: Handle, comptime component: ComponentTag) error{UseAfterFree}!?*component_types[@enumToInt(component)] {
+        pub fn getComponentChecked(self: *const Self, entity: Handle, comptime component: ComponentTag) error{UseAfterFree}!?*component_types[@intFromEnum(component)] {
             const entity_pointer = try self.handles.get(entity);
             return entity_pointer.archetype_list.getComponent(entity_pointer.index, component);
         }
@@ -202,7 +202,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         fn componentTag(comptime name: []const u8) ComponentTag {
             const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
             if (maybe_index) |index| {
-                return @intToEnum(ComponentTag, index);
+                return @enumFromInt(ComponentTag, index);
             } else {
                 @compileError("no registered component named '" ++ name ++ "'");
             }
@@ -228,7 +228,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         fn copyComponents(to: *const EntityPointer, from: EntityPointer, which: ComponentFlags) void {
             inline for (0..component_types.len) |i| {
-                const component = @intToEnum(ComponentTag, i);
+                const component = @enumFromInt(ComponentTag, i);
                 if (which.isSet(component)) {
                     to.archetype_list.getComponentUnchecked(to.index, component).* = from.archetype_list.getComponentUnchecked(from.index, component).*;
                 }
@@ -338,7 +338,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
 
             fn maskBit(component: ComponentTag) Int {
-                return @as(Int, 1) << @intCast(ShiftInt, @enumToInt(component));
+                return @as(Int, 1) << @intCast(ShiftInt, @intFromEnum(component));
             }
 
             pub fn isSet(self: ComponentFlags, component: ComponentTag) bool {
@@ -373,7 +373,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             var fields: [component_types.len]Type.StructField = undefined;
             var i: usize = 0;
             for (component_types, 0..) |comp_type, component_i| {
-                const component = @intToEnum(ComponentTag, component_i);
+                const component = @enumFromInt(ComponentTag, component_i);
                 if (!@hasDecl(Map, "skip") or !Map.skip(component)) {
                     const FieldType = Map.FieldType(component, comp_type);
                     fields[i] = Type.StructField{
@@ -493,7 +493,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                                 comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);
 
                                 comptime var component = componentTag(field.name);
-                                comptime var ComponentType = component_types[@enumToInt(component)];
+                                comptime var ComponentType = component_types[@intFromEnum(component)];
 
                                 const required = @field(descriptor, field.name) != null and !@field(descriptor, field.name).?.optional;
                                 const next_exists = required or self.archetype_list.?.archetype.isNameSet(field.name);
@@ -501,7 +501,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                                 if (next_exists) {
                                     if (@sizeOf(ComponentType) == 0) {
                                         // TODO: https://github.com/ziglang/zig/issues/3325
-                                        @field(item, field.name) = @intToPtr(*ComponentType, 0xaaaaaaaaaaaaaaaa);
+                                        @field(item, field.name) = @ptrFromInt(*ComponentType, 0xaaaaaaaaaaaaaaaa);
                                     } else {
                                         @field(item, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
                                     }
@@ -611,14 +611,14 @@ pub fn Entities(comptime registered_components: anytype) type {
                 return self.handles.constIterator(0);
             }
 
-            pub fn getComponent(self: *@This(), index: u32, comptime component: ComponentTag) ?*component_types[@enumToInt(component)] {
+            pub fn getComponent(self: *@This(), index: u32, comptime component: ComponentTag) ?*component_types[@intFromEnum(component)] {
                 if (!self.archetype.isSet(component)) {
                     return null;
                 }
                 return self.getComponentUnchecked(index, component);
             }
 
-            pub fn getComponentUnchecked(self: *@This(), index: u32, comptime component: ComponentTag) *component_types[@enumToInt(component)] {
+            pub fn getComponentUnchecked(self: *@This(), index: u32, comptime component: ComponentTag) *component_types[@intFromEnum(component)] {
                 return @field(self.comps, @tagName(component)).uncheckedAt(index);
             }
 
@@ -1112,7 +1112,7 @@ test "clear retaining capacity" {
 
         for (first_batch, second_batch) |first, second| {
             var expected = first;
-            expected.generation = @intToEnum(Handle.Generation, @enumToInt(expected.generation) + 1);
+            expected.generation = @enumFromInt(Handle.Generation, @intFromEnum(expected.generation) + 1);
             try std.testing.expectEqual(expected, second);
         }
 
@@ -1224,7 +1224,7 @@ test "limits" {
     // Add the max number of entities
     for (0..max_entities) |i| {
         const entity = entities.create(.{});
-        try std.testing.expectEqual(Handle{ .index = @intCast(Handle.Index, i), .generation = @intToEnum(Handle.Generation, 0) }, entity);
+        try std.testing.expectEqual(Handle{ .index = @intCast(Handle.Index, i), .generation = @enumFromInt(Handle.Generation, 0) }, entity);
         try created.append(entity);
     }
     try std.testing.expectError(error.OutOfMemory, entities.createChecked(.{}));
@@ -1245,7 +1245,7 @@ test "limits" {
     // Create a bunch of entities again
     for (0..max_entities) |i| {
         try std.testing.expectEqual(
-            Handle{ .index = @intCast(Handle.Index, i), .generation = @intToEnum(Handle.Generation, 1) },
+            Handle{ .index = @intCast(Handle.Index, i), .generation = @enumFromInt(Handle.Generation, 1) },
             entities.create(.{}),
         );
     }
@@ -1274,7 +1274,7 @@ test "safety" {
     try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(entity));
     try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(Handle{
         .index = 1,
-        .generation = @intToEnum(Handle.Generation, 0),
+        .generation = @enumFromInt(Handle.Generation, 0),
     }));
 }
 
