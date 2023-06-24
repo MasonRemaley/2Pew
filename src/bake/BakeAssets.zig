@@ -1,4 +1,5 @@
 const std = @import("std");
+const zon = @import("zon").zon;
 const BakeAssets = @This();
 const Step = std.Build.Step;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
@@ -112,23 +113,29 @@ pub fn addAssets(
             }
 
             // Parse the ID from the bake config
-            var file = try assets_iterable.dir.openFile(entry.path, .{});
-            defer file.close();
-            var json_reader = std.json.reader(self.owner.allocator, file.reader());
-            defer json_reader.deinit();
-            // XXX: make sure it's obvious what file caused the problem if this parse fails! use the new
-            // line number API too?
-            var config = try std.json.parseFromTokenSource(BakeConfig, self.owner.allocator, &json_reader, .{
-                // XXX: have this be an option or keep it automatic?
-                .ignore_unknown_fields = processor != null,
-            });
-            // XXX: don't free if we're passing the id out...though could free when we free this maybe
-            // defer std.json.parseFree(BakeConfig, self.owner.allocator, config);
+            // XXX: realloc from a fixed buffer allocaator each time?
+            var zon_source = try assets_iterable.dir.readFileAllocOptions(
+                self.owner.allocator,
+                entry.path,
+                128,
+                null,
+                @alignOf(u8),
+                0,
+            );
+            defer self.owner.allocator.free(zon_source);
+            // XXX: eventually log good errors if zon files are invalid!
+            // XXX: ignore unknown fields? we were doing that before so that we could pass extra
+            // args to the bake processor (only turning on the option when there was one but maybe
+            // should have been explicit.) I think maybe that sort of thing just belongs in e.g. sprite
+            // isntead of image though? still could be a useful feature?
+            const config = try zon.parseFromSlice(BakeConfig, self.owner.allocator, zon_source);
+            // XXX: would be cool if strings that didn't need to be werent' reallocated, may already be the case internally?
+            defer zon.parseFree(self.owner.allocator, config);
 
             // Write to the index
             try self.assets.append(self.owner.allocator, .{
-                // XXX: leaking to avoid freeing too early...
-                .id = try self.owner.allocator.dupe(u8, config.value.id),
+                // XXX: don't free if we're passing the id out...though could free when we free this maybe
+                .id = try self.owner.allocator.dupe(u8, config.id),
                 .data = switch (storage) {
                     .install => .{ .install = asset_path_out },
                     .import => .{ .import = asset_path_out },

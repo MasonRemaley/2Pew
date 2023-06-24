@@ -56,12 +56,6 @@ pub fn build(b: *std.Build) !void {
         exe.linkLibrary(zig_sdl.artifact("SDL2"));
     }
 
-    const zon = b.dependency("zon", .{
-        .target = target,
-        .optimize = .ReleaseFast,
-    });
-    exe.linkLibrary(zon.artifact("zon"));
-
     exe.override_dest_dir = .prefix;
     b.installArtifact(exe);
 
@@ -100,6 +94,7 @@ pub fn build(b: *std.Build) !void {
                 .target = target,
                 .optimize = optimize,
             });
+
             bake_image.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
             bake_image.addIncludePath("src/game/bake");
             bake_image.linkLibC();
@@ -117,14 +112,17 @@ pub fn build(b: *std.Build) !void {
     // Bake sprites
     var bake_sprites = BakeAssets.create(b);
     defer bake_sprites.deinit();
+    const bake_sprite_png_exe = b.addExecutable(.{
+        .name = "bake-sprite",
+        .root_source_file = .{ .path = "src/game/bake/bake_sprite_png.zig" },
+        // XXX: ...
+        .target = target,
+        .optimize = optimize,
+    });
+    const zon_dep = b.dependency("zon", .{ .target = target, .optimize = .ReleaseFast });
+    bake_sprite_png_exe.addModule("zon", zon_dep.builder.modules.get("zon").?);
     try bake_sprites.addAssets("src/game/data", ".sprite.png", .import, .{
-        .exe = b.addExecutable(.{
-            .name = "bake-sprite",
-            .root_source_file = .{ .path = "src/game/bake/bake_sprite_png.zig" },
-            // XXX: ...
-            .target = target,
-            .optimize = optimize,
-        }),
+        .exe = bake_sprite_png_exe,
         .output_extension = ".sprite.zig",
     });
     // XXX: add a baker for verification purposes: check image sizes, check that we don't depend on a .sprite.png since that's probably a mistake. note that we only need to load the header to check sizes!

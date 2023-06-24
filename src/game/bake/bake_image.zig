@@ -15,6 +15,7 @@ const c = @cImport({
 });
 
 const std = @import("std");
+// const zon = @import("zon");
 // XXX: these deps okay..?
 // const asset_index = @import("asset_index.zig");
 // const asset_indexer = @import("asset_indexer.zig");
@@ -104,19 +105,28 @@ pub fn main() !void {
 
     const in_path = args[1];
     // XXX: rename to config to options or bake options or bake config or such?
-    const json_path = args[2];
+    // const zon_path = args[2];
     const out_path = args[3];
 
     // XXX: is cwd correct here, or does running zig build from different places mess it up?
     var dir = std.fs.cwd();
 
     // XXX: we'll use this eventually for tinting
-    var json_file = try dir.openFile(json_path, .{});
-    defer json_file.close();
-    var json_reader = std.json.reader(allocator, json_file.reader());
-    defer json_reader.deinit();
-    var config = try std.json.parseFromTokenSource(BakeConfig, allocator, &json_reader, .{});
-    defer config.deinit();
+    // var zon_source = try dir.readFileAllocOptions(
+    //     allocator,
+    //     zon_path,
+    //     128,
+    //     null,
+    //     @alignOf(u8),
+    //     0,
+    // );
+    // defer allocator.free(zon_source);
+    // // XXX: show good errors on failure! does it already show filename from build system?
+    // const config = zon.parseFromSlice(BakeConfig, allocator, zon_source) catch |err| {
+    //     std.debug.print("failed to parse: {s}\n", zon_source);
+    //     return err;
+    // };
+    // defer zon.parseFree(allocator, config);
 
     // Bake the texture
     var png = try dir.readFileAlloc(allocator, in_path, 50 * 1024 * 1024);

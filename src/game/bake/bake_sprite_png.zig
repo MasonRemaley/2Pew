@@ -1,4 +1,5 @@
 const std = @import("std");
+const zon = @import("zon");
 
 const BakeConfig = struct {
     id: []const u8,
@@ -20,22 +21,26 @@ pub fn main() !void {
     // XXX: pass in th id directly so we don't need to parse if the build script already parsed that anyway?
     // XXX: kinda weird that the asset path is a file that doesn't exist? could change order and skip if doesn't
     // exist to reflect idk
-    const json_path = args[2];
+    const zon_path = args[2];
     const out_path = args[3];
 
     // XXX: is cwd correct here, or does running zig build from different places mess it up?
     var dir = std.fs.cwd();
 
     // XXX: we'll use this eventually for tinting
-    var json_file = try dir.openFile(json_path, .{});
-    defer json_file.close();
-    var json_reader = std.json.reader(allocator, json_file.reader());
-    defer json_reader.deinit();
-    var config = try std.json.parseFromTokenSource(BakeConfig, allocator, &json_reader, .{
-        // XXX: ?
-        .ignore_unknown_fields = true,
-    });
-    defer config.deinit();
+    // XXX: ignore unknown fields? pass in id directly vs passing in zon file? makes sense depending on if used or not i guess
+    var zon_source = try dir.readFileAllocOptions(
+        allocator,
+        zon_path,
+        128,
+        null,
+        @alignOf(u8),
+        0,
+    );
+    defer allocator.free(zon_source);
+    // XXX: show good errors on failure! does it already show filename from build system?
+    const config = try zon.parseFromSlice(BakeConfig, allocator, zon_source);
+    defer zon.parseFree(allocator, config);
 
     // XXX: options?
     var out_file = try dir.createFile(out_path, .{});
@@ -49,7 +54,7 @@ pub fn main() !void {
     );
     // XXX: have to escape quotes in the id...may also be also be a way to generate zon from zig
     // automatically which would be better!
-    try out_file_writer.writeAll(config.value.id);
+    try out_file_writer.writeAll(config.id);
     try out_file_writer.writeAll(
         \\",
         \\};
