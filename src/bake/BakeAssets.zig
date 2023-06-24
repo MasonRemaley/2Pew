@@ -64,7 +64,7 @@ pub fn addAssets(
     // XXX: cache the index in source control as well in something readable (.zon or .json) and use
     // it as input when available to verify that assets weren't missing and such?
     // XXX: catch duplicate ids and such here?
-    const config_extension = ".json";
+    const config_extension = ".zon";
     var data_path_absolute = try self.owner.build_root.join(self.owner.allocator, &.{data_path});
     defer self.owner.allocator.free(data_path_absolute);
     var assets_iterable = try std.fs.openIterableDirAbsolute(data_path_absolute, .{});

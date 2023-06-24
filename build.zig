@@ -56,6 +56,12 @@ pub fn build(b: *std.Build) !void {
         exe.linkLibrary(zig_sdl.artifact("SDL2"));
     }
 
+    const zon = b.dependency("zon", .{
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    exe.linkLibrary(zon.artifact("zon"));
+
     exe.override_dest_dir = .prefix;
     b.installArtifact(exe);
 
