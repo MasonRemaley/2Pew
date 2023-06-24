@@ -68,25 +68,50 @@ pub fn index(comptime source: AssetSource, comptime descriptors: []const Descrip
 test "basic index" {
     const expectEqual = std.testing.expectEqual;
 
-    const Asset = []const u8;
-    const asset_index = index(Asset, &.{
-        .{
-            .id = "foo",
-            .asset = "bar",
-        },
-        .{
-            .id = "baz",
-            .asset = "qux",
-        },
-    });
+    {
+        const asset_index = index(.file, &.{
+            .{
+                .id = "foo",
+                .asset = .{ .path = "bar" },
+            },
+            .{
+                .id = "baz",
+                .asset = .{ .data = "qux" },
+            },
+        });
 
-    // Check the generated enum
-    try expectEqual(@typeInfo(asset_index.Id).Enum.tag_type, u1);
-    try expectEqual(@typeInfo(asset_index.Id).Enum.fields.len, 2);
-    try expectEqual(@intFromEnum(asset_index.Id.foo), 0);
-    try expectEqual(@intFromEnum(asset_index.Id.baz), 1);
+        // Check the generated enum
+        try expectEqual(@typeInfo(asset_index.Id).Enum.tag_type, u1);
+        try expectEqual(@typeInfo(asset_index.Id).Enum.fields.len, 2);
+        try expectEqual(@intFromEnum(asset_index.Id.foo), 0);
+        try expectEqual(@intFromEnum(asset_index.Id.baz), 1);
 
-    // Check the generated index
-    try expectEqual(asset_index.get(.foo).*, "bar");
-    try expectEqual(asset_index.get(.baz).*, "qux");
+        // Check the generated index
+        try expectEqual(asset_index.get(.foo).path, "bar");
+        try expectEqual(asset_index.get(.baz).data, "qux");
+    }
+
+    {
+        const Asset = struct { x: u8 };
+        const asset_index = index(.{ .value = Asset }, &.{
+            .{
+                .id = "foo",
+                .asset = .{ .x = 10 },
+            },
+            .{
+                .id = "baz",
+                .asset = .{ .x = 20 },
+            },
+        });
+
+        // Check the generated enum
+        try expectEqual(@typeInfo(asset_index.Id).Enum.tag_type, u1);
+        try expectEqual(@typeInfo(asset_index.Id).Enum.fields.len, 2);
+        try expectEqual(@intFromEnum(asset_index.Id.foo), 0);
+        try expectEqual(@intFromEnum(asset_index.Id.baz), 1);
+
+        // Check the generated index
+        try expectEqual(asset_index.get(.foo).*, .{ .x = 10 });
+        try expectEqual(asset_index.get(.baz).*, .{ .x = 20 });
+    }
 }

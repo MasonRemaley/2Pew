@@ -71,6 +71,9 @@ const AnimationId = asset_index.animations.Id;
 // to a file.)
 const profile = false;
 
+// XXX: why when saying stuff is cached, does it list the same files multiple times? is it cause
+// of the input vs output? why is the animation listed like 10 times? we need more visibility into this system
+// lol
 pub fn main() !void {
     const gpa = std.heap.c_allocator;
 
@@ -2182,6 +2185,7 @@ const Renderer = struct {
         a.* = undefined;
     }
 
+    // XXX: is there a weird edge on the melee ship tint or is thatpart of the art?
     fn loadSprite(allocator: Allocator, dir: std.fs.Dir, sdl: *c.SDL_Renderer, sprite_id: SpriteId) !Sprite {
         const sprite = asset_index.sprites.get(sprite_id).*;
         const diffuse_image = asset_index.images.get(sprite.diffuse);
@@ -2435,4 +2439,9 @@ fn flash_off(entities: *const Entities, entity: EntityHandle) bool {
         }
     }
     return false;
+}
+
+test {
+    _ = @import("asset_index.zig");
+    _ = @import("Vec2d.zig");
 }

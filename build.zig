@@ -114,7 +114,7 @@ pub fn build(b: *std.Build) !void {
     try bake_sprites.addAssets("src/game/data", ".sprite.png", .import, .{
         .exe = b.addExecutable(.{
             .name = "bake-sprite",
-            .root_source_file = .{ .path = "src/game/bake/bake_sprite.zig" },
+            .root_source_file = .{ .path = "src/game/bake/bake_sprite_png.zig" },
             // XXX: ...
             .target = target,
             .optimize = optimize,
@@ -122,6 +122,8 @@ pub fn build(b: *std.Build) !void {
         .output_extension = ".sprite.zig",
     });
     // XXX: add a baker for verification purposes: check image sizes, check that we don't depend on a .sprite.png since that's probably a mistake. note that we only need to load the header to check sizes!
+    // To do that though, we need to be able to read the zig file from zig, which we can't currently do. So either it needs to be json
+    // that gets converted to zig, or, we need to figure out zon. zon is a much more attractive option.
     // XXX: need to auto create the json files if missing...also need to depend on them properly so changing them
     // triggers rebuilds when needed! and need to error on unused fields if the bake exe doesn't use them etc or require
     // it use them idk
@@ -137,8 +139,13 @@ pub fn build(b: *std.Build) !void {
     exe.addModule("animation_descriptors", try bake_animations.createModule());
 
     // Creates a step for unit testing.
-    const exe_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+    const game_tests = b.addTest(.{
+        .root_source_file = .{ .path = "src/game/src/game.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    const engine_tests = b.addTest(.{
+        .root_source_file = .{ .path = "src/engine/engine.zig" },
         .target = target,
         .optimize = optimize,
     });
@@ -158,5 +165,8 @@ pub fn build(b: *std.Build) !void {
     // the `zig build --help` menu, providing a way for the user to request
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&exe_tests.step);
+    const run_game_tests = b.addRunArtifact(game_tests);
+    const run_engine_tests = b.addRunArtifact(engine_tests);
+    test_step.dependOn(&run_game_tests.step);
+    test_step.dependOn(&run_engine_tests.step);
 }

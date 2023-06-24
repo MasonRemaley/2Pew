@@ -14,7 +14,7 @@ test {
     _ = @import("asset_indexer.zig");
     _ = @import("slot_map.zig");
     _ = @import("minimum_alignment_allocator.zig");
-    _ = ecs;
+    _ = @import("ecs/ecs.zig");
     _ = @import("segmented_list.zig");
     _ = @import("symmetric_matrix.zig");
 }
