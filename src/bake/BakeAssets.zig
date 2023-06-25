@@ -65,7 +65,7 @@ pub fn addAssets(
     // XXX: cache the index in source control as well in something readable (.zon or .json) and use
     // it as input when available to verify that assets weren't missing and such?
     // XXX: catch duplicate ids and such here?
-    const config_extension = ".zon";
+    const config_extension = ".bake.zon";
     var data_path_absolute = try self.owner.build_root.join(self.owner.allocator, &.{data_path});
     defer self.owner.allocator.free(data_path_absolute);
     var assets_iterable = try std.fs.openIterableDirAbsolute(data_path_absolute, .{});
@@ -162,7 +162,14 @@ pub fn createModule(self: *const BakeAssets) !*std.Build.Module {
         try std.fmt.format(index_bytes_writer, "        .id = \"{s}\",\n", .{asset.id});
         switch (asset.data) {
             .import => |path| {
-                try std.fmt.format(index_bytes_writer, "        .asset = @import(\"{s}\").asset,\n", .{path});
+                _ = path;
+                // XXX: can use @import again once we add support for that for zon!!
+                // XXX: also can allow installing these since zon can be loaded at runtime too! and then this step
+                // just gets combined with embed, it just embeds zon rather than the string?
+                // try std.fmt.format(index_bytes_writer, "        .asset = @import(\"{s}\").asset,\n", .{path});
+                // XXX: actually embedding the source is annoying, because we don't yet know the path, so lets
+                // implement install for this in the meantime and only implement import once we CAN do @import here.
+                unreachable;
             },
             .embed => |path| {
                 try std.fmt.format(index_bytes_writer, "        .asset = .{{ .data = @embedFile(\"{s}\") }},\n", .{path});
@@ -175,6 +182,7 @@ pub fn createModule(self: *const BakeAssets) !*std.Build.Module {
     }
     try std.fmt.format(index_bytes_writer, "}};", .{});
 
+    // XXX: this could also be zon!
     return self.owner.createModule(.{
         .source_file = self.write_output.add("index.zig", index_bytes.items),
     });

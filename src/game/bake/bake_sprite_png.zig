@@ -49,7 +49,7 @@ pub fn main() !void {
     // up front etc...
     var out_file_writer = out_file.writer();
     try out_file_writer.writeAll(
-        \\pub const asset = .{
+        \\.{
         \\    .diffuse = .@"
     );
     // XXX: have to escape quotes in the id...may also be also be a way to generate zon from zig
@@ -57,6 +57,6 @@ pub fn main() !void {
     try out_file_writer.writeAll(config.id);
     try out_file_writer.writeAll(
         \\",
-        \\};
+        \\}
     );
 }

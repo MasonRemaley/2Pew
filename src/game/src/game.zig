@@ -1,5 +1,6 @@
 const std = @import("std");
 const engine = @import("engine");
+const zon = @import("zon");
 const c = engine.c;
 const panic = std.debug.panic;
 const builtin = @import("builtin");
@@ -912,7 +913,7 @@ fn render(renderer: *Renderer, entities: *Entities, game: Game, delta_s: f32, fx
             }
 
             // Get the current frame
-            const animation = asset_index.animations.get(entity.animation_player.id.?);
+            const animation = renderer.animations.get(entity.animation_player.id.?);
             var frame_index: u32 = @intFromFloat(entity.animation_player.time_passed * animation.fps);
 
             // Apply looping
@@ -942,7 +943,7 @@ fn render(renderer: *Renderer, entities: *Entities, game: Game, delta_s: f32, fx
                 sprite.getTint(if (entity.team_index) |i| i.* else null),
                 null, // source rectangle
                 &dest_rect,
-                toDegrees(entity.transform.angle_world_cached + animation.angle + sprite.angle),
+                toDegrees(entity.transform.angle_world_cached + sprite.angle) + animation.degrees,
                 null, // center of angle
                 c.SDL_FLIP_NONE,
             ));
@@ -2153,6 +2154,8 @@ const Renderer = struct {
     sdl: *c.SDL_Renderer,
     dir: std.fs.Dir,
     sprites: std.EnumArray(SpriteId, Sprite),
+    // XXX: we could simplify things later by requiring these be embedded if we want
+    animations: std.EnumArray(AnimationId, asset_index.Animation),
 
     fn init(gpa: Allocator, sdl: *c.SDL_Renderer) !Renderer {
         const self_exe_dir_path = try std.fs.selfExeDirPathAlloc(gpa);
@@ -2172,11 +2175,30 @@ const Renderer = struct {
             sprites.set(id, sprite);
         }
 
+        // XXX: a little weird in terms of unecessarily copying when embedded/when to free?
+        var animations = std.EnumArray(AnimationId, asset_index.Animation).initUndefined();
+        inline for (@typeInfo(AnimationId).Enum.fields) |field| {
+            const id: AnimationId = @enumFromInt(field.value);
+            // XXX: helper that does this logic?
+            const animation_zon = switch (asset_index.animations.get(id).*) {
+                .data => |data| data,
+                .path => |path| try dir.readFileAllocOptions(gpa, path, 50 * 1024 * 1024, null, @alignOf(u8), 0),
+            };
+            defer switch (asset_index.animations.get(id).*) {
+                .data => {},
+                .path => gpa.free(animation_zon),
+            };
+            // XXX: is error impossible at this point?
+            const animation = try zon.parseFromSlice(asset_index.Animation, gpa, animation_zon);
+            animations.set(id, animation);
+        }
+
         return .{
             .gpa = gpa,
             .sdl = sdl,
             .dir = dir,
             .sprites = sprites,
+            .animations = animations,
         };
     }
 
@@ -2187,7 +2209,23 @@ const Renderer = struct {
 
     // XXX: is there a weird edge on the melee ship tint or is thatpart of the art?
     fn loadSprite(allocator: Allocator, dir: std.fs.Dir, sdl: *c.SDL_Renderer, sprite_id: SpriteId) !Sprite {
-        const sprite = asset_index.sprites.get(sprite_id).*;
+        const sprite_zon = switch (asset_index.sprites.get(sprite_id).*) {
+            .data => |data| data,
+            .path => |path| try dir.readFileAllocOptions(allocator, path, 50 * 1024 * 1024, null, @alignOf(u8), 0),
+        };
+        defer switch (asset_index.sprites.get(sprite_id).*) {
+            .data => {},
+            .path => allocator.free(sprite_zon),
+        };
+
+        // XXX: is error impossible at this point?
+        var ast = try std.zig.Ast.parse(allocator, sprite_zon, .zon);
+        defer ast.deinit(allocator);
+        assert(ast.errors.len == 0);
+        var status: zon.Status = .success;
+        const sprite = zon.parseFromAst(asset_index.Sprite, allocator, &ast, &status) catch |err|
+            std.debug.panic("err: {s} {} '{}'", .{ asset_index.sprites.get(sprite_id).path, err, status });
+        defer zon.parseFree(allocator, sprite);
         const diffuse_image = asset_index.images.get(sprite.diffuse);
         const diffuse_bytes = switch (diffuse_image.*) {
             .data => |data| data,

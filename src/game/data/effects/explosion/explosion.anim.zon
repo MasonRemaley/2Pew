@@ -1,4 +1,4 @@
-pub const asset = .{
+.{
     .frames = &.{
         .@"explosion/01",
         .@"explosion/02",
@@ -14,5 +14,5 @@ pub const asset = .{
         .@"explosion/12",
     },
     .fps = 30,
-    .angle = 0.0,
-};
+    .degrees = 0.0,
+}

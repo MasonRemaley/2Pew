@@ -2,6 +2,7 @@ const std = @import("std");
 // XXX: don't merge until build system PR (or alternative) is merged)
 // XXX: move into engine?
 // XXX: does deleting stuff update the build properly?
+// XXX: says installing while running lol...
 const BakeAssets = @import("src/bake/BakeAssets.zig");
 const Allocator = std.mem.Allocator;
 
@@ -20,6 +21,8 @@ pub fn build(b: *std.Build) !void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const zon = b.dependency("zon", .{ .target = target, .optimize = .ReleaseFast }).module("zon");
+
     // XXX: I think I want separate build scripts for the game, engine, other games, this is
     // gonna get too hard to follow quickly otherwise
     const exe = b.addExecutable(.{
@@ -31,17 +34,18 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    var engine = b.createModule(.{
+        .source_file = .{ .path = "src/engine/engine.zig" },
+    });
+    exe.addModule("engine", engine);
+    exe.addModule("zon", zon);
+
     const use_llvm = b.option(bool, "use-llvm", "use zig's llvm backend");
     exe.use_llvm = use_llvm;
     exe.use_lld = use_llvm;
 
     // https://github.com/MasonRemaley/2Pew/issues/2
     exe.want_lto = false;
-
-    var engine = b.createModule(.{
-        .source_file = .{ .path = "src/engine/engine.zig" },
-    });
-    exe.addModule("engine", engine);
 
     if (target.isNativeOs() and target.getOsTag() == .linux) {
         // The SDL package doesn't work for Linux yet, so we rely on system
@@ -119,11 +123,10 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    const zon_dep = b.dependency("zon", .{ .target = target, .optimize = .ReleaseFast });
-    bake_sprite_png_exe.addModule("zon", zon_dep.builder.modules.get("zon").?);
-    try bake_sprites.addAssets("src/game/data", ".sprite.png", .import, .{
+    bake_sprite_png_exe.addModule("zon", zon);
+    try bake_sprites.addAssets("src/game/data", ".sprite.png", .install, .{
         .exe = bake_sprite_png_exe,
-        .output_extension = ".sprite.zig",
+        .output_extension = ".sprite.zon",
     });
     // XXX: add a baker for verification purposes: check image sizes, check that we don't depend on a .sprite.png since that's probably a mistake. note that we only need to load the header to check sizes!
     // To do that though, we need to be able to read the zig file from zig, which we can't currently do. So either it needs to be json
@@ -133,13 +136,13 @@ pub fn build(b: *std.Build) !void {
     // it use them idk
     // XXX: too many extensions is annoying...just have one and require unique/add or modify to be .zig when needed?
     // XXX: why are we outputting .sprite.sprite files..?
-    try bake_sprites.addAssets("src/game/data", ".sprite.zig", .import, null);
+    try bake_sprites.addAssets("src/game/data", ".sprite.zon", .install, null);
     exe.addModule("sprite_descriptors", try bake_sprites.createModule());
 
     // Bake animations
     var bake_animations = BakeAssets.create(b);
     defer bake_animations.deinit();
-    try bake_animations.addAssets("src/game/data", ".anim.zig", .import, null);
+    try bake_animations.addAssets("src/game/data", ".anim.zon", .install, null);
     exe.addModule("animation_descriptors", try bake_animations.createModule());
 
     // Creates a step for unit testing.

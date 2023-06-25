@@ -16,7 +16,10 @@ pub const AssetSource = union(enum) {
 
 pub const AssetFile = union(enum) {
     path: []const u8,
-    data: []const u8,
+    // XXX: temporarily null terminated because we're storing zon here. eventually though, embedded zon
+    // will be stored parsed not in string format, and we'll be able to stop zero terminating this.
+    // XXX: does raise the question though--why does ast require null termination?
+    data: [:0]const u8,
 };
 
 pub fn Descriptor(comptime source: AssetSource) type {
