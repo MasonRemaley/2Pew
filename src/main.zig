@@ -154,7 +154,8 @@ pub fn main() !void {
         // prevent e.g. a slow alt tab from messing things up too much.
         const delta_rwa_bias = 0.05;
         const max_frame_time = 1.0 / 30.0;
-        var last_delta_s = @floatFromInt(f32, timer.lap()) / std.time.ns_per_s;
+        const t: f32 = @floatFromInt(timer.lap());
+        var last_delta_s = t / std.time.ns_per_s;
         delta_s = lerp(delta_s, @min(last_delta_s, max_frame_time), delta_rwa_bias);
         fx_loop_s = @mod(fx_loop_s + delta_s, max_fx_loop_s);
         if (profile) {
@@ -311,8 +312,7 @@ fn update(
                     }
                 }
 
-                const shrapnel_amt = @intFromFloat(
-                    u32,
+                const shrapnel_amt: u32 = @intFromFloat(
                     @floor(remap_clamped(0, 100, 0, 30, total_damage)),
                 );
                 const shrapnel_center = entity.transform.pos.plus(other.transform.pos).scaled(0.5);
@@ -629,7 +629,7 @@ fn update(
                     2 * math.pi,
                 );
 
-                const thrust_input = @floatFromInt(f32, @intFromBool(input_state.isAction(.thrust_forward, .positive, .active)));
+                const thrust_input: f32 = @floatFromInt(@intFromBool(input_state.isAction(.thrust_forward, .positive, .active)));
                 const thrust = V.unit(entity.transform.angle);
                 entity.rb.vel.add(thrust.scaled(thrust_input * entity.ship.thrust * delta_s));
             }
@@ -1050,10 +1050,10 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,
-                @intFromFloat(c_int, @floor(start.x)),
-                @intFromFloat(c_int, @floor(start.y)),
-                @intFromFloat(c_int, @floor(end.x)),
-                @intFromFloat(c_int, @floor(end.y)),
+                @intFromFloat(@floor(start.x)),
+                @intFromFloat(@floor(start.y)),
+                @intFromFloat(@floor(end.x)),
+                @intFromFloat(@floor(end.y)),
             ));
         }
     }
@@ -1068,7 +1068,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             {
                 const sprite = assets.sprite(game.particle);
                 const pos = top_left.plus(.{
-                    .x = col_width * @floatFromInt(f32, team_index),
+                    .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = 0,
                 });
                 sdlAssertZero(c.SDL_RenderCopy(
@@ -1084,8 +1084,8 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
                 const sprite = assets.sprite(game.shipLifeSprite(class));
                 const pos = top_left.plus(.{
-                    .x = col_width * @floatFromInt(f32, team_index),
-                    .y = row_height * @floatFromInt(f32, display_prog_index),
+                    .x = col_width * @as(f32, @floatFromInt(team_index)),
+                    .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
                 });
                 const sprite_size = sprite.size().scaled(0.5);
                 const dest_rect = sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
@@ -1362,8 +1362,8 @@ const Sprite = struct {
 
     fn size(sprite: Sprite) V {
         return .{
-            .x = @floatFromInt(f32, sprite.rect.w),
-            .y = @floatFromInt(f32, sprite.rect.h),
+            .x = @floatFromInt(sprite.rect.w),
+            .y = @floatFromInt(sprite.rect.h),
         };
     }
 
@@ -2076,11 +2076,11 @@ const Game = struct {
             wendy_thrusters_bottom[0],
         }, wendy_thrusters_bottom_steady, 10, math.pi / 2.0);
 
-        const ranger_radius = @floatFromInt(f32, assets.sprite(ranger_sprites[0]).rect.w) / 2.0;
-        const militia_radius = @floatFromInt(f32, assets.sprite(militia_sprites[0]).rect.w) / 2.0;
-        const triangle_radius = @floatFromInt(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
-        const kevin_radius = @floatFromInt(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
-        const wendy_radius = @floatFromInt(f32, assets.sprite(triangle_sprites[0]).rect.w) / 2.0;
+        const ranger_radius = @as(f32, @floatFromInt(assets.sprite(ranger_sprites[0]).rect.w)) / 2.0;
+        const militia_radius = @as(f32, @floatFromInt(assets.sprite(militia_sprites[0]).rect.w)) / 2.0;
+        const triangle_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
+        const kevin_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
+        const wendy_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
 
         const particle = try assets.loadSprite(allocator, "img/particle.png", null, team_tints);
 
@@ -2361,8 +2361,8 @@ const Game = struct {
         {
             {
                 var player_index: u32 = 0;
-                for (0..@intCast(usize, c.SDL_NumJoysticks())) |i_usize| {
-                    const i = @intCast(u31, i_usize);
+                for (0..@as(usize, @intCast(c.SDL_NumJoysticks()))) |i_usize| {
+                    const i: u31 = @intCast(i_usize);
                     if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
                         const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
                             panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
@@ -2379,9 +2379,9 @@ const Game = struct {
             }
 
             for (player_teams, 0..) |team_index, i| {
-                const angle = math.pi / 2.0 * @floatFromInt(f32, i);
+                const angle = math.pi / 2.0 * @as(f32, @floatFromInt(i));
                 const pos = display_center.plus(V.unit(angle).scaled(50));
-                const player_index = @intCast(u2, i);
+                const player_index: u2 = @intCast(i);
                 _ = game.createShip(command_buffer, player_index, team_index, pos, angle);
             }
         }
@@ -2452,7 +2452,7 @@ const Game = struct {
 
     fn aliveTeam(game: Game) u2 {
         for (game.teams, 0..) |team, i| {
-            if (team.players_alive > 0) return @intCast(u2, i);
+            if (team.players_alive > 0) return @intCast(i);
         } else unreachable;
     }
 
@@ -2513,12 +2513,12 @@ const Assets = struct {
 
     fn animate(a: Assets, anim: *Animation.Playback, delta_s: f32) Frame {
         const animation = a.animations.items[@intFromEnum(anim.index)];
-        const frame_index = @intFromFloat(u32, @floor(anim.time_passed * animation.fps));
+        const frame_index: u32 = @intFromFloat(@floor(anim.time_passed * animation.fps));
         const frame = animation.start + frame_index;
         // TODO: for large delta_s can cause out of bounds index
         const frame_sprite = a.sprite(a.frames.items[frame]);
         anim.time_passed += delta_s;
-        const end_time = @floatFromInt(f32, animation.len) / animation.fps;
+        const end_time = @as(f32, @floatFromInt(animation.len)) / animation.fps;
         if (anim.time_passed >= end_time) {
             anim.time_passed -= end_time;
             anim.index = animation.next;
@@ -2538,10 +2538,10 @@ const Assets = struct {
         angle: f32,
     ) !Animation.Index {
         try a.frames.appendSlice(a.gpa, frames);
-        const result = @enumFromInt(Animation.Index, a.animations.items.len);
+        const result: Animation.Index = @enumFromInt(a.animations.items.len);
         try a.animations.append(a.gpa, .{
-            .start = @intCast(u32, a.frames.items.len - frames.len),
-            .len = @intCast(u32, frames.len),
+            .start = @intCast(a.frames.items.len - frames.len),
+            .len = @intCast(frames.len),
             .next = next_animation orelse result,
             .fps = fps,
             .angle = angle,
@@ -2559,7 +2559,7 @@ const Assets = struct {
         const recolor = if (recolor_name != null) try a.dir.readFileAlloc(a.gpa, recolor_name.?, 50 * 1024 * 1024) else null;
         defer if (recolor != null) a.gpa.free(recolor.?);
         try a.sprites.append(a.gpa, try spriteFromBytes(allocator, diffuse_png, recolor, a.renderer, tints));
-        return @enumFromInt(Sprite.Index, a.sprites.items.len - 1);
+        return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
     }
 
     fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, renderer: *c.SDL_Renderer, tints: []const [3]u8) !Sprite {
@@ -2569,7 +2569,7 @@ const Assets = struct {
         const bits_per_channel = 8;
         const diffuse_data = c.stbi_load_from_memory(
             png_diffuse.ptr,
-            @intCast(c_int, png_diffuse.len),
+            @intCast(png_diffuse.len),
             &width,
             &height,
             null,
@@ -2580,7 +2580,7 @@ const Assets = struct {
         var recolor_height: c_int = undefined;
         const recolor_data = if (png_recolor != null) c.stbi_load_from_memory(
             png_recolor.?.ptr,
-            @intCast(c_int, png_recolor.?.len),
+            @intCast(png_recolor.?.len),
             &recolor_width,
             &recolor_height,
             null,
@@ -2594,7 +2594,7 @@ const Assets = struct {
         var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(allocator, tints.len);
         errdefer textures.deinit(allocator);
         for (tints) |tint| {
-            const diffuse_copy = try allocator.alloc(u8, @intCast(usize, width) * @intCast(usize, height) * channel_count);
+            const diffuse_copy = try allocator.alloc(u8, @intCast(width * height * channel_count));
             defer allocator.free(diffuse_copy);
             @memcpy(diffuse_copy, diffuse_data[0..diffuse_copy.len]);
 
@@ -2604,9 +2604,9 @@ const Assets = struct {
                 var b = &diffuse_copy[pixel * channel_count + 2];
 
                 var color: [3]f32 = .{
-                    @floatFromInt(f32, r.*) / 255.0,
-                    @floatFromInt(f32, g.*) / 255.0,
-                    @floatFromInt(f32, b.*) / 255.0,
+                    @as(f32, @floatFromInt(r.*)) / 255.0,
+                    @as(f32, @floatFromInt(g.*)) / 255.0,
+                    @as(f32, @floatFromInt(b.*)) / 255.0,
                 };
 
                 // Change gama
@@ -2618,7 +2618,7 @@ const Assets = struct {
                 // Convert to grayscale or determine recolor amount
                 var amount: f32 = 1.0;
                 if (recolor_data) |recolor| {
-                    amount = @floatFromInt(f32, recolor[pixel]) / 255.0;
+                    amount = @as(f32, @floatFromInt(recolor[pixel])) / 255.0;
                 } else {
                     var luminosity = 0.299 * color[0] + 0.587 * color[1] + 0.0722 * color[2] / 255.0;
                     luminosity = math.pow(f32, luminosity, 1.0 / gamma);
@@ -2629,7 +2629,7 @@ const Assets = struct {
 
                 // Apply tint
                 for (&color, tint) |*color_channel, tint_channel| {
-                    var recolored = math.pow(f32, @floatFromInt(f32, tint_channel) / 255.0, 1.0 / gamma);
+                    var recolored = math.pow(f32, @as(f32, @floatFromInt(tint_channel)) / 255.0, 1.0 / gamma);
                     color_channel.* = lerp(color_channel.*, color_channel.* * recolored, amount);
                 }
 
@@ -2639,9 +2639,9 @@ const Assets = struct {
                 }
 
                 // Apply changes
-                r.* = @intFromFloat(u8, color[0] * 255.0);
-                g.* = @intFromFloat(u8, color[1] * 255.0);
-                b.* = @intFromFloat(u8, color[2] * 255.0);
+                r.* = @intFromFloat(color[0] * 255.0);
+                g.* = @intFromFloat(color[1] * 255.0);
+                b.* = @intFromFloat(color[2] * 255.0);
             }
             const pitch = width * channel_count;
             const surface = c.SDL_CreateRGBSurfaceFrom(
@@ -2695,7 +2695,7 @@ fn generateStars(stars: []Star) void {
         star.* = .{
             .x = std.crypto.random.uintLessThanBiased(u31, display_width),
             .y = std.crypto.random.uintLessThanBiased(u31, display_height),
-            .kind = @enumFromInt(Star.Kind, std.crypto.random.uintLessThanBiased(u8, 2)),
+            .kind = @enumFromInt(std.crypto.random.uintLessThanBiased(u8, 2)),
         };
     }
     // Overwrite the last one so it shows up on top
@@ -2714,10 +2714,10 @@ fn sdlRect(top_left_pos: V, size: V) c.SDL_Rect {
     const pos = top_left_pos.floored();
     const size_floored = size.floored();
     return .{
-        .x = @intFromFloat(i32, pos.x),
-        .y = @intFromFloat(i32, pos.y),
-        .w = @intFromFloat(i32, size_floored.x),
-        .h = @intFromFloat(i32, size_floored.y),
+        .x = @intFromFloat(pos.x),
+        .y = @intFromFloat(pos.y),
+        .w = @intFromFloat(size_floored.x),
+        .h = @intFromFloat(size_floored.y),
     };
 }
 

@@ -202,7 +202,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         fn componentTag(comptime name: []const u8) ComponentTag {
             const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
             if (maybe_index) |index| {
-                return @enumFromInt(ComponentTag, index);
+                return @enumFromInt(index);
             } else {
                 @compileError("no registered component named '" ++ name ++ "'");
             }
@@ -228,7 +228,7 @@ pub fn Entities(comptime registered_components: anytype) type {
 
         fn copyComponents(to: *const EntityPointer, from: EntityPointer, which: ComponentFlags) void {
             inline for (0..component_types.len) |i| {
-                const component = @enumFromInt(ComponentTag, i);
+                const component: ComponentTag = @enumFromInt(i);
                 if (which.isSet(component)) {
                     to.archetype_list.getComponentUnchecked(to.index, component).* = from.archetype_list.getComponentUnchecked(from.index, component).*;
                 }
@@ -314,7 +314,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
 
             pub fn int(self: ComponentFlags) Int {
-                return @bitCast(Int, self);
+                return @bitCast(self);
             }
 
             pub fn supersetOf(self: ComponentFlags, of: ComponentFlags) bool {
@@ -326,19 +326,19 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
 
             pub fn unionWith(self: ComponentFlags, with: ComponentFlags) ComponentFlags {
-                return .{ .mask = @bitCast(Mask, self.int() | with.int()) };
+                return .{ .mask = @bitCast(self.int() | with.int()) };
             }
 
             pub fn intersectWith(self: ComponentFlags, with: ComponentFlags) ComponentFlags {
-                return .{ .mask = @bitCast(Mask, self.int() & with.int()) };
+                return .{ .mask = @bitCast(self.int() & with.int()) };
             }
 
             pub fn differenceWith(self: ComponentFlags, sub: ComponentFlags) ComponentFlags {
-                return .{ .mask = @bitCast(Mask, self.int() & ~sub.int()) };
+                return .{ .mask = @bitCast(self.int() & ~sub.int()) };
             }
 
             fn maskBit(component: ComponentTag) Int {
-                return @as(Int, 1) << @intCast(ShiftInt, @intFromEnum(component));
+                return @as(Int, 1) << @intCast(@intFromEnum(component));
             }
 
             pub fn isSet(self: ComponentFlags, component: ComponentTag) bool {
@@ -350,7 +350,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
 
             pub fn set(self: *ComponentFlags, component: ComponentTag) void {
-                self.mask = @bitCast(Mask, self.int() | maskBit(component));
+                self.mask = @bitCast(self.int() | maskBit(component));
             }
 
             pub fn setName(self: *ComponentFlags, comptime name: []const u8) void {
@@ -373,7 +373,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             var fields: [component_types.len]Type.StructField = undefined;
             var i: usize = 0;
             for (component_types, 0..) |comp_type, component_i| {
-                const component = @enumFromInt(ComponentTag, component_i);
+                const component: ComponentTag = @enumFromInt(component_i);
                 if (!@hasDecl(Map, "skip") or !Map.skip(component)) {
                     const FieldType = Map.FieldType(component, comp_type);
                     fields[i] = Type.StructField{
@@ -501,7 +501,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                                 if (next_exists) {
                                     if (@sizeOf(ComponentType) == 0) {
                                         // TODO: https://github.com/ziglang/zig/issues/3325
-                                        @field(item, field.name) = @ptrFromInt(*ComponentType, 0xaaaaaaaaaaaaaaaa);
+                                        @field(item, field.name) = @ptrFromInt(0xaaaaaaaaaaaaaaaa);
                                     } else {
                                         @field(item, field.name) = &@field(self.archetype_list.?.comps, field.name).dynamic_segments[self.handle_iterator.shelf_index][self.handle_iterator.box_index];
                                     }
@@ -588,7 +588,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 const index = self.handles.len;
                 try self.handles.append(allocator, handle);
                 comptime assert(std.math.maxInt(u32) > max_entities);
-                return @intCast(u32, index);
+                return @as(u32, @intCast(index));
             }
 
             pub fn swapRemove(self: *@This(), index: u32, handles: *const SlotMap(EntityPointer, Handle)) void {
@@ -1112,7 +1112,7 @@ test "clear retaining capacity" {
 
         for (first_batch, second_batch) |first, second| {
             var expected = first;
-            expected.generation = @enumFromInt(Handle.Generation, @intFromEnum(expected.generation) + 1);
+            expected.generation = @enumFromInt(@intFromEnum(expected.generation) + 1);
             try std.testing.expectEqual(expected, second);
         }
 
@@ -1224,7 +1224,7 @@ test "limits" {
     // Add the max number of entities
     for (0..max_entities) |i| {
         const entity = entities.create(.{});
-        try std.testing.expectEqual(Handle{ .index = @intCast(Handle.Index, i), .generation = @enumFromInt(Handle.Generation, 0) }, entity);
+        try std.testing.expectEqual(Handle{ .index = @intCast(i), .generation = @enumFromInt(0) }, entity);
         try created.append(entity);
     }
     try std.testing.expectError(error.OutOfMemory, entities.createChecked(.{}));
@@ -1245,7 +1245,7 @@ test "limits" {
     // Create a bunch of entities again
     for (0..max_entities) |i| {
         try std.testing.expectEqual(
-            Handle{ .index = @intCast(Handle.Index, i), .generation = @enumFromInt(Handle.Generation, 1) },
+            Handle{ .index = @intCast(i), .generation = @enumFromInt(1) },
             entities.create(.{}),
         );
     }
@@ -1274,7 +1274,7 @@ test "safety" {
     try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(entity));
     try std.testing.expectError(error.DoubleFree, entities.swapRemoveChecked(Handle{
         .index = 1,
-        .generation = @enumFromInt(Handle.Generation, 0),
+        .generation = @enumFromInt(0),
     }));
 }
 

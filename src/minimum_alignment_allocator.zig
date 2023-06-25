@@ -19,17 +19,17 @@ pub fn MinimumAlignmentAllocator(comptime min_alignment: u8) type {
         }
 
         fn alloc(ctx: *anyopaque, n: usize, log2_ptr_align: u8, ra: usize) ?[*]u8 {
-            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), ctx));
+            const self: *@This() = @ptrCast(@alignCast(ctx));
             return self.child_allocator.rawAlloc(n, adjustAlignment(log2_ptr_align), ra);
         }
 
         fn resize(ctx: *anyopaque, buf: []u8, log2_buf_align: u8, new_len: usize, ret_addr: usize) bool {
-            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), ctx));
+            const self: *@This() = @ptrCast(@alignCast(ctx));
             return self.child_allocator.rawResize(buf, adjustAlignment(log2_buf_align), new_len, ret_addr);
         }
 
         fn free(ctx: *anyopaque, buf: []u8, log2_buf_align: u8, ret_addr: usize) void {
-            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), ctx));
+            const self: *@This() = @ptrCast(@alignCast(ctx));
             return self.child_allocator.rawFree(buf, adjustAlignment(log2_buf_align), ret_addr);
         }
 
@@ -58,10 +58,10 @@ test "minimum alignment allocator" {
         var b = try allocator.create(u16);
         var c = try allocator.create(u8);
         var d = try allocator.create(u8);
-        try std.testing.expect(@ptrCast(*u8, a) == &buffer[0]);
-        try std.testing.expect(@ptrCast(*u8, b) == &buffer[2]);
-        try std.testing.expect(@ptrCast(*u8, c) == &buffer[4]);
-        try std.testing.expect(@ptrCast(*u8, d) == &buffer[5]);
+        try std.testing.expect(@as(*u8, @ptrCast(a)) == &buffer[0]);
+        try std.testing.expect(@as(*u8, @ptrCast(b)) == &buffer[2]);
+        try std.testing.expect(@as(*u8, @ptrCast(c)) == &buffer[4]);
+        try std.testing.expect(@as(*u8, @ptrCast(d)) == &buffer[5]);
     }
 
     {
@@ -72,10 +72,10 @@ test "minimum alignment allocator" {
         var b = try allocator.create(u16);
         var c = try allocator.create(u8);
         var d = try allocator.create(u8);
-        try std.testing.expect(@ptrCast(*u8, a) == &buffer[0]);
-        try std.testing.expect(@ptrCast(*u8, b) == &buffer[2]);
-        try std.testing.expect(@ptrCast(*u8, c) == &buffer[4]);
-        try std.testing.expect(@ptrCast(*u8, d) == &buffer[6]);
+        try std.testing.expect(@as(*u8, @ptrCast(a)) == &buffer[0]);
+        try std.testing.expect(@as(*u8, @ptrCast(b)) == &buffer[2]);
+        try std.testing.expect(@as(*u8, @ptrCast(c)) == &buffer[4]);
+        try std.testing.expect(@as(*u8, @ptrCast(d)) == &buffer[6]);
     }
 
     {
@@ -86,9 +86,9 @@ test "minimum alignment allocator" {
         var b = try allocator.create(u16);
         var c = try allocator.create(u8);
         var d = try allocator.create(u8);
-        try std.testing.expect(@ptrCast(*u8, a) == &buffer[0]);
-        try std.testing.expect(@ptrCast(*u8, b) == &buffer[4]);
-        try std.testing.expect(@ptrCast(*u8, c) == &buffer[8]);
-        try std.testing.expect(@ptrCast(*u8, d) == &buffer[12]);
+        try std.testing.expect(@as(*u8, @ptrCast(a)) == &buffer[0]);
+        try std.testing.expect(@as(*u8, @ptrCast(b)) == &buffer[4]);
+        try std.testing.expect(@as(*u8, @ptrCast(c)) == &buffer[8]);
+        try std.testing.expect(@as(*u8, @ptrCast(d)) == &buffer[12]);
     }
 }

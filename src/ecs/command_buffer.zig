@@ -88,7 +88,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
 
         pub fn appendInstantiateChecked(self: *@This(), self_contained: bool, prefab: []const PrefabEntity) Allocator.Error!?PrefabHandle {
             if (prefab.len == 0) return null;
-            const handle = PrefabHandle.init(@intCast(EntityHandle.Index, self.prefab_entities.items.len));
+            const handle = PrefabHandle.init(@intCast(self.prefab_entities.items.len));
             try self.prefab_entities.appendSlice(NoAlloc, prefab);
             try self.prefab_spans.append(NoAlloc, PrefabSpan{ .len = prefab.len, .self_contained = self_contained });
             return handle;

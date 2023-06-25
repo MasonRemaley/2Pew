@@ -36,14 +36,14 @@ fn benchEcs() !void {
     var entities = try Entities(.{ .x = u128, .y = u256, .z = u128 }).init(allocator);
 
     defer entities.deinit();
-    std.debug.print("\tinit: {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tinit: {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // Create entities
     for (0..(ecs.entities.max_entities - 1)) |_| {
         _ = entities.create(.{ .x = 24, .y = 12 });
     }
     _ = entities.create(.{ .x = 24, .y = 12, .z = 13 });
-    std.debug.print("\tfill: {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tfill: {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // Iter over entities
     {
@@ -52,7 +52,7 @@ fn benchEcs() !void {
             try std.testing.expect(e.x.* == 24);
             try std.testing.expect(e.y.* == 12);
         }
-        std.debug.print("\titer(all): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\titer(all): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Iter one entity
@@ -61,7 +61,7 @@ fn benchEcs() !void {
         while (iter.next()) |e| {
             try std.testing.expect(e.z.* == 13);
         }
-        std.debug.print("\titer(1): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\titer(1): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     var all = std.ArrayList(EntityHandle).init(allocator);
@@ -82,26 +82,26 @@ fn benchEcs() !void {
         _ = i;
         _ = x;
     }
-    std.debug.print("\tgetComponent(all): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tgetComponent(all): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // Removing components
     for (all.items) |entity| {
         entities.removeComponents(entity, .{.x});
     }
-    std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // Adding components
     for (all.items, 0..) |entity, i| {
         entities.addComponents(entity, .{ .x = i });
     }
-    std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // XXX: profile removing from iterator too or instead?
     // Remove all entities
     for (all.items) |entity| {
         entities.swapRemove(entity);
     }
-    std.debug.print("\tremove(all): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tremove(all): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 }
 
 pub fn perfArrayList() !void {
@@ -117,7 +117,7 @@ pub fn perfArrayList() !void {
     var timer = try std.time.Timer.start();
     var array = try std.ArrayList(Entity).initCapacity(allocator, ecs.entities.max_entities);
     defer array.deinit();
-    std.debug.print("\tinit: {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tinit: {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // Create entities
     _ = timer.lap();
@@ -125,7 +125,7 @@ pub fn perfArrayList() !void {
         array.appendAssumeCapacity(.{ .x = 24, .y = 12 });
     }
     array.appendAssumeCapacity(.{ .x = 24, .y = 12, .z = 13 });
-    std.debug.print("\tfill: {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tfill: {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // Iter over entities
     {
@@ -137,7 +137,7 @@ pub fn perfArrayList() !void {
                 }
             }
         }
-        std.debug.print("\titer(all): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\titer(all): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Iter one entity
@@ -147,7 +147,7 @@ pub fn perfArrayList() !void {
                 try std.testing.expect(z == 13);
             }
         }
-        std.debug.print("\titer(1): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\titer(1): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Remove components
@@ -155,7 +155,7 @@ pub fn perfArrayList() !void {
         for (array.items) |*item| {
             item.x = null;
         }
-        std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Add components
@@ -163,14 +163,14 @@ pub fn perfArrayList() !void {
         for (array.items, 0..) |*item, i| {
             item.x = i;
         }
-        std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Remove all
     {
         while (array.items.len > 0)
             _ = array.swapRemove(0);
-        std.debug.print("\tremove all: {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\tremove all: {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 }
 
@@ -188,7 +188,7 @@ pub fn benchMultiArrayList() !void {
     var array = std.MultiArrayList(Entity){};
     try array.setCapacity(allocator, ecs.entities.max_entities);
     defer array.deinit(allocator);
-    std.debug.print("\tinit: {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tinit: {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // Create entities
     _ = timer.lap();
@@ -196,7 +196,7 @@ pub fn benchMultiArrayList() !void {
         array.appendAssumeCapacity(.{ .x = 24, .y = 12 });
     }
     array.appendAssumeCapacity(.{ .x = 24, .y = 12, .z = 13 });
-    std.debug.print("\tfill: {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+    std.debug.print("\tfill: {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
 
     // Iter over entities
     {
@@ -204,7 +204,7 @@ pub fn benchMultiArrayList() !void {
             try std.testing.expect(y.? == 12);
             try std.testing.expect(x.? == 24);
         }
-        std.debug.print("\titer(all): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\titer(all): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Iter one entity
@@ -214,7 +214,7 @@ pub fn benchMultiArrayList() !void {
                 try std.testing.expect(found == 13);
             }
         }
-        std.debug.print("\titer(1): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\titer(1): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Remove components
@@ -222,7 +222,7 @@ pub fn benchMultiArrayList() !void {
         for (array.items(.x)) |*x| {
             x.* = null;
         }
-        std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\tremoveComponents(all, .{{.x}}): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Add components
@@ -230,13 +230,13 @@ pub fn benchMultiArrayList() !void {
         for (array.items(.x), 0..) |*x, i| {
             x.* = i;
         }
-        std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\taddComponents(all, .{{.x = i}}): {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 
     // Remove all
     {
         while (array.len > 0)
             _ = array.swapRemove(0);
-        std.debug.print("\tremove all: {d}ms\n", .{@floatFromInt(f32, timer.lap()) / 1000000.0});
+        std.debug.print("\tremove all: {d}ms\n", .{@as(f32, @floatFromInt(timer.lap())) / 1000000.0});
     }
 }
