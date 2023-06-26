@@ -2189,7 +2189,7 @@ const Renderer = struct {
                 .path => gpa.free(animation_zon),
             };
             // XXX: is error impossible at this point?
-            const animation = try zon.parseFromSlice(asset_index.Animation, gpa, animation_zon);
+            const animation = try zon.parseFromSlice(asset_index.Animation, gpa, animation_zon, .{});
             animations.set(id, animation);
         }
 
@@ -2207,7 +2207,7 @@ const Renderer = struct {
         a.* = undefined;
     }
 
-    // XXX: is there a weird edge on the melee ship tint or is thatpart of the art?
+    // XXX: is there a weird edge on the melee ship tint or is thatpart of the art? (compare to main branch before merging!)
     fn loadSprite(allocator: Allocator, dir: std.fs.Dir, sdl: *c.SDL_Renderer, sprite_id: SpriteId) !Sprite {
         const sprite_zon = switch (asset_index.sprites.get(sprite_id).*) {
             .data => |data| data,
@@ -2223,7 +2223,7 @@ const Renderer = struct {
         defer ast.deinit(allocator);
         assert(ast.errors.len == 0);
         var status: zon.Status = .success;
-        const sprite = zon.parseFromAst(asset_index.Sprite, allocator, &ast, &status) catch |err|
+        const sprite = zon.parseFromAst(asset_index.Sprite, allocator, &ast, &status, .{}) catch |err|
             std.debug.panic("err: {s} {} '{}'", .{ asset_index.sprites.get(sprite_id).path, err, status });
         defer zon.parseFree(allocator, sprite);
         const diffuse_image = asset_index.images.get(sprite.diffuse);

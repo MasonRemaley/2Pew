@@ -89,23 +89,28 @@ pub fn build(b: *std.Build) !void {
     // Bake images
     var bake_images = BakeAssets.create(b);
     defer bake_images.deinit();
-    try bake_images.addAssets("src/game/data", ".png", .install, .{
-        .exe = exe: {
-            var bake_image = b.addExecutable(.{
-                .name = "bake-image",
-                .root_source_file = .{ .path = "src/game/bake/bake_image.zig" },
-                // XXX: ...
-                .target = target,
-                .optimize = optimize,
-            });
+    try bake_images.addAssets(.{
+        .path = "src/game/data",
+        .extension = ".png",
+        .storage = .install,
+        .processor = .{
+            .exe = exe: {
+                var bake_image = b.addExecutable(.{
+                    .name = "bake-image",
+                    .root_source_file = .{ .path = "src/game/bake/bake_image.zig" },
+                    // XXX: ...
+                    .target = target,
+                    .optimize = optimize,
+                });
 
-            bake_image.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
-            bake_image.addIncludePath("src/game/bake");
-            bake_image.linkLibC();
-            break :exe bake_image;
+                bake_image.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
+                bake_image.addIncludePath("src/game/bake");
+                bake_image.linkLibC();
+                break :exe bake_image;
+            },
+            // XXX: don't include the . in these, make it automatic, so you can't leave it off
+            .output_extension = ".sprite",
         },
-        // XXX: don't include the . in these, make it automatic, so you can't leave it off
-        .output_extension = ".sprite",
     });
     exe.addModule("image_descriptors", try bake_images.createModule());
 
@@ -124,9 +129,14 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     bake_sprite_png_exe.addModule("zon", zon);
-    try bake_sprites.addAssets("src/game/data", ".sprite.png", .install, .{
-        .exe = bake_sprite_png_exe,
-        .output_extension = ".sprite.zon",
+    try bake_sprites.addAssets(.{
+        .path = "src/game/data",
+        .extension = ".sprite.png",
+        .storage = .install,
+        .processor = .{
+            .exe = bake_sprite_png_exe,
+            .output_extension = ".sprite.zon",
+        },
     });
     // XXX: add a baker for verification purposes: check image sizes, check that we don't depend on a .sprite.png since that's probably a mistake. note that we only need to load the header to check sizes!
     // To do that though, we need to be able to read the zig file from zig, which we can't currently do. So either it needs to be json
@@ -136,13 +146,21 @@ pub fn build(b: *std.Build) !void {
     // it use them idk
     // XXX: too many extensions is annoying...just have one and require unique/add or modify to be .zig when needed?
     // XXX: why are we outputting .sprite.sprite files..?
-    try bake_sprites.addAssets("src/game/data", ".sprite.zon", .install, null);
+    try bake_sprites.addAssets(.{
+        .path = "src/game/data",
+        .extension = ".sprite.zon",
+        .storage = .install,
+    });
     exe.addModule("sprite_descriptors", try bake_sprites.createModule());
 
     // Bake animations
     var bake_animations = BakeAssets.create(b);
     defer bake_animations.deinit();
-    try bake_animations.addAssets("src/game/data", ".anim.zon", .install, null);
+    try bake_animations.addAssets(.{
+        .path = "src/game/data",
+        .extension = ".anim.zon",
+        .storage = .install,
+    });
     exe.addModule("animation_descriptors", try bake_animations.createModule());
 
     // Creates a step for unit testing.

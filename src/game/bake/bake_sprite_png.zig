@@ -39,7 +39,7 @@ pub fn main() !void {
     );
     defer allocator.free(zon_source);
     // XXX: show good errors on failure! does it already show filename from build system?
-    const config = try zon.parseFromSlice(BakeConfig, allocator, zon_source);
+    const config = try zon.parseFromSlice(BakeConfig, allocator, zon_source, .{});
     defer zon.parseFree(allocator, config);
 
     // XXX: options?

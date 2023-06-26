@@ -41,6 +41,15 @@ pub fn create(owner: *std.Build) BakeAssets {
     };
 }
 
+pub const AddAssetsOptions = struct {
+    path: []const u8,
+    extension: []const u8,
+    storage: StorageMode,
+    // XXX: rename ot bake step? but whole thing is bake step?
+    processor: ?AssetProcessor = null,
+    ignore_unknown_fields: bool = false,
+};
+
 // XXX: naming of file vs of other stuff that will be here?
 // XXX: allow asset groups for purposes of choosing random versions of things? e.g. an artist can
 // add a file to a group via a config file or folder structure, and it shows up in game without the
@@ -52,13 +61,7 @@ pub fn create(owner: *std.Build) BakeAssets {
 // XXX: make sure we can do e.g. zig build bake to just bake, add stdout so we can see what's happening even if clear after each line
 // XXX: files seemingly never get DELETED from zig-out, is that expected..? seems like it could get us into
 // trouble.
-pub fn addAssets(
-    self: *BakeAssets,
-    data_path: []const u8,
-    asset_extension: []const u8,
-    storage: StorageMode,
-    processor: ?AssetProcessor,
-) !void {
+pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
     // XXX: look into how the build runner parses build.zon, maybe do that instead of json here! note that
     // we may eventually want to have extra fields that are only read during baking not when just getting the id.
     // though my thinking isn't clear on that part right now.
@@ -66,9 +69,9 @@ pub fn addAssets(
     // it as input when available to verify that assets weren't missing and such?
     // XXX: catch duplicate ids and such here?
     const config_extension = ".bake.zon";
-    var data_path_absolute = try self.owner.build_root.join(self.owner.allocator, &.{data_path});
-    defer self.owner.allocator.free(data_path_absolute);
-    var assets_iterable = try std.fs.openIterableDirAbsolute(data_path_absolute, .{});
+    var path_absolute = try self.owner.build_root.join(self.owner.allocator, &.{options.path});
+    defer self.owner.allocator.free(path_absolute);
+    var assets_iterable = try std.fs.openIterableDirAbsolute(path_absolute, .{});
     defer assets_iterable.close();
     var walker = try assets_iterable.walk(self.owner.allocator);
     defer walker.deinit();
@@ -78,12 +81,12 @@ pub fn addAssets(
             if (!std.mem.endsWith(u8, entry.path, config_extension)) {
                 continue;
             }
-            if (!std.mem.endsWith(u8, entry.path[0 .. entry.path.len - config_extension.len], asset_extension)) {
+            if (!std.mem.endsWith(u8, entry.path[0 .. entry.path.len - config_extension.len], options.extension)) {
                 continue;
             }
 
             // Determine the file paths
-            var config_path_in = try std.fs.path.join(self.owner.allocator, &.{ data_path, entry.path });
+            var config_path_in = try std.fs.path.join(self.owner.allocator, &.{ options.path, entry.path });
             // defer self.owner.allocator.free(config_path_in); // XXX: ...
             const asset_path_in = config_path_in[0 .. config_path_in.len - config_extension.len];
             var asset_path_out = try std.fs.path.join(self.owner.allocator, &.{ "data", entry.path[0 .. entry.path.len - config_extension.len] });
@@ -95,8 +98,8 @@ pub fn addAssets(
             var asset_cached = self.cache_input.addCopyFile(.{ .path = asset_path_in }, asset_path_in);
 
             // Process the asset
-            var processed_asset = if (processor) |p| b: {
-                asset_path_out = try std.fmt.allocPrint(self.owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - asset_extension.len], p.output_extension });
+            var processed_asset = if (options.processor) |p| b: {
+                asset_path_out = try std.fmt.allocPrint(self.owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - options.extension.len], p.output_extension });
                 const process = self.owner.addRunArtifact(p.exe);
                 process.addFileSourceArg(asset_cached);
                 process.addFileSourceArg(config_cached);
@@ -104,7 +107,7 @@ pub fn addAssets(
             } else asset_cached;
 
             // Store the data
-            switch (storage) {
+            switch (options.storage) {
                 .import, .embed => _ = self.write_output.addCopyFile(processed_asset, asset_path_out),
                 .install => {
                     const install = self.owner.addInstallFile(processed_asset, asset_path_out);
@@ -124,11 +127,9 @@ pub fn addAssets(
             );
             defer self.owner.allocator.free(zon_source);
             // XXX: eventually log good errors if zon files are invalid!
-            // XXX: ignore unknown fields? we were doing that before so that we could pass extra
-            // args to the bake processor (only turning on the option when there was one but maybe
-            // should have been explicit.) I think maybe that sort of thing just belongs in e.g. sprite
-            // isntead of image though? still could be a useful feature?
-            const config = try zon.parseFromSlice(BakeConfig, self.owner.allocator, zon_source);
+            const config = try zon.parseFromSlice(BakeConfig, self.owner.allocator, zon_source, .{
+                .ignore_unknown_fields = options.ignore_unknown_fields,
+            });
             // XXX: would be cool if strings that didn't need to be werent' reallocated, may already be the case internally?
             defer zon.parseFree(self.owner.allocator, config);
 
@@ -136,7 +137,7 @@ pub fn addAssets(
             try self.assets.append(self.owner.allocator, .{
                 // XXX: don't free if we're passing the id out...though could free when we free this maybe
                 .id = try self.owner.allocator.dupe(u8, config.id),
-                .data = switch (storage) {
+                .data = switch (options.storage) {
                     .install => .{ .install = asset_path_out },
                     .import => .{ .import = asset_path_out },
                     .embed => .{ .embed = asset_path_out },
