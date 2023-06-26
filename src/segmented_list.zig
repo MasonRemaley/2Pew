@@ -517,11 +517,11 @@ fn testSegmentedList(comptime first_shelf_count: usize, comptime prealloc: bool)
             control[@intCast(i)] = i + 1;
         }
 
-        mem.set(i32, dest[0..], 0);
+        @memset(dest[0..], 0);
         list.writeToSlice(dest[0..], 0);
         try testing.expect(mem.eql(i32, control[0..], dest[0..]));
 
-        mem.set(i32, dest[0..], 0);
+        @memset(dest[0..], 0);
         list.writeToSlice(dest[50..], 50);
         try testing.expect(mem.eql(i32, control[50..], dest[50..]));
     }
