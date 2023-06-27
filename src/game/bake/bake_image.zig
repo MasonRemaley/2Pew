@@ -99,14 +99,12 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    if (args.len != 4) {
-        std.debug.panic("expected three arguments", .{});
+    if (args.len != 3) {
+        std.debug.panic("expected 2 arguments", .{});
     }
 
     const in_path = args[1];
-    // XXX: rename to config to options or bake options or bake config or such?
-    // const zon_path = args[2];
-    const out_path = args[3];
+    const out_path = args[2];
 
     // XXX: is cwd correct here, or does running zig build from different places mess it up?
     var dir = std.fs.cwd();

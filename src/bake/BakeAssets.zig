@@ -2,6 +2,7 @@ const std = @import("std");
 const zon = @import("zon").zon;
 const BakeAssets = @This();
 const Step = std.Build.Step;
+const FileSource = std.Build.FileSource;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const BakeConfig = struct { id: []const u8 };
 
@@ -11,9 +12,35 @@ pub const StorageMode = enum {
     embed,
 };
 
-pub const AssetProcessor = struct {
-    exe: *std.Build.CompileStep,
-    output_extension: []const u8,
+// XXX: ...naming if even needs a name, etc. maybe also make args a struct so can add more idk.
+pub const BakeStep = struct {
+    const Self = @This();
+
+    ptr: *const anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        // XXX: *const fn vs just fn??
+        // XXX: error type to return?
+        run: *const fn (ctx: *const anyopaque, args: RunArgs) error{OutOfMemory}!?BakedAsset,
+    };
+    // XXX: are both of these needed, or can we get asset path out from file source?? (same for args?)
+    pub const BakedAsset = struct {
+        file_source: FileSource,
+        asset_path_out: []u8,
+    };
+
+    pub const RunArgs = struct {
+        // XXX: document the purpose of each of these..
+        asset_path_in: []const u8,
+        asset_path_out: []const u8,
+        asset_cached: FileSource,
+        config_cached: FileSource,
+    };
+
+    fn run(self: *const Self, args: RunArgs) !?BakedAsset {
+        return self.vtable.run(self.ptr, args);
+    }
 };
 
 pub const Asset = struct {
@@ -46,7 +73,7 @@ pub const AddAssetsOptions = struct {
     extension: []const u8,
     storage: StorageMode,
     // XXX: rename ot bake step? but whole thing is bake step?
-    processor: ?AssetProcessor = null,
+    bake_step: ?BakeStep = null,
     ignore_unknown_fields: bool = false,
 };
 
@@ -97,14 +124,28 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
             var config_cached = self.cache_input.addCopyFile(.{ .path = config_path_in }, config_path_in);
             var asset_cached = self.cache_input.addCopyFile(.{ .path = asset_path_in }, asset_path_in);
 
-            // Process the asset
-            var processed_asset = if (options.processor) |p| b: {
-                asset_path_out = try std.fmt.allocPrint(self.owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - options.extension.len], p.output_extension });
-                const process = self.owner.addRunArtifact(p.exe);
-                process.addFileSourceArg(asset_cached);
-                process.addFileSourceArg(config_cached);
-                break :b process.addOutputFileArg(asset_path_out);
+            // XXX: any way to clean up?
+            // Bake the asset
+            var processed_asset = if (options.bake_step) |bake_step| b: {
+                const baked = try bake_step.run(.{
+                    .asset_path_in = asset_path_in,
+                    .asset_path_out = asset_path_out,
+                    .asset_cached = asset_cached,
+                    .config_cached = config_cached,
+                });
+                if (baked) |b| {
+                    // XXX: mem management on these..? and the things they replace?
+                    asset_path_out = b.asset_path_out;
+                    break :b b.file_source;
+                } else break :b asset_cached;
             } else asset_cached;
+            // var processed_asset = if (options.bake_step) |p| b: {
+            //     asset_path_out = try std.fmt.allocPrint(self.owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - options.extension.len], p.out_extension });
+            //     const compile_step = self.owner.addRunArtifact(p.compile_step);
+            //     compile_step.addFileSourceArg(asset_cached);
+            //     compile_step.addFileSourceArg(config_cached);
+            //     break :b compile_step.addOutputFileArg(asset_path_out);
+            // } else asset_cached;
 
             // Store the data
             switch (options.storage) {
