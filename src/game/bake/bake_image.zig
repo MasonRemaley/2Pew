@@ -1,3 +1,4 @@
+// XXX: can i delete this now?
 // XXX: problem:
 // - this scheme depends on files without telling the build system
 // - we can just differentiate between images and sprites

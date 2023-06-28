@@ -1,4 +1,5 @@
 .{
     .diffuse = .particle,
+    .diffuse_path = "particle.png",
     .tint = .luminosity,
 }

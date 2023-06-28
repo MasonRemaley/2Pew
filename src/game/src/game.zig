@@ -42,7 +42,7 @@ const Entities = ecs.entities.Entities(.{
     .team_index = u2,
     .lifetime = Lifetime,
     .sprite_renderer = SpriteId,
-    .animation_player = Animation,
+    .animation = Animation,
     .collider = Collider,
     .turret = Turret,
     .grapple_gun = GrappleGun,
@@ -524,7 +524,7 @@ fn update(
                                 .radius = 32,
                                 .density = 0.001,
                             },
-                            .animation_player = .{
+                            .animation = .{
                                 .id = .explosion,
                                 .destroys_entity = true,
                             },
@@ -578,7 +578,7 @@ fn update(
             .rb = .{ .mutable = true },
             .transform = .{ .mutable = true },
             .player_index = .{},
-            .animation_player = .{ .optional = true, .mutable = true },
+            .animation = .{ .optional = true, .mutable = true },
         });
         while (it.next()) |entity| {
             const input_state = &game.input_state[entity.player_index.*];
@@ -606,16 +606,16 @@ fn update(
         var it = entities.iterator(.{
             .player_index = .{},
             .animate_on_input = .{},
-            .animation_player = .{ .mutable = true },
+            .animation = .{ .mutable = true },
         });
         while (it.next()) |entity| {
             const input_state = &game.input_state[entity.player_index.*];
             if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
-                entity.animation_player.* = .{
+                entity.animation.* = .{
                     .id = entity.animate_on_input.activated,
                 };
             } else if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .deactivated)) {
-                entity.animation_player.* = .{
+                entity.animation.* = .{
                     .id = entity.animate_on_input.deactivated,
                 };
             }
@@ -741,9 +741,9 @@ fn update(
 
     // Update animations
     {
-        var it = entities.iterator(.{ .animation_player = .{} });
+        var it = entities.iterator(.{ .animation = .{} });
         while (it.next()) |entity| {
-            if (entity.animation_player.destroys_entity and entity.animation_player.id == null) {
+            if (entity.animation.destroys_entity and entity.animation.id == null) {
                 command_buffer.appendRemove(it.handle());
             }
         }
@@ -896,7 +896,7 @@ fn render(renderer: *Renderer, entities: *Entities, game: Game, delta_s: f32, fx
         var it = entities.iterator(.{
             .rb = .{},
             .transform = .{},
-            .animation_player = .{ .mutable = true },
+            .animation = .{ .mutable = true },
             .health = .{ .optional = true },
             .team_index = .{ .optional = true },
             .parent = .{ .optional = true },
@@ -908,27 +908,27 @@ fn render(renderer: *Renderer, entities: *Entities, game: Game, delta_s: f32, fx
             }
 
             // Skip if we have no current animation
-            if (entity.animation_player.id == null) {
+            if (entity.animation.id == null) {
                 continue :draw;
             }
 
             // Get the current frame
-            const animation = renderer.animations.get(entity.animation_player.id.?);
-            var frame_index: u32 = @intFromFloat(entity.animation_player.time_passed * animation.fps);
+            const animation = renderer.animations.get(entity.animation.id.?);
+            var frame_index: u32 = @intFromFloat(entity.animation.time_passed * animation.fps);
 
             // Apply looping
             if (frame_index >= animation.frames.len) {
                 if (animation.loop_start) |loop_start| {
                     frame_index = loop_start;
-                    entity.animation_player.time_passed -= @as(f32, @floatFromInt(animation.frames.len - loop_start)) / animation.fps;
+                    entity.animation.time_passed -= @as(f32, @floatFromInt(animation.frames.len - loop_start)) / animation.fps;
                 } else {
-                    entity.animation_player.id = null;
+                    entity.animation.id = null;
                     continue :draw;
                 }
             }
 
             // Update the timer
-            entity.animation_player.time_passed += delta_s;
+            entity.animation.time_passed += delta_s;
 
             // Draw the current frame
             const sprite = renderer.sprites.get(animation.frames[frame_index]);
@@ -1423,7 +1423,7 @@ const Game = struct {
                     .activated = .@"ranger/thrusters",
                     .deactivated = null,
                 },
-                .animation_player = .{
+                .animation = .{
                     .id = null,
                 },
                 .player_index = player_index,
@@ -1493,7 +1493,7 @@ const Game = struct {
                     .activated = .@"triangle/thrusters",
                     .deactivated = null,
                 },
-                .animation_player = .{ .id = null },
+                .animation = .{ .id = null },
                 .player_index = player_index,
                 .team_index = team_index,
             },
@@ -1561,7 +1561,7 @@ const Game = struct {
                     .activated = .@"militia/thrusters",
                     .deactivated = null,
                 },
-                .animation_player = .{
+                .animation = .{
                     .id = null,
                 },
                 .player_index = player_index,
@@ -1660,7 +1660,7 @@ const Game = struct {
                     .activated = .@"kevin/thrusters",
                     .deactivated = null,
                 },
-                .animation_player = .{
+                .animation = .{
                     .id = null,
                 },
                 .player_index = player_index,
@@ -1731,7 +1731,7 @@ const Game = struct {
                     .activated = .@"wendy/thrusters/left",
                     .deactivated = null,
                 },
-                .animation_player = .{
+                .animation = .{
                     .id = null,
                 },
                 .player_index = player_index,
@@ -1750,7 +1750,7 @@ const Game = struct {
                     .activated = .@"wendy/thrusters/right",
                     .deactivated = null,
                 },
-                .animation_player = .{
+                .animation = .{
                     .id = null,
                 },
                 .player_index = player_index,
@@ -1769,7 +1769,7 @@ const Game = struct {
                     .activated = .@"wendy/thrusters/top",
                     .deactivated = null,
                 },
-                .animation_player = .{
+                .animation = .{
                     .id = null,
                 },
                 .player_index = player_index,
@@ -1788,7 +1788,7 @@ const Game = struct {
                     .activated = .@"wendy/thrusters/bottom",
                     .deactivated = null,
                 },
-                .animation_player = .{
+                .animation = .{
                     .id = null,
                 },
                 .player_index = player_index,
@@ -2240,7 +2240,7 @@ const Renderer = struct {
             .luminosity, .mask => true,
         };
         const mask_bytes = switch (sprite.tint) {
-            .mask => |mask| switch (asset_index.images.get(mask).*) {
+            .mask => |mask| switch (asset_index.images.get(mask.id).*) {
                 .data => |data| data,
                 .path => |path| try dir.readFileAlloc(allocator, path, 50 * 1024 * 1024),
             },
@@ -2248,7 +2248,7 @@ const Renderer = struct {
         };
         // XXX: better way to do this defer?
         defer switch (sprite.tint) {
-            .mask => |mask| switch (asset_index.images.get(mask).*) {
+            .mask => |mask| switch (asset_index.images.get(mask.id).*) {
                 .data => {},
                 .path => allocator.free(mask_bytes.?),
             },

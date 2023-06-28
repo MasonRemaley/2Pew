@@ -4,11 +4,16 @@ const indexer = engine.asset_indexer;
 pub const Tint = union(enum) {
     none,
     luminosity,
-    mask: images.Id,
+    mask: struct {
+        // XXX: ...
+        id: images.Id,
+        path: []const u8,
+    },
 };
 
 pub const Sprite = struct {
     diffuse: images.Id,
+    diffuse_path: []const u8, // XXX: ...
     degrees: f32 = 0.0,
     tint: Tint = .none,
 };

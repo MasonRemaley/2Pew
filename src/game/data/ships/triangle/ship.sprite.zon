@@ -1,5 +1,9 @@
 .{
     .diffuse = .@"triangle/diffuse",
-    .tint = .{ .mask = .@"triangle/mask" },
+    .diffuse_path = "diffuse.png",
+    .tint = .{ .mask = .{
+        .id = .@"triangle/mask",
+        .path = "mask.png",
+    } },
     .degrees = 90.0,
 }

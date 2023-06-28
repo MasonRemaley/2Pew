@@ -13,6 +13,7 @@ pub const StorageMode = enum {
 };
 
 // XXX: ...naming if even needs a name, etc. maybe also make args a struct so can add more idk.
+// XXX: is this still needed or can we go back to always passing the same args in to run steps?
 pub const BakeStep = struct {
     const Self = @This();
 
@@ -21,8 +22,8 @@ pub const BakeStep = struct {
 
     pub const VTable = struct {
         // XXX: *const fn vs just fn??
-        // XXX: error type to return?
-        run: *const fn (ctx: *const anyopaque, args: RunArgs) error{OutOfMemory}!?BakedAsset,
+        // XXX: anyerror okay here?
+        run: *const fn (ctx: *const anyopaque, args: RunArgs) anyerror!?BakedAsset,
     };
     // XXX: are both of these needed, or can we get asset path out from file source?? (same for args?)
     pub const BakedAsset = struct {
@@ -32,6 +33,7 @@ pub const BakeStep = struct {
 
     pub const RunArgs = struct {
         // XXX: document the purpose of each of these..
+        bake_assets: *BakeAssets,
         asset_path_in: []const u8,
         asset_path_out: []const u8,
         asset_cached: FileSource,
@@ -96,9 +98,7 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
     // it as input when available to verify that assets weren't missing and such?
     // XXX: catch duplicate ids and such here?
     const config_extension = ".bake.zon";
-    var path_absolute = try self.owner.build_root.join(self.owner.allocator, &.{options.path});
-    defer self.owner.allocator.free(path_absolute);
-    var assets_iterable = try std.fs.openIterableDirAbsolute(path_absolute, .{});
+    var assets_iterable = try self.owner.build_root.handle.openIterableDir(options.path, .{});
     defer assets_iterable.close();
     var walker = try assets_iterable.walk(self.owner.allocator);
     defer walker.deinit();
@@ -128,6 +128,7 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
             // Bake the asset
             var processed_asset = if (options.bake_step) |bake_step| b: {
                 const baked = try bake_step.run(.{
+                    .bake_assets = self,
                     .asset_path_in = asset_path_in,
                     .asset_path_out = asset_path_out,
                     .asset_cached = asset_cached,

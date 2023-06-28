@@ -55,8 +55,10 @@ pub fn main() !void {
     // XXX: have to escape quotes in the id...may also be also be a way to generate zon from zig
     // automatically which would be better!
     try out_file_writer.writeAll(config.id);
+    // XXX: ...
     try out_file_writer.writeAll(
         \\",
+        \\    .diffuse_path = "unimplemented",
         \\}
     );
 }

@@ -6,8 +6,7 @@ const std = @import("std");
 const BakeAssets = @import("src/bake/BakeAssets.zig");
 const Allocator = std.mem.Allocator;
 const FileSource = std.Build.FileSource;
-// XXX: move this code to bake or something so game can depend on bake but not vice versa..?
-const asset_index = @import("src/game/src/asset_index.zig");
+const zon = @import("zon").zon;
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -24,7 +23,7 @@ pub fn build(b: *std.Build) !void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const zon = b.dependency("zon", .{ .target = target, .optimize = .ReleaseFast }).module("zon");
+    const zon_module = b.dependency("zon", .{ .target = target, .optimize = .ReleaseFast }).module("zon");
 
     // XXX: I think I want separate build scripts for the game, engine, other games, this is
     // gonna get too hard to follow quickly otherwise
@@ -41,7 +40,7 @@ pub fn build(b: *std.Build) !void {
         .source_file = .{ .path = "src/engine/engine.zig" },
     });
     pew_exe.addModule("engine", engine);
-    pew_exe.addModule("zon", zon);
+    pew_exe.addModule("zon", zon_module);
 
     const use_llvm = b.option(bool, "use-llvm", "use zig's llvm backend");
     pew_exe.use_llvm = use_llvm;
@@ -197,7 +196,7 @@ pub fn build(b: *std.Build) !void {
             };
         }
     };
-    const bake_sprite_png = BakeSpritePng.create(b, zon, target, optimize);
+    const bake_sprite_png = BakeSpritePng.create(b, zon_module, target, optimize);
     var bake_sprites = BakeAssets.create(b);
     defer bake_sprites.deinit();
     try bake_sprites.addAssets(.{
@@ -236,12 +235,30 @@ pub fn build(b: *std.Build) !void {
     // XXX: for a more convenient shorthand, could allow nesting the sprite config in the image config,
     // instead of just making it the extension? only when applicable of course. ehhh we'd have to make a separate struct
     // so references to other images aren't allowed though right..? may just be more confusing.
-    const ValidateSprite = struct {
+    const BakeSprite = struct {
         const Self = @This();
 
         owner: *std.Build,
         exe: *std.Build.CompileStep,
         pew_exe: *std.Build.CompileStep,
+
+        // XXX: error handling on all zon stuff...
+        // XXX: temp dup definition
+        const Tint = union(enum) {
+            none,
+            luminosity,
+            mask: struct {
+                // XXX: ...just inline once no other fields
+                path: []const u8,
+            },
+        };
+
+        const Sprite = struct {
+            // XXX: naming etc
+            diffuse_path: []const u8,
+            degrees: f32 = 0.0,
+            tint: Tint = .none,
+        };
 
         fn create(
             owner: *std.Build,
@@ -250,11 +267,15 @@ pub fn build(b: *std.Build) !void {
             o: std.builtin.Mode,
         ) Self {
             const exe = owner.addExecutable(.{
-                .name = "validate-sprite",
-                .root_source_file = .{ .path = "src/game/bake/validate_sprite.zig" },
+                .name = "bake-sprite",
+                .root_source_file = .{ .path = "src/game/bake/bake_sprite.zig" },
                 .target = t,
                 .optimize = o,
             });
+            exe.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
+            exe.addIncludePath("src/game/bake");
+            exe.linkLibC();
+
             return .{
                 .owner = owner,
                 .exe = exe,
@@ -262,47 +283,91 @@ pub fn build(b: *std.Build) !void {
             };
         }
 
+        // XXX: also make it easy/automatic to validate ALL zon at bake time even when installed? do we need the
+        // types anyway to be able to do install or no?
         fn run(ctx: *const anyopaque, args: BakeAssets.BakeStep.RunArgs) !?BakeAssets.BakeStep.BakedAsset {
             const self: *const Self = @ptrCast(@alignCast(ctx));
+
             const process = self.owner.addRunArtifact(self.exe);
+            process.setName(try std.fmt.allocPrint(self.owner.allocator, "{s} ({s})", .{
+                process.step.name,
+                args.asset_path_in,
+            }));
 
-            // XXX: oh wait the in path is guarenteed to exist cause it needed to for addassets anyway lol right?? wait
-            // how do generated sprites work again? i guess they just go straight to the output never input into this sorta thing?
-            // XXX: don't do this every time, just open it once at start and close at end or does that not work?
-            var data_path_abs = try self.owner.build_root.join(self.owner.allocator, &.{data_path});
-            defer self.owner.allocator.free(data_path_abs);
-            var dir = std.fs.openDirAbsolute(data_path_abs, .{}) catch unreachable; // XXX: errors
-            defer dir.close();
-            var zon_source = dir.readFileAllocOptions(
-                self.owner.allocator,
-                args.asset_path_in[data_path.len + 1 ..], // XXX: ...
-                1024,
-                null,
-                @alignOf(u8),
-                0,
-            ) catch unreachable; // XXX: errors
-            defer self.owner.allocator.free(zon_source);
-            // XXX: error handling on all zon stuff...
-            // XXX: also make it easy/automatic to validate ALL zon at bake time even when installed? do we need the
-            // types anyway to be able to do install or no?
-            // XXX: CURRENT: wait a sec, how do we actually get the paths here? we can't parse it cause it requires the enum
-            // which hasn't been generated yet. i mean we have all the bits we need but we'd wanna parse this in a way that gets
-            // strings instead of enums, which is annoying.
-            // If all we're doing is validating, we can do that in essentially another "game" that just uses every asset, that automatically
-            // makes sure everything parses and also allows us to do additional checks. It will check everything every time but yeah. That's
-            // probably fine for this?
-            //
-            // But what if we wanted to combine assets? I mean that's a use case we wanna support right?
-            // Is there something fundamentally wrong with this design that makes this hard?
+            // Read the sprite definition
+            const sprite = b: {
+                var zon_source = try self.owner.build_root.handle.readFileAllocOptions(
+                    self.owner.allocator,
+                    args.asset_path_in,
+                    1024,
+                    null,
+                    @alignOf(u8),
+                    0,
+                );
+                defer self.owner.allocator.free(zon_source);
 
-            // const config = try zon.parseFromSlice(asset_index.Sprite, allocator, zon_source, .{});
-            // defer zon.parseFree(allocator, config); // XXX: ...
-            // XXX: hmm how can we parse it if we don't have the ids yet..?
-            // std.debug.print("validate {s}\n", .{zon_source});
+                break :b try zon.parseFromSlice(Sprite, self.owner.allocator, zon_source, .{
+                    // XXX: temp true...
+                    .ignore_unknown_fields = true,
+                });
+            };
+            defer zon.parseFree(self.owner.allocator, sprite);
 
-            process.addFileSourceArg(args.asset_cached);
-            // XXX: depend on the result so it actually gets done..?
+            // Add an argument for the diffuse image
+            {
+                var diffuse_path = try std.fs.path.join(self.owner.allocator, &.{
+                    std.fs.path.dirname(args.asset_path_in).?,
+                    sprite.diffuse_path,
+                });
+                // defer self.owner.allocator.free(diffuse_path); // XXX: ...
+                var diffuse_cached = args.bake_assets.cache_input.addCopyFile(
+                    .{ .path = diffuse_path },
+                    diffuse_path,
+                );
+                process.addFileSourceArg(diffuse_cached);
+            }
+
+            // Add an argument for the tint
+            switch (sprite.tint) {
+                .mask => |m| {
+                    var mask_path = try std.fs.path.join(self.owner.allocator, &.{
+                        std.fs.path.dirname(args.asset_path_in).?,
+                        m.path,
+                    });
+                    // defer self.owner.allocator.free(mask_path); // XXX: ...
+                    var mask_cached = args.bake_assets.cache_input.addCopyFile(
+                        .{ .path = mask_path },
+                        mask_path,
+                    );
+                    process.addFileSourceArg(mask_cached);
+                },
+                .none => process.addArg("none"),
+                .luminosity => process.addArg("luminosity"),
+            }
+
+            // Add an argument for the rotation
+            {
+                // XXX: a little silly to parse from string to f32 and then back to string, maybe
+                // the tricks josh is using to allow for more flexible json parsing would be useful in a small way here?
+                var degrees = try std.fmt.allocPrint(self.owner.allocator, "{}", .{sprite.degrees});
+                defer self.owner.allocator.free(degrees);
+                process.addArg(degrees);
+            }
+
+            // Add an argument for the out path
+            {
+                const out_path = try std.fmt.allocPrint(
+                    self.owner.allocator,
+                    "{s}.tempimg", // XXX: pick extension once actually using
+                    .{args.asset_path_out},
+                );
+                const file_source = process.addOutputFileArg(out_path);
+                _ = file_source;
+            }
+
+            // XXX: can remove soon when we actually return the baked asset here...
             self.pew_exe.step.dependOn(&process.step);
+
             return null;
         }
 
@@ -313,13 +378,12 @@ pub fn build(b: *std.Build) !void {
             };
         }
     };
-    const validate_sprite = ValidateSprite.create(b, pew_exe, target, optimize);
+    var bake_sprite = BakeSprite.create(b, pew_exe, target, optimize);
     try bake_sprites.addAssets(.{
         .path = data_path,
         .extension = ".sprite.zon",
         .storage = .install,
-        // XXX: rename since it may not bake anything if it validates for example?
-        .bake_step = validate_sprite.bakeStep(),
+        .bake_step = bake_sprite.bakeStep(),
     });
     pew_exe.addModule("sprite_descriptors", try bake_sprites.createModule());
 

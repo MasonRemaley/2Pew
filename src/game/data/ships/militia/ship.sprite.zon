@@ -1,5 +1,9 @@
 .{
     .diffuse = .@"militia/diffuse",
-    .tint = .{ .mask = .@"militia/mask" },
+    .diffuse_path = "diffuse.png",
+    .tint = .{ .mask = .{
+        .id = .@"militia/mask",
+        .path = "mask.png",
+    } },
     .degrees = 90.0,
 }
