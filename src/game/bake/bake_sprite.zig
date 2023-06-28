@@ -40,7 +40,8 @@ const Png = struct {
 };
 
 pub fn main() !void {
-    // XXX: allocator...
+    // XXX: allocator...never free memory this is a short lived process?
+    // XXX: reader used on pngs is buffered right?
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
@@ -53,11 +54,18 @@ pub fn main() !void {
         return error.BadArgCount;
     }
 
+    const Tint = union(enum) {
+        mask: Png,
+        luminosity,
+        none,
+    };
+
     const diffuse_path = args[1];
-    const tint = args[2];
+    const tint_str = args[2];
     const degrees = try std.fmt.parseFloat(f32, args[3]);
     const out_path = args[4];
 
+    // XXX: is cwd right, or does running zig from different places break this?
     // Bake the sprite
     var dir = std.fs.cwd();
 
@@ -68,28 +76,41 @@ pub fn main() !void {
     };
     defer diffuse.deinit();
 
-    var mask = if (std.mem.endsWith(u8, tint, ".png")) b: {
-        var bytes = try dir.readFileAlloc(allocator, tint, 50 * 1024 * 1024);
+    var tint: Tint = if (std.mem.endsWith(u8, tint_str, ".png")) b: {
+        var bytes = try dir.readFileAlloc(allocator, tint_str, 50 * 1024 * 1024);
         defer allocator.free(bytes);
-        break :b Png.init(bytes);
-    } else null;
-    defer if (mask) |*m| m.deinit();
+        break :b .{ .mask = Png.init(bytes) };
+    } else if (std.mem.eql(u8, tint_str, "luminosity"))
+        .luminosity
+    else if (std.mem.eql(u8, tint_str, "none"))
+        .none
+    else
+        std.debug.panic("unexpected tint argument: {s}", .{tint_str});
+    defer if (tint == .mask) tint.mask.deinit();
 
+    // XXX: read/write file options?
+    // XXX: are we ever gonna add other fields to the id files or just make string? also rename extension to id??
     // XXX: include tint too if not a mask and not applied here!!
     var out_file = try dir.createFile(out_path, .{});
     defer out_file.close();
     var out_file_writer = out_file.writer();
-    try out_file_writer.writeIntLittle(u32, diffuse.width);
-    try out_file_writer.writeIntLittle(u32, diffuse.height);
+    try out_file_writer.writeIntLittle(u16, diffuse.width);
+    try out_file_writer.writeIntLittle(u16, diffuse.height);
     // XXX: or just apply the rotation here? (can limit to 90 degree increments...)
     // XXX: why can't u32 be inferred here?
     try out_file_writer.writeIntLittle(u32, @as(u32, @bitCast(degrees)));
+    // XXX: could use an enum...
+    switch (tint) {
+        .mask => try out_file_writer.writeIntLittle(u8, 2),
+        .luminosity => try out_file_writer.writeIntLittle(u8, 1),
+        .none => try out_file_writer.writeIntLittle(u8, 0),
+    }
     try out_file_writer.writeAll(diffuse.pixels);
-    if (mask) |m| {
-        if (m.width != diffuse.width or m.height != diffuse.height) {
+    if (tint == .mask) {
+        if (tint.mask.width != diffuse.width or tint.mask.height != diffuse.height) {
             std.debug.print("diffuse and mask dimensions do not match\n", .{});
             return error.InvalidMask;
         }
-        try out_file_writer.writeAll(m.pixels);
+        try out_file_writer.writeAll(tint.mask.pixels);
     }
 }

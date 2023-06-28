@@ -88,70 +88,29 @@ pub fn build(b: *std.Build) !void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Bake images
     const data_path = "src/game/data";
-    const BakeImage = struct {
-        const Self = @This();
 
-        owner: *std.Build,
-        exe: *std.Build.CompileStep,
-
-        // XXX: wait cross target should just be this target for the bake step right?
-        fn create(owner: *std.Build, t: std.zig.CrossTarget, o: std.builtin.Mode) Self {
-            var exe = owner.addExecutable(.{
-                .name = "bake-image",
-                .root_source_file = .{ .path = "src/game/bake/bake_image.zig" },
-                // XXX: ... re-getting because variables not available..
-                .target = t,
-                .optimize = o,
-            });
-            exe.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
-            exe.addIncludePath("src/game/bake");
-            exe.linkLibC();
-            return .{ .owner = owner, .exe = exe };
-        }
-
-        // XXX: any way to make the anyopaque cast automatic? see articles about zig interfaces?
-        // XXX: return arg naming...
-        // XXX: what are all these args..??
-        fn run(ctx: *const anyopaque, args: BakeAssets.BakeStep.RunArgs) !?BakeAssets.BakeStep.BakedAsset {
-            const self: *const Self = @ptrCast(@alignCast(ctx));
-            const baked_asset_path_out = try std.fmt.allocPrint(self.owner.allocator, "{s}.pimg", .{args.asset_path_out});
-            const process = self.owner.addRunArtifact(self.exe);
-            process.addFileSourceArg(args.asset_cached);
-            const file_source = process.addOutputFileArg(baked_asset_path_out);
-            return .{
-                .file_source = file_source,
-                .asset_path_out = baked_asset_path_out,
-            };
-        }
-
-        pub fn bakeStep(self: *const @This()) BakeAssets.BakeStep {
-            return .{
-                .ptr = self,
-                .vtable = &.{ .run = run },
-            };
-        }
-    };
-
-    const bake_image = BakeImage.create(b, target, optimize);
-    var bake_images = BakeAssets.create(b);
-    defer bake_images.deinit();
-    try bake_images.addAssets(.{
-        .path = data_path,
-        .extension = ".png",
-        .storage = .install,
-        .bake_step = bake_image.bakeStep(),
-    });
+    // XXX: is the output less confusing if we rename extensions or can there be collisions one way or the other?
+    // XXX: wait cross target should just be this target for the bake step right?
     // XXX: don't include the . in extension args, make it automatic, so you can't leave it off
-    pew_exe.addModule("image_descriptors", try bake_images.createModule());
-
     // XXX: make sure to make the win/header particle able to be tinted! we could also just set this
     // per sprite instance instead of per sprite asset and have it be the mask or not that's set on the
     // instance, idk.
     // XXX: maybe check that no .sprite.pngs are references from .sprite.zigs since that's probably a mistake?
     // Bake sprites
-    const BakeSpritePng = struct {
+    const bake_sprite_exe = b: {
+        const exe = b.addExecutable(.{
+            .name = "bake-sprite",
+            .root_source_file = .{ .path = "src/game/bake/bake_sprite.zig" },
+            .target = target,
+            .optimize = optimize,
+        });
+        exe.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
+        exe.addIncludePath("src/game/bake");
+        exe.linkLibC();
+        break :b exe;
+    };
+    const BakePngSprite = struct {
         const Self = @This();
 
         owner: *std.Build,
@@ -159,15 +118,7 @@ pub fn build(b: *std.Build) !void {
 
         // XXX: create outside and pass in instead of passing zon in? maybe make a more generic step that just takes a exe to run, but, args?
         // XXX: also for now dup code wiht other step but, see if it stays around...
-        fn create(owner: *std.Build, z: *std.Build.Module, t: std.zig.CrossTarget, o: std.builtin.Mode) Self {
-            const exe = owner.addExecutable(.{
-                .name = "bake-sprite",
-                .root_source_file = .{ .path = "src/game/bake/bake_sprite_png.zig" },
-                // XXX: ... re-getting because variables not available..
-                .target = t,
-                .optimize = o,
-            });
-            exe.addModule("zon", z);
+        fn create(owner: *std.Build, exe: *std.Build.CompileStep) Self {
             return .{
                 .owner = owner,
                 .exe = exe,
@@ -177,15 +128,34 @@ pub fn build(b: *std.Build) !void {
         // XXX: any way to make the anyopaque cast automatic? see articles about zig interfaces?
         fn run(ctx: *const anyopaque, args: BakeAssets.BakeStep.RunArgs) !?BakeAssets.BakeStep.BakedAsset {
             const self: *const Self = @ptrCast(@alignCast(ctx));
-            // XXX: CURRENT: DOING: continue removing args not needed from the processor,
-            // then we can move this to like a preprocess step that then feeds into a single sprite validation step or do a separate one of those later or dup it or whatever
-            const baked_asset_path_out = try std.fmt.allocPrint(self.owner.allocator, "{s}.pimg.sprite.zon", .{args.asset_path_out});
+
             const process = self.owner.addRunArtifact(self.exe);
-            process.addFileSourceArg(args.config_cached);
-            const file_source = process.addOutputFileArg(baked_asset_path_out);
+            process.setName(try std.fmt.allocPrint(self.owner.allocator, "{s} ({s})", .{
+                process.step.name,
+                args.asset_path_in,
+            }));
+
+            // Add an argument for the diffuse image
+            process.addFileSourceArg(args.asset_cached);
+
+            // Add an argument for the tint
+            process.addArg("none");
+
+            // Add an argument for the rotation
+            process.addArg("0");
+
+            // Add an argument for the out path
+            const out_path = try std.fmt.allocPrint(
+                self.owner.allocator,
+                "{s}.sprite", // XXX: pick extension once actually using
+                .{args.asset_path_out},
+            );
+            const file_source = process.addOutputFileArg(out_path);
+
+            // XXX: stop baking images now that it's done here!
             return .{
                 .file_source = file_source,
-                .asset_path_out = baked_asset_path_out,
+                .asset_path_out = out_path,
             };
         }
 
@@ -196,14 +166,14 @@ pub fn build(b: *std.Build) !void {
             };
         }
     };
-    const bake_sprite_png = BakeSpritePng.create(b, zon_module, target, optimize);
+    const bake_png_sprite = BakePngSprite.create(b, bake_sprite_exe);
     var bake_sprites = BakeAssets.create(b);
     defer bake_sprites.deinit();
     try bake_sprites.addAssets(.{
         .path = data_path,
         .extension = ".sprite.png",
         .storage = .install,
-        .bake_step = bake_sprite_png.bakeStep(),
+        .bake_step = bake_png_sprite.bakeStep(),
     });
     // XXX: current: this!
     // - add a baker that verifies image sizes, and that we're not re-baking a .sprite.png
@@ -235,12 +205,11 @@ pub fn build(b: *std.Build) !void {
     // XXX: for a more convenient shorthand, could allow nesting the sprite config in the image config,
     // instead of just making it the extension? only when applicable of course. ehhh we'd have to make a separate struct
     // so references to other images aren't allowed though right..? may just be more confusing.
-    const BakeSprite = struct {
+    const BakeZonSprite = struct {
         const Self = @This();
 
         owner: *std.Build,
         exe: *std.Build.CompileStep,
-        pew_exe: *std.Build.CompileStep,
 
         // XXX: error handling on all zon stuff...
         // XXX: temp dup definition
@@ -260,26 +229,11 @@ pub fn build(b: *std.Build) !void {
             tint: Tint = .none,
         };
 
-        fn create(
-            owner: *std.Build,
-            p: *std.Build.CompileStep,
-            t: std.zig.CrossTarget,
-            o: std.builtin.Mode,
-        ) Self {
-            const exe = owner.addExecutable(.{
-                .name = "bake-sprite",
-                .root_source_file = .{ .path = "src/game/bake/bake_sprite.zig" },
-                .target = t,
-                .optimize = o,
-            });
-            exe.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
-            exe.addIncludePath("src/game/bake");
-            exe.linkLibC();
-
+        fn create(owner: *std.Build, exe: *std.Build.CompileStep) Self {
             return .{
+                // XXX: can i just get owner from exe here and elsewhere?
                 .owner = owner,
                 .exe = exe,
-                .pew_exe = p,
             };
         }
 
@@ -355,20 +309,18 @@ pub fn build(b: *std.Build) !void {
             }
 
             // Add an argument for the out path
-            {
-                const out_path = try std.fmt.allocPrint(
-                    self.owner.allocator,
-                    "{s}.tempimg", // XXX: pick extension once actually using
-                    .{args.asset_path_out},
-                );
-                const file_source = process.addOutputFileArg(out_path);
-                _ = file_source;
-            }
+            const out_path = try std.fmt.allocPrint(
+                self.owner.allocator,
+                "{s}.sprite", // XXX: pick extension once actually using
+                .{args.asset_path_out},
+            );
+            const file_source = process.addOutputFileArg(out_path);
 
-            // XXX: can remove soon when we actually return the baked asset here...
-            self.pew_exe.step.dependOn(&process.step);
-
-            return null;
+            // XXX: stop baking images now that it's done here!
+            return .{
+                .file_source = file_source,
+                .asset_path_out = out_path,
+            };
         }
 
         pub fn bakeStep(self: *const @This()) BakeAssets.BakeStep {
@@ -378,12 +330,13 @@ pub fn build(b: *std.Build) !void {
             };
         }
     };
-    var bake_sprite = BakeSprite.create(b, pew_exe, target, optimize);
+    var bake_zon_sprite = BakeZonSprite.create(b, bake_sprite_exe);
+    // XXX: make sure that missing mask files and such get good errors...
     try bake_sprites.addAssets(.{
         .path = data_path,
         .extension = ".sprite.zon",
         .storage = .install,
-        .bake_step = bake_sprite.bakeStep(),
+        .bake_step = bake_zon_sprite.bakeStep(),
     });
     pew_exe.addModule("sprite_descriptors", try bake_sprites.createModule());
 

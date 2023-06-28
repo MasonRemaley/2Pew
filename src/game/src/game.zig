@@ -2188,7 +2188,7 @@ const Renderer = struct {
                 .data => {},
                 .path => gpa.free(animation_zon),
             };
-            // XXX: is error impossible at this point?
+            // XXX: is error impossible at this point? also could be binary at this point but doesn't really matter?
             const animation = try zon.parseFromSlice(asset_index.Animation, gpa, animation_zon, .{});
             animations.set(id, animation);
         }
@@ -2209,70 +2209,69 @@ const Renderer = struct {
 
     // XXX: is there a weird edge on the melee ship tint or is thatpart of the art? (compare to main branch before merging!)
     fn loadSprite(allocator: Allocator, dir: std.fs.Dir, sdl: *c.SDL_Renderer, sprite_id: SpriteId) !Sprite {
-        const sprite_zon = switch (asset_index.sprites.get(sprite_id).*) {
+        const sprite_bytes = switch (asset_index.sprites.get(sprite_id).*) {
             .data => |data| data,
             .path => |path| try dir.readFileAllocOptions(allocator, path, 50 * 1024 * 1024, null, @alignOf(u8), 0),
         };
         defer switch (asset_index.sprites.get(sprite_id).*) {
             .data => {},
-            .path => allocator.free(sprite_zon),
+            .path => allocator.free(sprite_bytes),
         };
 
-        // XXX: is error impossible at this point?
-        var ast = try std.zig.Ast.parse(allocator, sprite_zon, .zon);
-        defer ast.deinit(allocator);
-        assert(ast.errors.len == 0);
-        var status: zon.Status = .success;
-        const sprite = zon.parseFromAst(asset_index.Sprite, allocator, &ast, &status, .{}) catch |err|
-            std.debug.panic("err: {s} {} '{}'", .{ asset_index.sprites.get(sprite_id).path, err, status });
-        defer zon.parseFree(allocator, sprite);
-        const diffuse_image = asset_index.images.get(sprite.diffuse);
-        const diffuse_bytes = switch (diffuse_image.*) {
-            .data => |data| data,
-            .path => |path| try dir.readFileAlloc(allocator, path, 50 * 1024 * 1024),
+        // XXX: could just load the header directly from a struct, but endianess? could do native but cross compiling?
+        // XXX: we need a certain alignment on the buffer for this stuff to be allowed/allowed without penalty?
+        // XXX: write/readstruct?
+        const width = std.mem.readIntLittle(u16, sprite_bytes[0..2]);
+        const height = std.mem.readIntLittle(u16, sprite_bytes[2..4]);
+        const degrees: f32 = @bitCast(std.mem.readIntLittle(u32, sprite_bytes[4..8]));
+        const Tint = enum {
+            none,
+            mask,
+            luminosity,
         };
-        defer switch (diffuse_image.*) {
-            .data => {},
-            .path => allocator.free(diffuse_bytes),
+        const tint: Tint = switch (sprite_bytes[8]) {
+            0 => .none,
+            1 => .luminosity,
+            2 => .mask,
+            else => unreachable,
         };
-        const tint = switch (sprite.tint) {
-            .none => false,
-            .luminosity, .mask => true,
+        const remaining = sprite_bytes[9..];
+        const len = @as(usize, width) * @as(usize, height) * 4;
+        const diffuse_bytes = remaining[0..len];
+        const mask_bytes = if (remaining.len == len * 2) b: {
+            assert(remaining.len == len * 2);
+            break :b remaining[len..];
+        } else b: {
+            assert(remaining.len == len);
+            break :b null;
         };
-        const mask_bytes = switch (sprite.tint) {
-            .mask => |mask| switch (asset_index.images.get(mask.id).*) {
-                .data => |data| data,
-                .path => |path| try dir.readFileAlloc(allocator, path, 50 * 1024 * 1024),
-            },
-            .luminosity, .none => null,
-        };
-        // XXX: better way to do this defer?
-        defer switch (sprite.tint) {
-            .mask => |mask| switch (asset_index.images.get(mask.id).*) {
-                .data => {},
-                .path => allocator.free(mask_bytes.?),
-            },
-            .luminosity, .none => {},
-        };
+
+        // XXX: maybe just bake all this stuff instead?
         return try spriteFromBytes(
             allocator,
+            width,
+            height,
             diffuse_bytes,
             mask_bytes,
-            tint,
-            std.math.degreesToRadians(f32, sprite.degrees),
+            tint != .none,
+            std.math.degreesToRadians(f32, degrees),
             sdl,
         );
     }
 
-    fn spriteFromBytes(allocator: Allocator, diffuse: []const u8, mask: ?[]const u8, apply_tint: bool, radians: f32, sdl: *c.SDL_Renderer) !Sprite {
-        // XXX: make a file for this format that does encoding and decoding, solves endianness issues, etc?
-        const width: u16 = @bitCast(diffuse[0..2].*);
-        const height: u16 = @bitCast(diffuse[2..4].*);
-        // XXX: does alignment matter for this? (could allocate aligned initially if we needed to!)
-        const diffuse_pixels = diffuse[4..];
+    fn spriteFromBytes(
+        allocator: Allocator,
+        width: u16,
+        height: u16,
+        diffuse: []const u8,
+        mask: ?[]const u8,
+        apply_tint: bool,
+        radians: f32,
+        sdl: *c.SDL_Renderer,
+    ) !Sprite {
         const channel_count = 4;
         const bits_per_channel = 8;
-        assert(diffuse_pixels.len == @as(u32, width) * @as(u32, height) * @as(u32, channel_count)); // XXX: ...
+        assert(diffuse.len == @as(u32, width) * @as(u32, height) * @as(u32, channel_count));
 
         // XXX: ...
         const tints: [4][3]u8 = .{
@@ -2285,7 +2284,7 @@ const Renderer = struct {
         errdefer textures.deinit(allocator);
         if (apply_tint) {
             for (tints) |tint| {
-                const diffuse_copy = try allocator.dupe(u8, diffuse_pixels);
+                const diffuse_copy = try allocator.dupe(u8, diffuse);
                 defer allocator.free(diffuse_copy);
 
                 for (0..diffuse_copy.len / channel_count) |pixel| {
@@ -2352,7 +2351,7 @@ const Renderer = struct {
         } else {
             const pitch = width * channel_count;
             const surface = c.SDL_CreateRGBSurfaceFrom(
-                @as(?*anyopaque, @ptrCast(@constCast(diffuse_pixels.ptr))),
+                @as(?*anyopaque, @ptrCast(@constCast(diffuse.ptr))),
                 // XXX: why do I need intcast here?
                 @intCast(width),
                 @intCast(height),
