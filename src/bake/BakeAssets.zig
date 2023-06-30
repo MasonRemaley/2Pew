@@ -12,8 +12,6 @@ pub const StorageMode = enum {
     embed,
 };
 
-// XXX: ...naming if even needs a name, etc. maybe also make args a struct so can add more idk.
-// XXX: is this still needed or can we go back to always passing the same args in to run steps?
 pub const BakeStep = struct {
     const Self = @This();
 
@@ -21,14 +19,7 @@ pub const BakeStep = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        // XXX: *const fn vs just fn??
-        // XXX: anyerror okay here?
-        run: *const fn (ctx: *const anyopaque, args: RunArgs) anyerror!?BakedAsset,
-    };
-    // XXX: are both of these needed, or can we get asset path out from file source?? (same for args?)
-    pub const BakedAsset = struct {
-        file_source: FileSource,
-        asset_path_out: []u8,
+        run: *const fn (ctx: *const anyopaque, args: RunArgs) anyerror!Baked,
     };
 
     pub const RunArgs = struct {
@@ -40,7 +31,16 @@ pub const BakeStep = struct {
         config_cached: FileSource,
     };
 
-    fn run(self: *const Self, args: RunArgs) !?BakedAsset {
+    pub const Baked = struct {
+        // The baked file.
+        file_source: FileSource,
+        // XXX: kinda confusing when embedded. Still sort of installed there and then embedded but I'm not sure why this is necessary? Maybe just covnenient so
+        // always named the same though..?
+        // The path at which to install the asset.
+        install_path: []const u8,
+    };
+
+    fn run(self: *const Self, args: RunArgs) !Baked {
         return self.vtable.run(self.ptr, args);
     }
 };
@@ -122,37 +122,32 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
 
             // XXX: make sure only stuff that needs to is getting rebuilt...
             var config_cached = self.cache_input.addCopyFile(.{ .path = config_path_in }, config_path_in);
+            // XXX: does this create an extra unecessary copy if we pass it to a bake step?
             var asset_cached = self.cache_input.addCopyFile(.{ .path = asset_path_in }, asset_path_in);
 
             // XXX: any way to clean up?
             // Bake the asset
-            var processed_asset = if (options.bake_step) |bake_step| b: {
-                const baked = try bake_step.run(.{
+            var baked = if (options.bake_step) |bake_step| b: {
+                break :b try bake_step.run(.{
                     .bake_assets = self,
                     .asset_path_in = asset_path_in,
                     .asset_path_out = asset_path_out,
                     .asset_cached = asset_cached,
                     .config_cached = config_cached,
                 });
-                if (baked) |b| {
-                    // XXX: mem management on these..? and the things they replace?
-                    asset_path_out = b.asset_path_out;
-                    break :b b.file_source;
-                } else break :b asset_cached;
-            } else asset_cached;
-            // var processed_asset = if (options.bake_step) |p| b: {
-            //     asset_path_out = try std.fmt.allocPrint(self.owner.allocator, "{s}{s}", .{ asset_path_out[0 .. asset_path_out.len - options.extension.len], p.out_extension });
-            //     const compile_step = self.owner.addRunArtifact(p.compile_step);
-            //     compile_step.addFileSourceArg(asset_cached);
-            //     compile_step.addFileSourceArg(config_cached);
-            //     break :b compile_step.addOutputFileArg(asset_path_out);
-            // } else asset_cached;
+            } else BakeStep.Baked{
+                // XXX: have a default bake step impl that does this or something or no?
+                .file_source = asset_cached,
+                .install_path = asset_path_out,
+            };
 
+            // XXX: does this also create unecessary copies? and maybe now even rename things back to the wrong path..?
             // Store the data
             switch (options.storage) {
-                .import, .embed => _ = self.write_output.addCopyFile(processed_asset, asset_path_out),
+                .import, .embed => _ = self.write_output.addCopyFile(baked.file_source, baked.install_path),
                 .install => {
-                    const install = self.owner.addInstallFile(processed_asset, asset_path_out);
+                    const install = self.owner.addInstallFile(baked.file_source, baked.install_path);
+                    // XXX: just do once?
                     self.write_output.step.dependOn(&install.step);
                 },
             }
@@ -180,9 +175,9 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
                 // XXX: don't free if we're passing the id out...though could free when we free this maybe
                 .id = try self.owner.allocator.dupe(u8, config.id),
                 .data = switch (options.storage) {
-                    .install => .{ .install = asset_path_out },
-                    .import => .{ .import = asset_path_out },
-                    .embed => .{ .embed = asset_path_out },
+                    .install => .{ .install = baked.install_path },
+                    .import => .{ .import = baked.install_path },
+                    .embed => .{ .embed = baked.install_path },
                 },
             });
         }

@@ -1,9 +1,7 @@
 .{
-    .diffuse = .@"wendy/diffuse",
-    .diffuse_path = "diffuse.png",
-    .tint = .{ .mask = .{
-        .id = .@"wendy/mask",
-        .path = "mask.png",
-    } },
+    .diffuse = "diffuse.png",
+    .tint = .{
+        .mask = "mask.png",
+    },
     .degrees = 90.0,
 }
