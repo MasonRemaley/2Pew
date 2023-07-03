@@ -6,6 +6,10 @@ const FileSource = std.Build.FileSource;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const BakeConfig = struct { id: []const u8 };
 
+// XXX: make sure only stuff that needs to is getting rebuilt...
+// XXX: ...
+pub const config_extension = ".bake.zon";
+
 pub const StorageMode = enum {
     install,
     import,
@@ -23,12 +27,14 @@ pub const BakeStep = struct {
     };
 
     pub const RunArgs = struct {
-        // XXX: document the purpose of each of these..
-        bake_assets: *BakeAssets,
-        asset_path_in: []const u8,
-        asset_path_out: []const u8,
-        asset_cached: FileSource,
-        config_cached: FileSource,
+        /// The path to the asset.
+        asset_path: []const u8,
+        /// The path to the bake config.
+        config_path: []const u8,
+        /// The default location to write this asset to. You may use a different path, e.g. to change the extension.
+        default_install_path: []const u8,
+        // XXX: document this
+        cache_input: *Step.WriteFile,
     };
 
     pub const Baked = struct {
@@ -97,7 +103,6 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
     // XXX: cache the index in source control as well in something readable (.zon or .json) and use
     // it as input when available to verify that assets weren't missing and such?
     // XXX: catch duplicate ids and such here?
-    const config_extension = ".bake.zon";
     var assets_iterable = try self.owner.build_root.handle.openIterableDir(options.path, .{});
     defer assets_iterable.close();
     var walker = try assets_iterable.walk(self.owner.allocator);
@@ -112,41 +117,39 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
                 continue;
             }
 
-            // Determine the file paths
-            var config_path_in = try std.fs.path.join(self.owner.allocator, &.{ options.path, entry.path });
-            // defer self.owner.allocator.free(config_path_in); // XXX: ...
-            const asset_path_in = config_path_in[0 .. config_path_in.len - config_extension.len];
-            var asset_path_out = try std.fs.path.join(self.owner.allocator, &.{ "data", entry.path[0 .. entry.path.len - config_extension.len] });
-            // XXX: ... defer self.owner.allocator.free(asset_path_out); also gonna overwrite..weird pattern, make new var?
-            std.mem.replaceScalar(u8, asset_path_out, '\\', '/');
-
-            // XXX: make sure only stuff that needs to is getting rebuilt...
-            var config_cached = self.cache_input.addCopyFile(.{ .path = config_path_in }, config_path_in);
-            // XXX: does this create an extra unecessary copy if we pass it to a bake step?
-            var asset_cached = self.cache_input.addCopyFile(.{ .path = asset_path_in }, asset_path_in);
+            // XXX: not freeing paths we create here for now...
+            // XXX: what if asset doesn't exist?
+            const config_path = try std.fs.path.join(self.owner.allocator, &.{ options.path, entry.path });
+            // defer self.owner.allocator.free(config_path);
+            const asset_path = config_path[0 .. config_path.len - config_extension.len];
+            var default_install_path = entry.path[0 .. entry.path.len - config_extension.len];
 
             // XXX: any way to clean up?
             // Bake the asset
             var baked = if (options.bake_step) |bake_step| b: {
                 break :b try bake_step.run(.{
-                    .bake_assets = self,
-                    .asset_path_in = asset_path_in,
-                    .asset_path_out = asset_path_out,
-                    .asset_cached = asset_cached,
-                    .config_cached = config_cached,
+                    .cache_input = self.cache_input, // XXX: could create own step but is verbose..could pass self but has other stuff..
+                    .asset_path = asset_path,
+                    .config_path = config_path,
+                    // XXX: could make function that generates and optionally appends extension
+                    .default_install_path = default_install_path,
                 });
             } else BakeStep.Baked{
                 // XXX: have a default bake step impl that does this or something or no?
-                .file_source = asset_cached,
-                .install_path = asset_path_out,
+                .file_source = FileSource.relative(asset_path),
+                .install_path = default_install_path,
             };
 
-            // XXX: does this also create unecessary copies? and maybe now even rename things back to the wrong path..?
+            // XXX: this does unecessary copies of files right now in some cases. do we actually need two write file
+            // steps? maybe for deps to work out between them..?
             // Store the data
             switch (options.storage) {
-                .import, .embed => _ = self.write_output.addCopyFile(baked.file_source, baked.install_path),
+                // XXX: ...
+                .import, .embed => unreachable,
                 .install => {
-                    const install = self.owner.addInstallFile(baked.file_source, baked.install_path);
+                    // XXX: wait we could make a single install step, also, install file with dir is a thing
+                    // const install = self.owner.addInstallFile(baked.file_source, baked.install_path);
+                    const install = self.owner.addInstallFileWithDir(baked.file_source, .{ .custom = "data" }, baked.install_path);
                     // XXX: just do once?
                     self.write_output.step.dependOn(&install.step);
                 },
@@ -154,9 +157,9 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
 
             // Parse the ID from the bake config
             // XXX: realloc from a fixed buffer allocaator each time?
-            var zon_source = try assets_iterable.dir.readFileAllocOptions(
+            var zon_source = try entry.dir.readFileAllocOptions(
                 self.owner.allocator,
-                entry.path,
+                entry.basename,
                 128,
                 null,
                 @alignOf(u8),
@@ -174,10 +177,11 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
             try self.assets.append(self.owner.allocator, .{
                 // XXX: don't free if we're passing the id out...though could free when we free this maybe
                 .id = try self.owner.allocator.dupe(u8, config.id),
+                // XXX: dup to avoid freeing too early...
                 .data = switch (options.storage) {
-                    .install => .{ .install = baked.install_path },
-                    .import => .{ .import = baked.install_path },
-                    .embed => .{ .embed = baked.install_path },
+                    .install => .{ .install = try self.owner.allocator.dupe(u8, baked.install_path) },
+                    .import => .{ .import = try self.owner.allocator.dupe(u8, baked.install_path) },
+                    .embed => .{ .embed = try self.owner.allocator.dupe(u8, baked.install_path) },
                 },
             });
         }
@@ -209,11 +213,18 @@ pub fn createModule(self: *const BakeAssets) !*std.Build.Module {
                 // implement install for this in the meantime and only implement import once we CAN do @import here.
                 unreachable;
             },
-            .embed => |path| {
-                try std.fmt.format(index_bytes_writer, "        .asset = .{{ .data = @embedFile(\"{s}\") }},\n", .{path});
-            },
+            .embed => unreachable,
             .install => |path| {
-                try std.fmt.format(index_bytes_writer, "        .asset = .{{ .path = \"{s}\" }},\n", .{path});
+                // XXX: instead add a way to escape strings when writing zon?
+                try std.fmt.format(index_bytes_writer, "        .asset = .{{ .path = \"data/", .{});
+                for (path) |c| {
+                    if (c == '\\') {
+                        try index_bytes_writer.writeByte('/');
+                    } else {
+                        try index_bytes_writer.writeByte(c);
+                    }
+                }
+                try std.fmt.format(index_bytes_writer, "\" }},\n", .{});
             },
         }
         try std.fmt.format(index_bytes_writer, "    }},\n", .{});

@@ -130,11 +130,13 @@ pub fn build(b: *std.Build) !void {
             const process = self.owner.addRunArtifact(self.exe);
             process.setName(try std.fmt.allocPrint(self.owner.allocator, "{s} ({s})", .{
                 process.step.name,
-                args.asset_path_in,
+                args.asset_path,
             }));
 
             // Add an argument for the diffuse image
-            process.addFileSourceArg(args.asset_cached);
+            // XXX: use add relative?
+            const asset_cached = args.cache_input.addCopyFile(.{ .path = args.asset_path }, args.asset_path);
+            process.addFileSourceArg(asset_cached);
 
             // Add an argument for the tint
             process.addArg("none");
@@ -146,7 +148,7 @@ pub fn build(b: *std.Build) !void {
             const out_path = try std.fmt.allocPrint(
                 self.owner.allocator,
                 "{s}.sprite",
-                .{args.asset_path_out},
+                .{args.default_install_path},
             );
             return .{
                 .file_source = process.addOutputFileArg(out_path),
@@ -199,14 +201,14 @@ pub fn build(b: *std.Build) !void {
             const process = self.exe.step.owner.addRunArtifact(self.exe);
             process.setName(try std.fmt.allocPrint(self.exe.step.owner.allocator, "{s} ({s})", .{
                 process.step.name,
-                args.asset_path_in,
+                args.asset_path,
             }));
 
             // Read the sprite definition
             const sprite = b: {
                 var zon_source = try self.exe.step.owner.build_root.handle.readFileAllocOptions(
                     self.exe.step.owner.allocator,
-                    args.asset_path_in,
+                    args.asset_path,
                     1024,
                     null,
                     @alignOf(u8),
@@ -221,11 +223,11 @@ pub fn build(b: *std.Build) !void {
             // Add an argument for the diffuse image
             {
                 var diffuse_path = try std.fs.path.join(self.exe.step.owner.allocator, &.{
-                    std.fs.path.dirname(args.asset_path_in).?,
+                    std.fs.path.dirname(args.asset_path).?,
                     sprite.diffuse,
                 });
                 // defer self.exe.step.owner.allocator.free(diffuse_path); // XXX: ...
-                var diffuse_cached = args.bake_assets.cache_input.addCopyFile(
+                var diffuse_cached = args.cache_input.addCopyFile(
                     .{ .path = diffuse_path },
                     diffuse_path,
                 );
@@ -236,11 +238,11 @@ pub fn build(b: *std.Build) !void {
             switch (sprite.tint) {
                 .mask => |path_rel| {
                     var mask_path = try std.fs.path.join(self.exe.step.owner.allocator, &.{
-                        std.fs.path.dirname(args.asset_path_in).?,
+                        std.fs.path.dirname(args.asset_path).?,
                         path_rel,
                     });
                     // defer self.exe.step.owner.allocator.free(mask_path); // XXX: ...
-                    var mask_cached = args.bake_assets.cache_input.addCopyFile(
+                    var mask_cached = args.cache_input.addCopyFile(
                         .{ .path = mask_path },
                         mask_path,
                     );
@@ -263,7 +265,7 @@ pub fn build(b: *std.Build) !void {
             const out_path = try std.fmt.allocPrint(
                 self.exe.step.owner.allocator,
                 "{s}.sprite",
-                .{args.asset_path_out},
+                .{args.default_install_path},
             );
             return .{
                 .file_source = process.addOutputFileArg(out_path),
