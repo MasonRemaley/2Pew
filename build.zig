@@ -12,6 +12,20 @@
 // - get embedding working again (need to be able to import zon first)
 // - auto create the id files, rename to id, possibly just have id in them?
 // - report good errors on zon stuff (test error handling api in practice!)
+// - make sure only stuff that needs to is getting rebuilt...
+// - allow asset groups for purposes of choosing random versions of things? e.g. an artist can
+// add a file to a group via a config file or folder structure, and it shows up in game without the
+// game needing to modify internal arrays of things. may also be useful for things like animations?
+// - asset packs for loading groups of assets together? (and verifying they exist?) if we make some of
+// this dynamic instead of static we may want the missing asset fallbacks again?
+// - what about e.g. deleting an asset that wasn't yet released? we could have a way to mark them as such maye idk, on release
+// it can change whether they need to be persistent
+// - make sure we can do e.g. zig build bake to just bake, add stdout so we can see what's happening even if clear after each line
+// - files seemingly never get DELETED from zig-out, is that expected..? seems like it could get us into
+// trouble.
+// - cache the index in source control as well in something readable (.zon or .json) and use
+// it as input when available to verify that assets weren't missing and such?
+// - catch duplicate ids and such here?
 const std = @import("std");
 const BakeAssets = @import("src/bake/BakeAssets.zig");
 const Allocator = std.mem.Allocator;
@@ -114,56 +128,39 @@ pub fn build(b: *std.Build) !void {
     const BakeSpritePng = struct {
         const Self = @This();
 
-        owner: *std.Build,
         exe: *std.Build.CompileStep,
 
-        fn create(owner: *std.Build, exe: *std.Build.CompileStep) Self {
-            return .{
-                .owner = owner,
-                .exe = exe,
-            };
+        fn create(exe: *std.Build.CompileStep) Self {
+            return .{ .exe = exe };
         }
 
-        fn run(ctx: *const anyopaque, args: BakeAssets.BakeStep.RunArgs) !BakeAssets.BakeStep.Baked {
+        fn add(ctx: *const anyopaque, paths: BakeAssets.BakeStep.Paths) !BakeAssets.BakeStep.Baked {
             const self: *const Self = @ptrCast(@alignCast(ctx));
 
-            const process = self.owner.addRunArtifact(self.exe);
-            process.setName(try std.fmt.allocPrint(self.owner.allocator, "{s} ({s})", .{
-                process.step.name,
-                args.asset_path,
-            }));
-
-            // Add an argument for the diffuse image
-            // XXX: use add relative?
-            const asset_cached = args.cache_input.addCopyFile(.{ .path = args.asset_path }, args.asset_path);
-            process.addFileSourceArg(asset_cached);
-
-            // Add an argument for the tint
-            process.addArg("none");
-
-            // Add an argument for the rotation
-            process.addArg("0");
-
-            // Add an argument for the out path
-            const out_path = try std.fmt.allocPrint(
-                self.owner.allocator,
+            const process = try BakeAssets.BakeStep.addRunArtifactWithInput(self.exe, paths.data);
+            process.addArg("none"); // Tint
+            process.addArg("0"); // Degrees
+            const install_path = try std.fmt.allocPrint(
+                self.exe.step.owner.allocator,
                 "{s}.sprite",
-                .{args.default_install_path},
+                .{paths.install},
             );
+            const file_source = process.addOutputFileArg(install_path);
+
             return .{
-                .file_source = process.addOutputFileArg(out_path),
-                .install_path = out_path,
+                .file_source = file_source,
+                .install_path = install_path,
             };
         }
 
         pub fn bakeStep(self: *const @This()) BakeAssets.BakeStep {
             return .{
                 .ptr = self,
-                .vtable = &.{ .run = run },
+                .vtable = &.{ .add = add },
             };
         }
     };
-    const bake_sprite_png = BakeSpritePng.create(b, bake_sprite_exe);
+    const bake_sprite_png = BakeSpritePng.create(bake_sprite_exe);
     var bake_sprites = BakeAssets.create(b);
     defer bake_sprites.deinit();
     try bake_sprites.addAssets(.{
@@ -190,25 +187,17 @@ pub fn build(b: *std.Build) !void {
         };
 
         fn create(exe: *std.Build.CompileStep) Self {
-            return .{
-                .exe = exe,
-            };
+            return .{ .exe = exe };
         }
 
-        fn run(ctx: *const anyopaque, args: BakeAssets.BakeStep.RunArgs) !BakeAssets.BakeStep.Baked {
+        fn add(ctx: *const anyopaque, paths: BakeAssets.BakeStep.Paths) !BakeAssets.BakeStep.Baked {
             const self: *const Self = @ptrCast(@alignCast(ctx));
-
-            const process = self.exe.step.owner.addRunArtifact(self.exe);
-            process.setName(try std.fmt.allocPrint(self.exe.step.owner.allocator, "{s} ({s})", .{
-                process.step.name,
-                args.asset_path,
-            }));
 
             // Read the sprite definition
             const sprite = b: {
                 var zon_source = try self.exe.step.owner.build_root.handle.readFileAllocOptions(
                     self.exe.step.owner.allocator,
-                    args.asset_path,
+                    paths.data,
                     1024,
                     null,
                     @alignOf(u8),
@@ -220,30 +209,25 @@ pub fn build(b: *std.Build) !void {
             };
             defer zon.parseFree(self.exe.step.owner.allocator, sprite);
 
-            // Add an argument for the diffuse image
-            {
+            // Create the process and pass in the input path
+            const process = b: {
                 var diffuse_path = try std.fs.path.join(self.exe.step.owner.allocator, &.{
-                    std.fs.path.dirname(args.asset_path).?,
+                    std.fs.path.dirname(paths.data).?,
                     sprite.diffuse,
                 });
-                // defer self.exe.step.owner.allocator.free(diffuse_path); // XXX: ...
-                var diffuse_cached = args.cache_input.addCopyFile(
-                    .{ .path = diffuse_path },
-                    diffuse_path,
-                );
-                process.addFileSourceArg(diffuse_cached);
-            }
+                break :b try BakeAssets.BakeStep.addRunArtifactWithInput(self.exe, diffuse_path);
+            };
 
-            // Add an argument for the tint
+            // Tint
             switch (sprite.tint) {
                 .mask => |path_rel| {
                     var mask_path = try std.fs.path.join(self.exe.step.owner.allocator, &.{
-                        std.fs.path.dirname(args.asset_path).?,
+                        std.fs.path.dirname(paths.data).?,
                         path_rel,
                     });
-                    // defer self.exe.step.owner.allocator.free(mask_path); // XXX: ...
-                    var mask_cached = args.cache_input.addCopyFile(
-                        .{ .path = mask_path },
+                    const write_step = self.exe.step.owner.addWriteFiles();
+                    var mask_cached = write_step.addCopyFile(
+                        FileSource.relative(mask_path),
                         mask_path,
                     );
                     process.addFileSourceArg(mask_cached);
@@ -252,36 +236,36 @@ pub fn build(b: *std.Build) !void {
                 .luminosity => process.addArg("luminosity"),
             }
 
-            // Add an argument for the rotation
+            // Rotation
             {
-                // XXX: a little silly to parse from string to f32 and then back to string, maybe
-                // the tricks josh is using to allow for more flexible json parsing would be useful in a small way here?
                 var degrees = try std.fmt.allocPrint(self.exe.step.owner.allocator, "{}", .{sprite.degrees});
                 defer self.exe.step.owner.allocator.free(degrees);
                 process.addArg(degrees);
             }
 
-            // Add an argument for the out path
-            const out_path = try std.fmt.allocPrint(
+            // Output
+            const install_path = try std.fmt.allocPrint(
                 self.exe.step.owner.allocator,
                 "{s}.sprite",
-                .{args.default_install_path},
+                .{paths.install},
             );
+            const file_source = process.addOutputFileArg(install_path);
+
             return .{
-                .file_source = process.addOutputFileArg(out_path),
-                .install_path = out_path,
+                .file_source = file_source,
+                .install_path = install_path,
             };
         }
 
         pub fn bakeStep(self: *const @This()) BakeAssets.BakeStep {
             return .{
                 .ptr = self,
-                .vtable = &.{ .run = run },
+                .vtable = &.{ .add = add },
             };
         }
     };
+
     var bake_sprite_zon = BakeSpriteZon.create(bake_sprite_exe);
-    // XXX: make sure that missing mask files and such get good errors...
     try bake_sprites.addAssets(.{
         .path = data_path,
         .extension = ".sprite.zon",

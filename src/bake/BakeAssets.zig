@@ -6,16 +6,13 @@ const FileSource = std.Build.FileSource;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const BakeConfig = struct { id: []const u8 };
 
-// XXX: make sure only stuff that needs to is getting rebuilt...
-// XXX: ...
-pub const config_extension = ".bake.zon";
-
 pub const StorageMode = enum {
     install,
     import,
     embed,
 };
 
+// XXX: rename to step?
 pub const BakeStep = struct {
     const Self = @This();
 
@@ -23,32 +20,56 @@ pub const BakeStep = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        run: *const fn (ctx: *const anyopaque, args: RunArgs) anyerror!Baked,
+        add: *const fn (ctx: *const anyopaque, asset: Paths) anyerror!Baked,
     };
 
-    pub const RunArgs = struct {
-        /// The path to the asset.
-        asset_path: []const u8,
-        /// The path to the bake config.
-        config_path: []const u8,
-        /// The default location to write this asset to. You may use a different path, e.g. to change the extension.
-        default_install_path: []const u8,
-        // XXX: document this
-        cache_input: *Step.WriteFile,
+    /// It is safe to assume the strings will not be freed prior to build graph execution.
+    pub const Paths = struct {
+        /// The path to the asset. Will not be freed before build graph execution.
+        data: []const u8,
+        /// The path to the bake config. Will not be freed before build graph execution.
+        config: []const u8,
+        /// The default install path for this asset.
+        install: []const u8,
     };
 
     pub const Baked = struct {
         // The baked file.
         file_source: FileSource,
-        // XXX: kinda confusing when embedded. Still sort of installed there and then embedded but I'm not sure why this is necessary? Maybe just covnenient so
-        // always named the same though..?
-        // The path at which to install the asset.
-        install_path: []const u8,
+        // The path at which to install the asset. If null uses the default.
+        install_path: ?[]const u8 = null,
     };
 
-    fn run(self: *const Self, args: RunArgs) !Baked {
-        return self.vtable.run(self.ptr, args);
+    /// Adds a run artifact, gives it an input arg, and names the process `$NAME (input_path)`.
+    pub fn addRunArtifactWithInput(exe: *Step.Compile, input_path: []const u8) !*Step.Run {
+        const process = exe.step.owner.addRunArtifact(exe);
+        const name = try std.fmt.allocPrint(exe.step.owner.allocator, "{s} ({s})", .{
+            process.step.name,
+            input_path,
+        });
+        process.setName(name);
+
+        const write_step = exe.step.owner.addWriteFiles();
+        const file_source = write_step.addCopyFile(FileSource.relative(input_path), input_path);
+        process.addFileSourceArg(file_source);
+
+        return process;
     }
+
+    fn add(self: *const Self, paths: Paths) !Baked {
+        return self.vtable.add(self.ptr, paths);
+    }
+
+    fn addCopy(_: *const anyopaque, paths: Paths) !Baked {
+        return .{
+            .file_source = FileSource.relative(paths.data),
+        };
+    }
+
+    const default = Self{
+        .ptr = undefined,
+        .vtable = &.{ .add = addCopy },
+    };
 };
 
 pub const Asset = struct {
@@ -61,16 +82,12 @@ pub const Asset = struct {
 };
 
 owner: *std.Build,
-cache_input: *Step.WriteFile,
 write_output: *Step.WriteFile,
 assets: ArrayListUnmanaged(Asset),
 
-// XXX: require to specify whether it's a path or a import up front? or whatever that's called in game? or is
-// this fine?
 pub fn create(owner: *std.Build) BakeAssets {
     return .{
         .owner = owner,
-        .cache_input = owner.addWriteFiles(),
         .write_output = owner.addWriteFiles(),
         .assets = ArrayListUnmanaged(Asset){},
     };
@@ -80,29 +97,13 @@ pub const AddAssetsOptions = struct {
     path: []const u8,
     extension: []const u8,
     storage: StorageMode,
-    // XXX: rename ot bake step? but whole thing is bake step?
-    bake_step: ?BakeStep = null,
+    bake_step: BakeStep = BakeStep.default,
     ignore_unknown_fields: bool = false,
 };
 
-// XXX: naming of file vs of other stuff that will be here?
-// XXX: allow asset groups for purposes of choosing random versions of things? e.g. an artist can
-// add a file to a group via a config file or folder structure, and it shows up in game without the
-// game needing to modify internal arrays of things. may also be useful for things like animations?
-// XXX: asset packs for loading groups of assets together? (and verifying they exist?) if we make some of
-// this dynamic instead of static we may want the missing asset fallbacks again?
-// XXX: what about e.g. deleting an asset that wasn't yet released? we could have a way to mark them as such maye idk, on release
-// it can change whether they need to be persistent
-// XXX: make sure we can do e.g. zig build bake to just bake, add stdout so we can see what's happening even if clear after each line
-// XXX: files seemingly never get DELETED from zig-out, is that expected..? seems like it could get us into
-// trouble.
 pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
-    // XXX: look into how the build runner parses build.zon, maybe do that instead of json here! note that
-    // we may eventually want to have extra fields that are only read during baking not when just getting the id.
-    // though my thinking isn't clear on that part right now.
-    // XXX: cache the index in source control as well in something readable (.zon or .json) and use
-    // it as input when available to verify that assets weren't missing and such?
-    // XXX: catch duplicate ids and such here?
+    const config_extension = ".bake.zon";
+
     var assets_iterable = try self.owner.build_root.handle.openIterableDir(options.path, .{});
     defer assets_iterable.close();
     var walker = try assets_iterable.walk(self.owner.allocator);
@@ -117,40 +118,37 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
                 continue;
             }
 
-            // XXX: not freeing paths we create here for now...
-            // XXX: what if asset doesn't exist?
+            // Calculate the paths relative to the build root
             const config_path = try std.fs.path.join(self.owner.allocator, &.{ options.path, entry.path });
-            // defer self.owner.allocator.free(config_path);
-            const asset_path = config_path[0 .. config_path.len - config_extension.len];
-            var default_install_path = entry.path[0 .. entry.path.len - config_extension.len];
+            const data_path = config_path[0 .. config_path.len - config_extension.len];
+            const default_install_path = entry.path[0 .. entry.path.len - config_extension.len];
 
-            // XXX: any way to clean up?
-            // Bake the asset
-            var baked = if (options.bake_step) |bake_step| b: {
-                break :b try bake_step.run(.{
-                    .cache_input = self.cache_input, // XXX: could create own step but is verbose..could pass self but has other stuff..
-                    .asset_path = asset_path,
-                    .config_path = config_path,
-                    // XXX: could make function that generates and optionally appends extension
-                    .default_install_path = default_install_path,
-                });
-            } else BakeStep.Baked{
-                // XXX: have a default bake step impl that does this or something or no?
-                .file_source = FileSource.relative(asset_path),
-                .install_path = default_install_path,
+            // Verify that the asset exists
+            self.owner.build_root.handle.access(data_path, .{}) catch |err| {
+                std.log.err("{s}: Failed to open corresponding asset ({s})", .{ config_path, data_path });
+                return err;
             };
 
-            // XXX: this does unecessary copies of files right now in some cases. do we actually need two write file
-            // steps? maybe for deps to work out between them..?
+            // Bake the asset
+            const baked = try options.bake_step.add(.{
+                .data = data_path,
+                .config = config_path,
+                .install = default_install_path,
+            });
+
+            // Get the install path.
+            const install_path = baked.install_path orelse self.owner.dupe(default_install_path);
+
             // Store the data
             switch (options.storage) {
-                // XXX: ...
+                // XXX: implement!
                 .import, .embed => unreachable,
                 .install => {
-                    // XXX: wait we could make a single install step, also, install file with dir is a thing
-                    // const install = self.owner.addInstallFile(baked.file_source, baked.install_path);
-                    const install = self.owner.addInstallFileWithDir(baked.file_source, .{ .custom = "data" }, baked.install_path);
-                    // XXX: just do once?
+                    const install = self.owner.addInstallFileWithDir(
+                        baked.file_source,
+                        .{ .custom = "data" },
+                        install_path,
+                    );
                     self.write_output.step.dependOn(&install.step);
                 },
             }
@@ -167,21 +165,19 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
             );
             defer self.owner.allocator.free(zon_source);
             // XXX: eventually log good errors if zon files are invalid!
+            // XXX: would be cool if strings that didn't need to be weren't reallocated, may already be the case internally?
             const config = try zon.parseFromSlice(BakeConfig, self.owner.allocator, zon_source, .{
                 .ignore_unknown_fields = options.ignore_unknown_fields,
             });
-            // XXX: would be cool if strings that didn't need to be werent' reallocated, may already be the case internally?
             defer zon.parseFree(self.owner.allocator, config);
 
             // Write to the index
             try self.assets.append(self.owner.allocator, .{
-                // XXX: don't free if we're passing the id out...though could free when we free this maybe
-                .id = try self.owner.allocator.dupe(u8, config.id),
-                // XXX: dup to avoid freeing too early...
+                .id = self.owner.dupe(config.id),
                 .data = switch (options.storage) {
-                    .install => .{ .install = try self.owner.allocator.dupe(u8, baked.install_path) },
-                    .import => .{ .import = try self.owner.allocator.dupe(u8, baked.install_path) },
-                    .embed => .{ .embed = try self.owner.allocator.dupe(u8, baked.install_path) },
+                    .install => .{ .install = install_path },
+                    .import => .{ .import = install_path },
+                    .embed => .{ .embed = install_path },
                 },
             });
         }
@@ -200,7 +196,7 @@ pub fn createModule(self: *const BakeAssets) !*std.Build.Module {
 
     for (self.assets.items) |asset| {
         try std.fmt.format(index_bytes_writer, "    .{{\n", .{});
-        // XXX: what if the id/such has a quote in it..??
+        // XXX: implementa zon writer so that an id having a quote won't break stuff
         try std.fmt.format(index_bytes_writer, "        .id = \"{s}\",\n", .{asset.id});
         switch (asset.data) {
             .import => |path| {
