@@ -6,22 +6,24 @@ const FileSource = std.Build.FileSource;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const BakeConfig = struct { id: []const u8 };
 
-pub const StorageMode = enum {
-    install,
-    import,
-    embed,
+owner: *std.Build,
+write_output: *Step.WriteFile,
+assets: ArrayListUnmanaged(Asset),
+
+pub const Asset = struct {
+    id: []const u8,
+    data: union(enum) {
+        install: []const u8,
+        import: []const u8,
+        embed: []const u8,
+    },
 };
 
-// XXX: rename to step?
-pub const BakeStep = struct {
+pub const BakeAsset = struct {
     const Self = @This();
 
-    ptr: *const anyopaque,
-    vtable: *const VTable,
-
-    pub const VTable = struct {
-        add: *const fn (ctx: *const anyopaque, asset: Paths) anyerror!Baked,
-    };
+    ctx: *anyopaque,
+    impl: *const fn (ctx: *anyopaque, asset: Paths) anyerror!Baked,
 
     /// It is safe to assume the strings will not be freed prior to build graph execution.
     pub const Paths = struct {
@@ -40,6 +42,23 @@ pub const BakeStep = struct {
         install_path: ?[]const u8 = null,
     };
 
+    pub fn create(
+        ctx: anytype,
+        comptime impl: *const fn (ctx: @TypeOf(ctx), asset: Paths) anyerror!Baked,
+    ) Self {
+        if (@typeInfo(@TypeOf(ctx)) != .Pointer)
+            @compileError("expected pointer");
+        return .{
+            .ctx = @constCast(@ptrCast(@alignCast(ctx))),
+            .impl = struct {
+                fn wrapped(untyped: *anyopaque, asset: Paths) anyerror!Baked {
+                    const typed: @TypeOf(ctx) = @ptrCast(@alignCast(untyped));
+                    return impl(typed, asset);
+                }
+            }.wrapped,
+        };
+    }
+
     /// Adds a run artifact, gives it an input arg, and names the process `$NAME (input_path)`.
     pub fn addRunArtifactWithInput(exe: *Step.Compile, input_path: []const u8) !*Step.Run {
         const process = exe.step.owner.addRunArtifact(exe);
@@ -56,34 +75,18 @@ pub const BakeStep = struct {
         return process;
     }
 
-    fn add(self: *const Self, paths: Paths) !Baked {
-        return self.vtable.add(self.ptr, paths);
-    }
+    const default = Self.create(&{}, addCopy);
 
-    fn addCopy(_: *const anyopaque, paths: Paths) !Baked {
+    fn addCopy(_: *const void, paths: Paths) anyerror!Baked {
         return .{
             .file_source = FileSource.relative(paths.data),
         };
     }
 
-    const default = Self{
-        .ptr = undefined,
-        .vtable = &.{ .add = addCopy },
-    };
+    fn add(self: *const Self, paths: Paths) !Baked {
+        return self.impl(self.ctx, paths);
+    }
 };
-
-pub const Asset = struct {
-    id: []const u8,
-    data: union(enum) {
-        install: []const u8,
-        import: []const u8,
-        embed: []const u8,
-    },
-};
-
-owner: *std.Build,
-write_output: *Step.WriteFile,
-assets: ArrayListUnmanaged(Asset),
 
 pub fn create(owner: *std.Build) BakeAssets {
     return .{
@@ -93,15 +96,26 @@ pub fn create(owner: *std.Build) BakeAssets {
     };
 }
 
-pub const AddAssetsOptions = struct {
+pub fn deinit(self: *BakeAssets) void {
+    self.assets.deinit(self.owner.allocator);
+    self.* = undefined;
+}
+
+pub const StorageMode = enum {
+    install,
+    import,
+    embed,
+};
+
+pub const AssetOptions = struct {
     path: []const u8,
     extension: []const u8,
     storage: StorageMode,
-    bake_step: BakeStep = BakeStep.default,
+    bake_step: BakeAsset = BakeAsset.default,
     ignore_unknown_fields: bool = false,
 };
 
-pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
+pub fn addAssets(self: *BakeAssets, options: AssetOptions) !void {
     const config_extension = ".bake.zon";
 
     var assets_iterable = try self.owner.build_root.handle.openIterableDir(options.path, .{});
@@ -182,11 +196,6 @@ pub fn addAssets(self: *BakeAssets, options: AddAssetsOptions) !void {
             });
         }
     }
-}
-
-pub fn deinit(self: *BakeAssets) void {
-    self.assets.deinit(self.owner.allocator);
-    self.* = undefined;
 }
 
 pub fn createModule(self: *const BakeAssets) !*std.Build.Module {
