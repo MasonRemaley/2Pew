@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const ecs = @import("ecs/ecs.zig");
-const MinimumAlignmentAllocator = @import("minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
+const ecs = @import("src/ecs/ecs.zig");
+const MinimumAlignmentAllocator = @import("src/minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
 const Entities = ecs.entities.Entities;
 const EntityHandle = ecs.entities.Handle;
 
