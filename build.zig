@@ -32,7 +32,7 @@
 // XXX: all still needed?
 const std = @import("std");
 const zon = @import("zon").zon;
-const pew = @import("src/game/build-package.zig");
+const pew = @import("src/game/build-helper.zig");
 
 pub fn build(b: *std.Build) !void {
     // Standard options

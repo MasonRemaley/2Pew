@@ -5,7 +5,7 @@ const FileSource = Build.FileSource;
 const Step = Build.Step;
 const CompileStep = Build.CompileStep;
 const zon = @import("zon").zon;
-const engine = @import("../engine/build-package.zig");
+const engine = @import("../engine/build-helper.zig");
 const BakeAssets = engine.BakeAssets;
 
 pub const Options = struct {
