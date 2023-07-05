@@ -1,6 +1,5 @@
 pub const ecs = @import("ecs/ecs.zig");
 pub const asset_indexer = @import("asset_indexer.zig");
-pub const bench = @import("bench.zig");
 pub const input_system = @import("input_system.zig");
 pub const minimum_alignment_allocator = @import("minimum_alignment_allocator.zig");
 pub const no_alloc = @import("no_alloc.zig");

@@ -147,6 +147,8 @@ fn bakeAssets(b: *Build, options: Options, pew_exe: *CompileStep) !void {
         });
         pew_exe.addModule("animation_descriptors", try bake_animations.createModule());
     }
+
+    try BakeAssets.prune(b);
 }
 
 const Sprite = struct {

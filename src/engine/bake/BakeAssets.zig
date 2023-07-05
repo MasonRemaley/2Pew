@@ -115,6 +115,41 @@ pub const AssetOptions = struct {
     ignore_unknown_fields: bool = false,
 };
 
+const install_dir = "data";
+
+// NOTE: this could be implemented as an option for `addInstallFileWithDir`
+pub fn prune(owner: *std.Build) !void {
+    // Create a hashmap of all installed files
+    var installed_files = std.StringArrayHashMapUnmanaged(void){};
+    defer installed_files.deinit(owner.allocator);
+    for (owner.installed_files.items) |file| {
+        if (file.dir == .custom and std.mem.eql(u8, file.dir.custom, install_dir)) {
+            try installed_files.put(owner.allocator, file.path, {});
+        }
+    }
+
+    // Remove any files from the subdirectory that were not installed this time
+    const install_path = try std.fs.path.join(owner.allocator, &.{
+        owner.install_prefix,
+        install_dir,
+    });
+    defer owner.allocator.free(install_path);
+    var old_files = std.fs.openIterableDirAbsolute(install_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer old_files.close();
+    var walker = try old_files.walk(owner.allocator);
+    defer walker.deinit();
+    while (try walker.next()) |entry| {
+        if (entry.kind == .file) {
+            if (!installed_files.contains(entry.path)) {
+                try entry.dir.deleteFile(entry.basename);
+            }
+        }
+    }
+}
+
 pub fn addAssets(self: *BakeAssets, options: AssetOptions) !void {
     const config_extension = ".bake.zon";
 
@@ -160,7 +195,7 @@ pub fn addAssets(self: *BakeAssets, options: AssetOptions) !void {
                 .install => {
                     const install = self.owner.addInstallFileWithDir(
                         baked.file_source,
-                        .{ .custom = "data" },
+                        .{ .custom = install_dir },
                         install_path,
                     );
                     self.write_output.step.dependOn(&install.step);

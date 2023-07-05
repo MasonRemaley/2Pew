@@ -1,9 +1,10 @@
 // XXX: baking todo
+// - build into 2pew specific folder (update prune to work this way too!)
+// - generate ids automatically?
 // - don't set up the graph for the game's asset build unless actually building the game--eventually this
 // will be actual work!
+// - build system is supposed to be duping strings for me apparently?
 // - use step.fail for failures? step.adderror?
-// - move build code into engine?
-// - does deleting stuff update the build properly?
 // - says installing while running...
 // - separate build scripts for seaparate sub projects, too confusing otherwise
 // - is the output less confusing if we rename extensions or can there be collisions one way or the other?
