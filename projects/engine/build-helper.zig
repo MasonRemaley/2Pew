@@ -3,6 +3,8 @@ const Build = std.Build;
 const Step = Build.Step;
 const Module = Build.Module;
 
+const self_path = "projects/engine";
+
 pub const Options = struct {
     target: std.zig.CrossTarget,
     optimize: std.builtin.Mode,
@@ -12,11 +14,11 @@ pub const Options = struct {
 
 pub fn build(b: *Build, options: Options) !*Module {
     const module = b.createModule(.{
-        .source_file = .{ .path = "src/engine/src/engine.zig" },
+        .source_file = .{ .path = self_path ++ "/src/engine.zig" },
     });
 
     const engine_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/engine/src/engine.zig" },
+        .root_source_file = .{ .path = self_path ++ "/src/engine.zig" },
         .target = options.target,
         .optimize = options.optimize,
     });
@@ -25,7 +27,7 @@ pub fn build(b: *Build, options: Options) !*Module {
 
     const bench_exe = b.addExecutable(.{
         .name = "bench",
-        .root_source_file = .{ .path = "src/engine/bench.zig" },
+        .root_source_file = .{ .path = self_path ++ "/bench.zig" },
         .target = options.target,
         .optimize = options.optimize,
     });

@@ -1,21 +1,21 @@
 const std = @import("std");
 const zon = @import("zon").zon;
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const FileSource = std.Build.FileSource;
 const BakeStep = @import("BakeStep.zig");
 const Baker = @import("Baker.zig");
 
 const Self = @This();
 
-bake_assets: *Baker,
-assets: ArrayListUnmanaged(Asset),
+const config_extension = "bake.zon";
 
-pub const Asset = struct {
-    id: []const u8,
-    data: union(enum) {
-        install: []const u8,
-        import: []const u8,
-        embed: []const u8,
-    },
+bake_assets: *Baker,
+assets: std.StringArrayHashMapUnmanaged(Asset),
+
+// XXX: just make a path and an enum or no?
+pub const Asset = union(enum) {
+    install: []const u8,
+    import: []const u8,
+    embed: []const u8,
 };
 
 pub fn deinit(self: *Self) void {
@@ -40,30 +40,36 @@ const BakeConfig = struct {
     id: []const u8,
 };
 
-pub fn addBatch(self: *Self, options: BatchOptions) !void {
-    const config_extension = ".bake.zon";
+fn endsWithExtension(path: []const u8, extension: []const u8) bool {
+    if (path.len < extension.len + 1) return false;
+    if (path[path.len - extension.len - 1] != '.') return false;
+    return std.mem.endsWith(u8, path, extension);
+}
 
-    var assets_iterable = try self.bake_assets.owner.build_root.handle.openIterableDir(self.bake_assets.data_path, .{});
+pub fn addBatch(self: *Self, options: BatchOptions) !void {
+    const owner = self.bake_assets.owner;
+
+    var assets_iterable = try owner.build_root.handle.openIterableDir(self.bake_assets.data_path, .{});
     defer assets_iterable.close();
-    var walker = try assets_iterable.walk(self.bake_assets.owner.allocator);
+    var walker = try assets_iterable.walk(owner.allocator);
     defer walker.deinit();
     while (try walker.next()) |entry| {
         if (entry.kind == .file) {
             // Skip irrelevent files
-            if (!std.mem.endsWith(u8, entry.path, config_extension)) {
+            if (!endsWithExtension(entry.path, config_extension)) {
                 continue;
             }
-            if (!std.mem.endsWith(u8, entry.path[0 .. entry.path.len - config_extension.len], options.extension)) {
+            if (!endsWithExtension(entry.path[0 .. entry.path.len - config_extension.len - 1], options.extension)) {
                 continue;
             }
 
             // Calculate the paths relative to the build root
-            const config_path = try std.fs.path.join(self.bake_assets.owner.allocator, &.{ self.bake_assets.data_path, entry.path });
-            const data_path = config_path[0 .. config_path.len - config_extension.len];
-            const default_install_path = entry.path[0 .. entry.path.len - config_extension.len];
+            const config_path = try std.fs.path.join(owner.allocator, &.{ self.bake_assets.data_path, entry.path });
+            const data_path = config_path[0 .. config_path.len - config_extension.len - 1];
+            const default_install_path = entry.path[0 .. entry.path.len - config_extension.len - 1];
 
             // Verify that the asset exists
-            self.bake_assets.owner.build_root.handle.access(data_path, .{}) catch |err| {
+            owner.build_root.handle.access(data_path, .{}) catch |err| {
                 std.log.err("{s}: Failed to open corresponding asset ({s})", .{ config_path, data_path });
                 return err;
             };
@@ -76,14 +82,14 @@ pub fn addBatch(self: *Self, options: BatchOptions) !void {
             });
 
             // Get the install path.
-            const install_path = baked.install_path orelse self.bake_assets.owner.dupe(default_install_path);
+            const install_path = baked.install_path orelse owner.dupe(default_install_path);
 
             // Store the data
             switch (options.storage) {
                 // XXX: implement!
                 .import, .embed => unreachable,
                 .install => {
-                    const install = self.bake_assets.owner.addInstallFileWithDir(
+                    const install = owner.addInstallFileWithDir(
                         baked.file_source,
                         .{ .custom = self.bake_assets.install_dir },
                         install_path,
@@ -95,30 +101,38 @@ pub fn addBatch(self: *Self, options: BatchOptions) !void {
             // Parse the ID from the bake config
             // XXX: realloc from a fixed buffer allocaator each time?
             var zon_source = try entry.dir.readFileAllocOptions(
-                self.bake_assets.owner.allocator,
+                owner.allocator,
                 entry.basename,
                 128,
                 null,
                 @alignOf(u8),
                 0,
             );
-            defer self.bake_assets.owner.allocator.free(zon_source);
+            defer owner.allocator.free(zon_source);
             // XXX: eventually log good errors if zon files are invalid!
             // XXX: would be cool if strings that didn't need to be weren't reallocated, may already be the case internally?
-            const config = try zon.parseFromSlice(BakeConfig, self.bake_assets.owner.allocator, zon_source, .{
+            const config = try zon.parseFromSlice(BakeConfig, owner.allocator, zon_source, .{
                 .ignore_unknown_fields = options.ignore_unknown_fields,
             });
-            defer zon.parseFree(self.bake_assets.owner.allocator, config);
+            defer zon.parseFree(owner.allocator, config);
 
             // Write to the index
-            try self.assets.append(self.bake_assets.owner.allocator, .{
-                .id = self.bake_assets.owner.dupe(config.id),
-                .data = switch (options.storage) {
-                    .install => .{ .install = install_path },
-                    .import => .{ .import = install_path },
-                    .embed => .{ .embed = install_path },
-                },
-            });
+            const asset_entry = try self.assets.getOrPut(owner.allocator, owner.dupe(config.id));
+            if (asset_entry.found_existing) {
+                std.debug.print("error: duplicate asset id `{s}`\n", .{config.id});
+                std.debug.print("  first occurence: `{s}`\n  second occurence: `{s}`\n", .{
+                    install_path,
+                    switch (asset_entry.value_ptr.*) {
+                        inline else => |path| path,
+                    },
+                });
+                return error.DuplicateAssetId;
+            }
+            asset_entry.value_ptr.* = switch (options.storage) {
+                .install => .{ .install = install_path },
+                .import => .{ .import = install_path },
+                .embed => .{ .embed = install_path },
+            };
         }
     }
 }
@@ -127,17 +141,18 @@ fn add(bake_step: BakeStep, paths: BakeStep.Paths) !BakeStep.Baked {
     return bake_step.impl(bake_step.ctx, paths);
 }
 
-// XXX: why do I need unique filenames now when I didn't before?
 pub fn createModule(self: *const Self, filename: []const u8) !*std.Build.Module {
-    var index_bytes = ArrayListUnmanaged(u8){};
-    var index_bytes_writer = index_bytes.writer(self.bake_assets.owner.allocator);
+    const owner = self.bake_assets.owner;
+
+    var index_bytes = std.ArrayListUnmanaged(u8){};
+    var index_bytes_writer = index_bytes.writer(owner.allocator);
     try std.fmt.format(index_bytes_writer, "pub const descriptors = &.{{\n", .{});
 
-    for (self.assets.items) |asset| {
+    for (self.assets.entries.items(.key), self.assets.entries.items(.value)) |id, asset| {
         try std.fmt.format(index_bytes_writer, "    .{{\n", .{});
         // XXX: implementa zon writer so that an id having a quote won't break stuff
-        try std.fmt.format(index_bytes_writer, "        .id = \"{s}\",\n", .{asset.id});
-        switch (asset.data) {
+        try std.fmt.format(index_bytes_writer, "        .id = \"{s}\",\n", .{id});
+        switch (asset) {
             .import => |path| {
                 _ = path;
                 // XXX: can use @import again once we add support for that for zon!!
@@ -165,7 +180,7 @@ pub fn createModule(self: *const Self, filename: []const u8) !*std.Build.Module 
     try std.fmt.format(index_bytes_writer, "}};", .{});
 
     // XXX: this could also be zon!
-    return self.bake_assets.owner.createModule(.{
+    return owner.createModule(.{
         .source_file = self.bake_assets.write_output.add(filename, index_bytes.items),
     });
 }

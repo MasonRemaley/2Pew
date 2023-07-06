@@ -1,13 +1,13 @@
 const std = @import("std");
-const bake = @import("../engine/src/engine.zig").bake;
-const Baker = bake.Baker;
-const BakeStep = bake.BakeStep;
+const engine = @import("../engine/src/engine.zig");
+const Baker = engine.bake.Baker;
+const BakeStep = engine.bake.BakeStep;
 const Build = std.Build;
 const FileSource = Build.FileSource;
 const Step = Build.Step;
 const CompileStep = Build.CompileStep;
 const zon = @import("zon").zon;
-const engine = @import("../engine/build-helper.zig");
+const build_engine = @import("../engine/build-helper.zig");
 
 pub const Options = struct {
     target: std.zig.CrossTarget,
@@ -17,18 +17,19 @@ pub const Options = struct {
     use_llvm: ?bool,
 };
 
+const self_path = "projects/game";
 const install_root = "pew";
 
 pub fn build(b: *Build, options: Options) !void {
     const pew_exe = try buildExe(b, options);
-    try bakeAssets(b, options, pew_exe);
+    try bake(b, options, pew_exe);
 }
 
 fn buildExe(b: *Build, options: Options) !*Step.Compile {
     // Build the game
     const pew_exe = b.addExecutable(.{
         .name = "pew",
-        .root_source_file = .{ .path = "src/game/src/game.zig" },
+        .root_source_file = .{ .path = self_path ++ "/src/game.zig" },
         .target = options.target,
         .optimize = options.optimize,
     });
@@ -44,7 +45,7 @@ fn buildExe(b: *Build, options: Options) !*Step.Compile {
 
     // Build the dependencies
     {
-        pew_exe.addModule("engine", try engine.build(b, .{
+        pew_exe.addModule("engine", try build_engine.build(b, .{
             .target = options.target,
             .optimize = options.optimize,
             .test_step = options.test_step,
@@ -93,7 +94,7 @@ fn buildExe(b: *Build, options: Options) !*Step.Compile {
     // Set up test step
     {
         const game_tests = b.addTest(.{
-            .root_source_file = .{ .path = "src/game/src/game.zig" },
+            .root_source_file = .{ .path = self_path ++ "/src/game.zig" },
             .target = options.target,
             .optimize = options.optimize,
         });
@@ -104,9 +105,9 @@ fn buildExe(b: *Build, options: Options) !*Step.Compile {
     return pew_exe;
 }
 
-fn bakeAssets(b: *Build, options: Options, pew_exe: *CompileStep) !void {
+fn bake(b: *Build, options: Options, pew_exe: *CompileStep) !void {
     var baker = try Baker.create(b, .{
-        .data_path = "src/game/data",
+        .data_path = self_path ++ "/data",
         .install_root = install_root,
         .install_prefix = "data",
     });
@@ -120,24 +121,24 @@ fn bakeAssets(b: *Build, options: Options, pew_exe: *CompileStep) !void {
         const bake_sprite_exe = b: {
             const exe = b.addExecutable(.{
                 .name = "bake-sprite",
-                .root_source_file = .{ .path = "src/game/bake/bake_sprite.zig" },
-                .target = options.target,
+                .root_source_file = .{ .path = self_path ++ "/src/bake/bake_sprite.zig" },
+                .target = .{},
                 .optimize = options.optimize,
             });
-            exe.addCSourceFile("src/game/bake/stb_image.c", &.{"-std=c99"});
-            exe.addIncludePath("src/game/bake");
+            exe.addCSourceFile(self_path ++ "/src/bake/stb_image.c", &.{"-std=c99"});
+            exe.addIncludePath(self_path ++ "/src/bake");
             exe.linkLibC();
             break :b exe;
         };
 
         try bake_sprites.addBatch(.{
-            .extension = ".sprite.png",
+            .extension = "sprite.png",
             .storage = .install,
             .bake_step = BakeStep.create(bake_sprite_exe, addSpritePng),
         });
 
         try bake_sprites.addBatch(.{
-            .extension = ".sprite.zon",
+            .extension = "sprite.zon",
             .storage = .install,
             .bake_step = BakeStep.create(bake_sprite_exe, addSpriteZon),
         });
@@ -151,7 +152,7 @@ fn bakeAssets(b: *Build, options: Options, pew_exe: *CompileStep) !void {
         var bake_animations = baker.addAssetType();
         defer bake_animations.deinit();
         try bake_animations.addBatch(.{
-            .extension = ".anim.zon",
+            .extension = "anim.zon",
             .storage = .install,
         });
         const animation_module = try bake_animations.createModule("animation_descriptors.zig");
