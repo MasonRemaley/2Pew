@@ -1,6 +1,7 @@
 // XXX: baking todo
-// - build into 2pew specific folder (update prune to work this way too!)
+// - don't have paths like src/game/data hard coded into the build helper so things can be moved more easily?
 // - generate ids automatically?
+// - make sure generated files can't overwrite eachother!
 // - don't set up the graph for the game's asset build unless actually building the game--eventually this
 // will be actual work!
 // - build system is supposed to be duping strings for me apparently?

@@ -1,12 +1,13 @@
 const std = @import("std");
-const BakeAsset = BakeAssets.BakeAsset;
+const bake = @import("../engine/src/engine.zig").bake;
+const Baker = bake.Baker;
+const BakeStep = bake.BakeStep;
 const Build = std.Build;
 const FileSource = Build.FileSource;
 const Step = Build.Step;
 const CompileStep = Build.CompileStep;
 const zon = @import("zon").zon;
 const engine = @import("../engine/build-helper.zig");
-const BakeAssets = engine.BakeAssets;
 
 pub const Options = struct {
     target: std.zig.CrossTarget,
@@ -15,6 +16,8 @@ pub const Options = struct {
     bench_step: *Step,
     use_llvm: ?bool,
 };
+
+const install_root = "pew";
 
 pub fn build(b: *Build, options: Options) !void {
     const pew_exe = try buildExe(b, options);
@@ -69,8 +72,10 @@ fn buildExe(b: *Build, options: Options) !*Step.Compile {
 
     // Install the game
     {
-        pew_exe.override_dest_dir = .prefix;
-        b.installArtifact(pew_exe);
+        var install_artifact = b.addInstallArtifact(pew_exe);
+        install_artifact.dest_dir = .{ .custom = install_root };
+        install_artifact.pdb_dir = install_artifact.dest_dir;
+        b.getInstallStep().dependOn(&install_artifact.step);
     }
 
     // Set up run step
@@ -100,10 +105,18 @@ fn buildExe(b: *Build, options: Options) !*Step.Compile {
 }
 
 fn bakeAssets(b: *Build, options: Options, pew_exe: *CompileStep) !void {
-    const data_path = "src/game/data";
+    var baker = try Baker.create(b, .{
+        .data_path = "src/game/data",
+        .install_root = install_root,
+        .install_prefix = "data",
+    });
+    defer baker.prune();
 
     // Bake sprites
     {
+        var bake_sprites = baker.addAssetType();
+        defer bake_sprites.deinit();
+
         const bake_sprite_exe = b: {
             const exe = b.addExecutable(.{
                 .name = "bake-sprite",
@@ -117,38 +130,33 @@ fn bakeAssets(b: *Build, options: Options, pew_exe: *CompileStep) !void {
             break :b exe;
         };
 
-        var bake_sprites = BakeAssets.create(b);
-        defer bake_sprites.deinit();
-
-        try bake_sprites.addAssets(.{
-            .path = data_path,
+        try bake_sprites.addBatch(.{
             .extension = ".sprite.png",
             .storage = .install,
-            .bake_step = BakeAsset.create(bake_sprite_exe, addSpritePng),
+            .bake_step = BakeStep.create(bake_sprite_exe, addSpritePng),
         });
 
-        try bake_sprites.addAssets(.{
-            .path = data_path,
+        try bake_sprites.addBatch(.{
             .extension = ".sprite.zon",
             .storage = .install,
-            .bake_step = BakeAsset.create(bake_sprite_exe, addSpriteZon),
+            .bake_step = BakeStep.create(bake_sprite_exe, addSpriteZon),
         });
-        pew_exe.addModule("sprite_descriptors", try bake_sprites.createModule());
+
+        const sprites_module = try bake_sprites.createModule("sprite_descriptors.zig");
+        pew_exe.addModule("sprite_descriptors", sprites_module);
     }
 
     // Bake animations
     {
-        var bake_animations = BakeAssets.create(b);
+        var bake_animations = baker.addAssetType();
         defer bake_animations.deinit();
-        try bake_animations.addAssets(.{
-            .path = data_path,
+        try bake_animations.addBatch(.{
             .extension = ".anim.zon",
             .storage = .install,
         });
-        pew_exe.addModule("animation_descriptors", try bake_animations.createModule());
+        const animation_module = try bake_animations.createModule("animation_descriptors.zig");
+        pew_exe.addModule("animation_descriptors", animation_module);
     }
-
-    try BakeAssets.prune(b);
 }
 
 const Sprite = struct {
@@ -163,7 +171,7 @@ const Sprite = struct {
     tint: Tint = .none,
 };
 
-fn addSpriteZon(exe: *Step.Compile, paths: BakeAsset.Paths) !BakeAsset.Baked {
+fn addSpriteZon(exe: *Step.Compile, paths: BakeStep.Paths) !BakeStep.Baked {
     // Read the sprite definition
     const sprite = b: {
         var zon_source = try exe.step.owner.build_root.handle.readFileAllocOptions(
@@ -186,7 +194,7 @@ fn addSpriteZon(exe: *Step.Compile, paths: BakeAsset.Paths) !BakeAsset.Baked {
             std.fs.path.dirname(paths.data).?,
             sprite.diffuse,
         });
-        break :b try BakeAsset.addRunArtifactWithInput(exe, diffuse_path);
+        break :b try BakeStep.addRunArtifactWithInput(exe, diffuse_path);
     };
 
     // Tint
@@ -228,8 +236,8 @@ fn addSpriteZon(exe: *Step.Compile, paths: BakeAsset.Paths) !BakeAsset.Baked {
     };
 }
 
-fn addSpritePng(exe: *Step.Compile, paths: BakeAsset.Paths) !BakeAsset.Baked {
-    const process = try BakeAsset.addRunArtifactWithInput(exe, paths.data);
+fn addSpritePng(exe: *Step.Compile, paths: BakeStep.Paths) !BakeStep.Baked {
+    const process = try BakeStep.addRunArtifactWithInput(exe, paths.data);
     process.addArg("none"); // Tint
     process.addArg("0"); // Degrees
     const install_path = try std.fmt.allocPrint(

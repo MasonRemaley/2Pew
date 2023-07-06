@@ -1,5 +1,3 @@
-pub const BakeAssets = @import("bake/BakeAssets.zig");
-
 const std = @import("std");
 const Build = std.Build;
 const Step = Build.Step;

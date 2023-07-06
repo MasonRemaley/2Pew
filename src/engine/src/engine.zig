@@ -6,6 +6,7 @@ pub const no_alloc = @import("no_alloc.zig");
 pub const segmented_list = @import("segmented_list.zig");
 pub const slot_map = @import("slot_map.zig");
 pub const symmetric_matrix = @import("symmetric_matrix.zig");
+pub const bake = @import("bake/index.zig");
 pub const c = @import("c.zig");
 
 // XXX: make sure these still get run!
@@ -16,4 +17,5 @@ test {
     _ = @import("ecs/ecs.zig");
     _ = @import("segmented_list.zig");
     _ = @import("symmetric_matrix.zig");
+    _ = @import("bake/index.zig");
 }
