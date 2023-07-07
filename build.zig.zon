@@ -7,8 +7,8 @@
             .hash = "12202e4412ade6d1b8c45a606fc83cfa242a0ac47a70578aef9d5fa3b0bb33ab5618",
         },
         .zon = .{
-            .url = "https://github.com/MasonRemaley/WIP-ZON/archive/868722e9a5a185aa0635d02886098f9dd6029af0.tar.gz",
-            .hash = "12208c1b3f086f5b0bf3ff0283562462cd96c14436f0044302674da920c3ba3edb46",
+            .url = "https://github.com/MasonRemaley/WIP-ZON/archive/0f74e5a89d4a191bd1594329ce89f268c9d0d7e5.tar.gz",
+            .hash = "1220a509bd55654fcec582fb69ddd84f5fc25f5cc72851f740998b7030da80e99271",
         },
     },
 }

@@ -165,14 +165,14 @@ pub fn createModule(self: *const Self, filename: []const u8) !*std.Build.Module 
             },
             .embed => unreachable,
             .install => |path| {
-                // XXX: instead add a way to escape strings when writing zon?
-                // XXX: hmm data hard coded here...that's actually fine if we hard code it elsewhere too, can always make
-                // configurabel if we want. but we want a path relative to the root basically.
-                try std.fmt.format(index_bytes_writer, "        .asset = .{{ .path = \"", .{});
-                try writePath(index_bytes_writer, self.bake_assets.install_prefix);
-                try writeSep(index_bytes_writer);
-                try writePath(index_bytes_writer, path);
-                try std.fmt.format(index_bytes_writer, "\" }},\n", .{});
+                // XXX: we always write forward slash, because we are going to cache this
+                // file in some modes and need a way to normalize the output. On platforms
+                // that *require* a backslash we can transition it on indexing or something.
+                // Just make sure not to transition actual escapes...
+                try index_bytes_writer.print("        .asset = .{{ .path = \"{}/{}\" }},\n", .{
+                    fmtPath(self.bake_assets.install_prefix),
+                    fmtPath(path),
+                });
             },
         }
         try std.fmt.format(index_bytes_writer, "    }},\n", .{});
@@ -185,20 +185,20 @@ pub fn createModule(self: *const Self, filename: []const u8) !*std.Build.Module 
     });
 }
 
-fn writeSep(writer: anytype) !void {
-    if (std.fs.path.sep == '\\') {
-        try std.fmt.format(writer, "\\\\", .{});
-    } else {
-        try writer.writeByte(std.fs.path.sep);
-    }
+/// Prints a path, replacing all '\\'s with '/' and escaping any special characters.
+fn formatPath(
+    bytes: []const u8,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    _ = options;
+    for (bytes) |byte| switch (byte) {
+        '\\' => try writer.writeByte('/'),
+        else => try writer.print("{" ++ fmt ++ "}", .{std.zig.fmtEscapes(&.{byte})}),
+    };
 }
 
-fn writePath(writer: anytype, path: []const u8) !void {
-    for (path) |c| {
-        if (c == '\\' or c == '/') {
-            try writeSep(writer);
-        } else {
-            try writer.writeByte(c);
-        }
-    }
+pub fn fmtPath(bytes: []const u8) std.fmt.Formatter(formatPath) {
+    return .{ .data = bytes };
 }

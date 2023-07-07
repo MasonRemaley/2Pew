@@ -1,5 +1,6 @@
 // XXX:
 // - need to do
+//    - just comptime assert on endianness, then can use struct, and efficient read/write entire file probably
 //    - build system is supposed to be duping strings for me apparently?
 //    - force verificaiton of all zon at bake time?
 //    - get embedding working again (need to be able to import zon first)

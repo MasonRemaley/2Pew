@@ -56,7 +56,18 @@ pub fn index(comptime source: AssetSource, comptime descriptors: []const Descrip
 
     comptime var assets = std.EnumArray(Id_, Instance).initUndefined();
     for (descriptors, 0..) |descriptor, i| {
-        assets.set(@enumFromInt(i), descriptor.asset);
+        comptime var asset = descriptor.asset;
+
+        // If we're on a platform where `/` is not a valid path separator, replace it with the
+        // native path separator.
+        if (!std.fs.path.isSep('/') and asset == .path) {
+            @setEvalBranchQuota(5000);
+            comptime var path: [asset.path.len]u8 = asset.path[0..].*;
+            std.mem.replaceScalar(u8, &path, '/', std.fs.path.sep);
+            asset.path = &path;
+        }
+
+        assets.set(@enumFromInt(i), asset);
     }
 
     return struct {
