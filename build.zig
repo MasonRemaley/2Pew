@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) void {
     exe.addIncludePath("src");
 
     b.installDirectory(.{
-        .source_dir = "data",
+        .source_dir = .{ .path = "data" },
         .install_dir = .prefix,
         .install_subdir = "data",
     });
