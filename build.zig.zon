@@ -4,7 +4,7 @@
     .dependencies = .{
         .zig_sdl = .{
             .url = "https://github.com/andrewrk/SDL/archive/c90c2d0a3b155ef8b4728ba9db80eae1a22d771e.tar.gz",
-            .hash = "12200a26a5e331ccfc5755638c51b10d1c276926d71969390825721a9c83cf7e9deb",
+            .hash = "122086287b46da345d0c0774b5aaf7ca0f636a31f4fe8be70faa6f813fc93d0016d4",
         },
     },
     .paths = .{
