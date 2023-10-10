@@ -45,8 +45,11 @@ pub fn build(b: *std.Build) void {
     }
 
     // TODO extract this into a proper zig package
-    exe.addCSourceFile("src/stb_image.c", &.{"-std=c99"});
-    exe.addIncludePath("src");
+    exe.addCSourceFile(.{
+        .file = .{ .path = "src/stb_image.c" },
+        .flags = &.{"-std=c99"},
+    });
+    exe.addIncludePath(.{ .path = "src" });
 
     b.installDirectory(.{
         .source_dir = .{ .path = "data" },
@@ -54,8 +57,9 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "data",
     });
 
-    exe.override_dest_dir = .prefix;
-    b.installArtifact(exe);
+    b.getInstallStep().dependOn(&b.addInstallArtifact(exe, .{
+        .dest_dir = .{ .override = .prefix },
+    }).step);
 
     // This *creates* a RunStep in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
@@ -81,7 +85,6 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // Creates a step for unit testing.
-    // TODO(mason): add all source files here?
     const exe_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
@@ -94,8 +97,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    bench_exe.override_dest_dir = .prefix;
-    b.installArtifact(bench_exe);
     const bench_step = b.step("bench", "Run benchmarks");
     const bench_cmd = b.addRunArtifact(bench_exe);
     bench_step.dependOn(&bench_cmd.step);

@@ -3,8 +3,16 @@
     .version = "0.0.0",
     .dependencies = .{
         .zig_sdl = .{
-            .url = "https://github.com/andrewrk/SDL/archive/aef95740310154ebd491bc35e0fdcd118b16ade0.tar.gz",
-            .hash = "12202e4412ade6d1b8c45a606fc83cfa242a0ac47a70578aef9d5fa3b0bb33ab5618",
+            .url = "https://github.com/andrewrk/SDL/archive/c90c2d0a3b155ef8b4728ba9db80eae1a22d771e.tar.gz",
+            .hash = "12200a26a5e331ccfc5755638c51b10d1c276926d71969390825721a9c83cf7e9deb",
         },
+    },
+    .paths = .{
+        "assets",
+        "build.zig",
+        "build.zig.zon",
+        "data",
+        "README.md",
+        "src",
     },
 }

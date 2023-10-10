@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const NoAlloc: Allocator = .{
-    .ptr = &.{},
+    .ptr = undefined,
     .vtable = &.{
         .alloc = alloc,
         .resize = resize,
