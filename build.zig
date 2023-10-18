@@ -31,6 +31,14 @@ pub fn build(b: *std.Build) void {
     // https://github.com/MasonRemaley/2Pew/issues/2
     exe.want_lto = false;
 
+    if (use_llvm == false) {
+        // workarounds until more x86/ELF improvements land
+        exe.pie = true;
+        exe.each_lib_rpath = true;
+        // workaround for https://github.com/ziglang/zig/pull/17588
+        exe.want_lto = null;
+    }
+
     if (target.isNativeOs() and target.getOsTag() == .linux) {
         // The SDL package doesn't work for Linux yet, so we rely on system
         // packages for now.
