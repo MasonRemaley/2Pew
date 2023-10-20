@@ -217,6 +217,7 @@ fn update(
     game: *Game,
     delta_s: f32,
 ) void {
+    const rng = game.rng.random();
     // Update input
     {
         for (&game.input_state, &game.control_schemes) |*input_state, *control_scheme| {
@@ -319,27 +320,27 @@ fn update(
                 const avg_vel = entity.rb.vel.plus(other.rb.vel).scaled(0.5);
                 for (0..shrapnel_amt) |_| {
                     const shrapnel_animation = game.shrapnel_animations[
-                        std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                        rng.uintLessThanBiased(usize, game.shrapnel_animations.len)
                     ];
                     // Spawn slightly off center from collision point.
-                    const random_offset = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                        .scaled(std.crypto.random.float(f32) * 10);
+                    const random_offset = V.unit(rng.float(f32) * math.pi * 2)
+                        .scaled(rng.float(f32) * 10);
                     // Give them random velocities.
-                    const base_vel = if (std.crypto.random.boolean()) entity.rb.vel else other.rb.vel;
-                    const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                        .scaled(std.crypto.random.float(f32) * base_vel.length() * 2);
+                    const base_vel = if (rng.boolean()) entity.rb.vel else other.rb.vel;
+                    const random_vel = V.unit(rng.float(f32) * math.pi * 2)
+                        .scaled(rng.float(f32) * base_vel.length() * 2);
                     _ = command_buffer.appendInstantiate(true, &.{
                         .{
                             .lifetime = .{
-                                .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
+                                .seconds = 1.5 + rng.float(f32) * 1.0,
                             },
                             .transform = .{
                                 .pos = shrapnel_center.plus(random_offset),
-                                .angle = 2 * math.pi * std.crypto.random.float(f32),
+                                .angle = 2 * math.pi * rng.float(f32),
                             },
                             .rb = .{
                                 .vel = avg_vel.plus(random_vel),
-                                .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                                .rotation_vel = 2 * math.pi * rng.float(f32),
                                 .radius = game.animationRadius(shrapnel_animation),
                                 .density = 0.001,
                             },
@@ -496,22 +497,22 @@ fn update(
                     if (health_entity.health.damage(damage_entity.damage.hp) > 0.0) {
                         // spawn shrapnel here
                         const shrapnel_animation = game.shrapnel_animations[
-                            std.crypto.random.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                            rng.uintLessThanBiased(usize, game.shrapnel_animations.len)
                         ];
-                        const random_vector = V.unit(std.crypto.random.float(f32) * math.pi * 2)
+                        const random_vector = V.unit(rng.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
                         _ = command_buffer.appendInstantiate(true, &.{
                             .{
                                 .lifetime = .{
-                                    .seconds = 1.5 + std.crypto.random.float(f32) * 1.0,
+                                    .seconds = 1.5 + rng.float(f32) * 1.0,
                                 },
                                 .transform = .{
                                     .pos = health_entity.transform.pos,
-                                    .angle = 2 * math.pi * std.crypto.random.float(f32),
+                                    .angle = 2 * math.pi * rng.float(f32),
                                 },
                                 .rb = .{
                                     .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
-                                    .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                                    .rotation_vel = 2 * math.pi * rng.float(f32),
                                     .radius = game.animationRadius(shrapnel_animation),
                                     .density = 0.001,
                                 },
@@ -581,7 +582,7 @@ fn update(
                                 game.spawnTeamVictory(entities, display_center, happy_team);
                             }
                         } else {
-                            const new_angle = math.pi * 2 * std.crypto.random.float(f32);
+                            const new_angle = math.pi * 2 * rng.float(f32);
                             const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
                             const facing_angle = new_angle + math.pi;
                             _ = game.createShip(command_buffer, player_index.*, team_index.*, new_pos, facing_angle);
@@ -1423,6 +1424,8 @@ const Game = struct {
 
     particle: Sprite.Index,
 
+    rng: std.rand.DefaultPrng,
+
     const ShipAnimations = struct {
         still: Animation.Index,
         accel: Animation.Index,
@@ -2156,7 +2159,14 @@ const Game = struct {
             .fire = .{},
         };
 
+        const random_seed: u64 = s: {
+            var buf: [8]u8 = undefined;
+            std.options.cryptoRandomSeed(&buf);
+            break :s @bitCast(buf);
+        };
+
         return .{
+            .rng = std.rand.DefaultPrng.init(random_seed),
             .assets = assets,
             .teams = undefined,
             .teams_buffer = undefined,
@@ -2285,6 +2295,7 @@ const Game = struct {
     };
 
     fn setupScenario(game: *Game, command_buffer: *CommandBuffer, scenario: Scenario) void {
+        const rng = game.rng.random();
         command_buffer.entities.clearRetainingCapacity();
 
         var player_teams: []const u2 = undefined;
@@ -2396,11 +2407,11 @@ const Game = struct {
             .royale_4p => 1,
         };
         for (0..rock_amt) |_| {
-            const speed = 20 + std.crypto.random.float(f32) * 300;
-            const radius = 25 + std.crypto.random.float(f32) * 110;
-            const sprite = game.rock_sprites[std.crypto.random.uintLessThanBiased(usize, game.rock_sprites.len)];
-            const pos = V.unit(std.crypto.random.float(f32) * math.pi * 2)
-                .scaled(lerp(display_radius, display_radius * 1.1, std.crypto.random.float(f32)))
+            const speed = 20 + rng.float(f32) * 300;
+            const radius = 25 + rng.float(f32) * 110;
+            const sprite = game.rock_sprites[rng.uintLessThanBiased(usize, game.rock_sprites.len)];
+            const pos = V.unit(rng.float(f32) * math.pi * 2)
+                .scaled(lerp(display_radius, display_radius * 1.1, rng.float(f32)))
                 .plus(display_center);
 
             _ = command_buffer.appendInstantiate(true, &.{
@@ -2410,8 +2421,8 @@ const Game = struct {
                         .pos = pos,
                     },
                     .rb = .{
-                        .vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(speed),
-                        .rotation_vel = lerp(-1.0, 1.0, std.crypto.random.float(f32)),
+                        .vel = V.unit(rng.float(f32) * math.pi * 2).scaled(speed),
+                        .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
                         .radius = radius,
                         .density = 0.10,
                     },
@@ -2424,23 +2435,24 @@ const Game = struct {
         }
 
         // Create stars
-        generateStars(&game.stars);
+        generateStars(&game.stars, rng);
     }
 
     fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team_index: u2) void {
+        const rng = game.rng.random();
         for (0..500) |_| {
-            const random_vel = V.unit(std.crypto.random.float(f32) * math.pi * 2).scaled(300);
+            const random_vel = V.unit(rng.float(f32) * math.pi * 2).scaled(300);
             _ = entities.create(.{
                 .lifetime = .{
                     .seconds = 1000,
                 },
                 .transform = .{
                     .pos = pos,
-                    .angle = 2 * math.pi * std.crypto.random.float(f32),
+                    .angle = 2 * math.pi * rng.float(f32),
                 },
                 .rb = .{
                     .vel = random_vel,
-                    .rotation_vel = 2 * math.pi * std.crypto.random.float(f32),
+                    .rotation_vel = 2 * math.pi * rng.float(f32),
                     .radius = 16,
                     .density = 0.001,
                 },
@@ -2690,12 +2702,12 @@ const Star = struct {
     const Kind = enum { large, small, planet_red };
 };
 
-fn generateStars(stars: []Star) void {
+fn generateStars(stars: []Star, rng: std.rand.Random) void {
     for (stars) |*star| {
         star.* = .{
-            .x = std.crypto.random.uintLessThanBiased(u31, display_width),
-            .y = std.crypto.random.uintLessThanBiased(u31, display_height),
-            .kind = @enumFromInt(std.crypto.random.uintLessThanBiased(u8, 2)),
+            .x = rng.uintLessThanBiased(u31, display_width),
+            .y = rng.uintLessThanBiased(u31, display_height),
+            .kind = @enumFromInt(rng.uintLessThanBiased(u8, 2)),
         };
     }
     // Overwrite the last one so it shows up on top
