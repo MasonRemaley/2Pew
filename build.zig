@@ -34,9 +34,6 @@ pub fn build(b: *std.Build) void {
     if (use_llvm == false) {
         // workarounds until more x86/ELF improvements land
         exe.pie = true;
-        exe.each_lib_rpath = true;
-        // workaround for https://github.com/ziglang/zig/pull/17588
-        exe.want_lto = null;
     }
 
     if (target.isNativeOs() and target.getOsTag() == .linux) {
