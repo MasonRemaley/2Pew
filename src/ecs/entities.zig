@@ -261,8 +261,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             remove: ComponentFlags = ComponentFlags.init(.{}),
         };
         pub const ComponentFlags = packed struct {
-            pub const Int = std.meta.Int(.unsigned, @bitSizeOf(ComponentFlags));
-            pub const ShiftInt = std.math.Log2Int(Int);
+            pub const Int = @typeInfo(ComponentFlags).Struct.backing_integer.?;
             const Mask = ComponentMap(.Packed, struct {
                 fn FieldType(comptime _: ComponentTag, comptime _: type) type {
                     return bool;
@@ -314,7 +313,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
 
             pub fn int(self: ComponentFlags) Int {
-                return @bitCast(self);
+                return @bitCast(self.mask);
             }
 
             pub fn supersetOf(self: ComponentFlags, of: ComponentFlags) bool {
