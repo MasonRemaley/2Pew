@@ -293,7 +293,7 @@ pub fn init(comptime Entities: type) type {
 
 test "basic instantiate" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{
         .a = u8,
@@ -362,7 +362,7 @@ test "basic instantiate" {
 
 test "patch all handles" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Handles = struct {
         handle: EntityHandle,
@@ -405,10 +405,10 @@ test "patch all handles" {
     );
 
     var iter = entities.iterator(.{ .handles = .{} });
-    var handles = iter.next().?.handles.*;
+    const handles = iter.next().?.handles.*;
     try expectEqual(iter.next(), null);
 
-    var expected = EntityHandle{ .index = 0, .generation = @enumFromInt(0) };
+    const expected = EntityHandle{ .index = 0, .generation = @enumFromInt(0) };
     try expectEqual(handles.handle, expected);
     try expectEqual(handles.optional.?, expected);
     try expectEqual(handles.array[0], expected);
@@ -418,7 +418,7 @@ test "patch all handles" {
 
 test "basic patch" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{
         .other = EntityHandle,
@@ -453,10 +453,10 @@ test "basic patch" {
         );
 
         var iter = entities.iterator(.{ .other = .{} });
-        var entity_0_other = iter.next().?.other.*;
-        var entity_0 = iter.handle();
-        var entity_1_other = iter.next().?.other.*;
-        var entity_1 = iter.handle();
+        const entity_0_other = iter.next().?.other.*;
+        const entity_0 = iter.handle();
+        const entity_1_other = iter.next().?.other.*;
+        const entity_1 = iter.handle();
         try expectEqual(iter.next(), null);
 
         try expectEqual(entity_0_other, entity_1);
@@ -487,10 +487,10 @@ test "basic patch" {
         );
 
         var iter = entities.iterator(.{ .other = .{} });
-        var entity_0_other = iter.next().?.other.*;
-        var entity_0 = iter.handle();
-        var entity_1_other = iter.next().?.other.*;
-        var entity_1 = iter.handle();
+        const entity_0_other = iter.next().?.other.*;
+        const entity_0 = iter.handle();
+        const entity_1_other = iter.next().?.other.*;
+        const entity_1 = iter.handle();
         try expectEqual(iter.next(), null);
 
         try expectEqual(entity_0_other, entity_1);
@@ -539,13 +539,13 @@ test "basic patch" {
         );
 
         var iter = entities.iterator(.{ .other = .{} });
-        var entity_0_other = iter.next().?.other.*;
-        var entity_1_other = iter.next().?.other.*;
-        var entity_1 = iter.handle();
-        var entity_2_other = iter.next().?.other.*;
-        var entity_2 = iter.handle();
-        var entity_3_other = iter.next().?.other.*;
-        var entity_3 = iter.handle();
+        const entity_0_other = iter.next().?.other.*;
+        const entity_1_other = iter.next().?.other.*;
+        const entity_1 = iter.handle();
+        const entity_2_other = iter.next().?.other.*;
+        const entity_2 = iter.handle();
+        const entity_3_other = iter.next().?.other.*;
+        const entity_3 = iter.handle();
         try expectEqual(iter.next(), null);
 
         try expectEqual(entity_0_other, entity_1);
@@ -559,7 +559,7 @@ test "basic patch" {
 
 test "out of bounds" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{
         .other = EntityHandle,
@@ -607,7 +607,7 @@ test "out of bounds" {
 
 test "not self contained" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{
         .other = EntityHandle,
@@ -654,7 +654,7 @@ test "not self contained" {
 
 test "none handles" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{
         .other = EntityHandle,
@@ -695,7 +695,7 @@ test "none handles" {
 
 test "fixed alloc" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     const Entities = ecs.entities.Entities(.{
         .other = EntityHandle,
     });
@@ -762,7 +762,7 @@ test "serialize" {
     var entities = try Entities.init(allocator);
     defer entities.deinit();
 
-    var temp = entities.create(.{});
+    const temp = entities.create(.{});
     entities.swapRemove(temp);
     const e5 = entities.create(.{
         .c = 4,
@@ -788,7 +788,7 @@ test "serialize" {
     _ = e4;
     _ = e5;
 
-    var serialized = prefabs.serialize(allocator, &entities);
+    const serialized = prefabs.serialize(allocator, &entities);
     defer allocator.free(serialized);
 
     try expectEqual(serialized.len, 6);

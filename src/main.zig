@@ -113,7 +113,7 @@ pub fn main() !void {
 
     // Create initial entities
     var pa = std.heap.page_allocator;
-    var buffer = try pa.alloc(u8, ecs.entities.max_entities * 1024);
+    const buffer = try pa.alloc(u8, ecs.entities.max_entities * 1024);
     defer pa.free(buffer);
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
@@ -155,7 +155,7 @@ pub fn main() !void {
         const delta_rwa_bias = 0.05;
         const max_frame_time = 1.0 / 30.0;
         const t: f32 = @floatFromInt(timer.lap());
-        var last_delta_s = t / std.time.ns_per_s;
+        const last_delta_s = t / std.time.ns_per_s;
         delta_s = lerp(delta_s, @min(last_delta_s, max_frame_time), delta_rwa_bias);
         fx_loop_s = @mod(fx_loop_s + delta_s, max_fx_loop_s);
         if (profile) {
@@ -290,7 +290,7 @@ fn update(
                     if (other.health == null or other.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (entity.front_shield != null) {
-                            var dot = V.unit(entity.transform.angle).dot(normal);
+                            const dot = V.unit(entity.transform.angle).dot(normal);
                             shield_scale = @max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
@@ -303,7 +303,7 @@ fn update(
                     if (entity.health == null or entity.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (other.front_shield != null) {
-                            var dot = V.unit(other.transform.angle).dot(normal);
+                            const dot = V.unit(other.transform.angle).dot(normal);
                             shield_scale = @max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
@@ -595,8 +595,8 @@ fn update(
             }
 
             // Regen health
-            var max_regen = entity.health.regen_ratio * entity.health.max_hp;
-            var regen_speed = max_regen / entity.health.regen_s;
+            const max_regen = entity.health.regen_ratio * entity.health.max_hp;
+            const regen_speed = max_regen / entity.health.regen_s;
             if (entity.health.regen_cooldown_s <= 0.0 and entity.health.hp < max_regen) {
                 entity.health.hp = @min(entity.health.hp + regen_speed * delta_s, max_regen);
             }
@@ -669,7 +669,7 @@ fn update(
         });
         while (it.next()) |entity| {
             var gg = entity.grapple_gun;
-            var rb = entity.rb;
+            const rb = entity.rb;
             gg.cooldown_s -= delta_s;
             const input_state = &game.input_state[entity.player_index.*];
             if (input_state.isAction(.fire, .positive, .activated) and gg.cooldown_s <= 0) {
@@ -708,7 +708,7 @@ fn update(
 
                     // TODO: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
                     var dir = V.unit(entity.transform.angle + gg.angle);
-                    var vel = rb.vel;
+                    const vel = rb.vel;
                     const segment_len = 50.0;
                     var pos = entity.transform.pos.plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
@@ -1046,8 +1046,8 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     {
         var it = entities.iterator(.{ .spring = .{} });
         while (it.next()) |entity| {
-            var start = (entities.getComponent(entity.spring.start, .transform) orelse continue).pos;
-            var end = (entities.getComponent(entity.spring.end, .transform) orelse continue).pos;
+            const start = (entities.getComponent(entity.spring.start, .transform) orelse continue).pos;
+            const end = (entities.getComponent(entity.spring.end, .transform) orelse continue).pos;
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,
@@ -2499,7 +2499,7 @@ const Assets = struct {
         defer gpa.free(self_exe_dir_path);
         const assets_dir_path = try std.fs.path.join(gpa, &.{ self_exe_dir_path, "data" });
         defer gpa.free(assets_dir_path);
-        var dir = std.fs.openDirAbsolute(assets_dir_path, .{}) catch |err| {
+        const dir = std.fs.openDirAbsolute(assets_dir_path, .{}) catch |err| {
             panic("unable to open assets directory '{s}': {s}", .{
                 assets_dir_path, @errorName(err),
             });
@@ -2611,9 +2611,9 @@ const Assets = struct {
             @memcpy(diffuse_copy, diffuse_data[0..diffuse_copy.len]);
 
             for (0..diffuse_copy.len / channel_count) |pixel| {
-                var r = &diffuse_copy[pixel * channel_count];
-                var g = &diffuse_copy[pixel * channel_count + 1];
-                var b = &diffuse_copy[pixel * channel_count + 2];
+                const r = &diffuse_copy[pixel * channel_count];
+                const g = &diffuse_copy[pixel * channel_count + 1];
+                const b = &diffuse_copy[pixel * channel_count + 2];
 
                 var color: [3]f32 = .{
                     @as(f32, @floatFromInt(r.*)) / 255.0,
@@ -2641,7 +2641,7 @@ const Assets = struct {
 
                 // Apply tint
                 for (&color, tint) |*color_channel, tint_channel| {
-                    var recolored = math.pow(f32, @as(f32, @floatFromInt(tint_channel)) / 255.0, 1.0 / gamma);
+                    const recolored = math.pow(f32, @as(f32, @floatFromInt(tint_channel)) / 255.0, 1.0 / gamma);
                     color_channel.* = lerp(color_channel.*, color_channel.* * recolored, amount);
                 }
 

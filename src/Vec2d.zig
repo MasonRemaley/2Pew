@@ -65,8 +65,8 @@ pub fn length(v: Vec2d) f32 {
 }
 
 pub fn distanceSqrd(v: Vec2d, other: Vec2d) f32 {
-    var dx = other.x - v.x;
-    var dy = other.y - v.y;
+    const dx = other.x - v.x;
+    const dy = other.y - v.y;
     return dx * dx + dy * dy;
 }
 

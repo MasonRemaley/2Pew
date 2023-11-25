@@ -100,7 +100,7 @@ test "supported" {
 
 test "get parent" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{ .parent = ?Handle });
     var entities = try Entities.init(allocator);
@@ -119,7 +119,7 @@ test "get parent" {
 test "set parent" {
     const expectEqual = std.testing.expectEqual;
     const expect = std.testing.expect;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{ .parent = ?Handle });
     var entities = try Entities.init(allocator);
@@ -160,7 +160,7 @@ test "set parent" {
 
 test "remove orphans" {
     const expect = std.testing.expect;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{ .parent = ?Handle });
     var entities = try Entities.init(allocator);
@@ -193,7 +193,7 @@ test "remove orphans" {
 
 test "iterator" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{ .parent = ?Handle });
     var entities = try Entities.init(allocator);

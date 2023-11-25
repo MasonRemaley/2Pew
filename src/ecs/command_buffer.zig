@@ -45,7 +45,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
             var prefab_spans = try ArrayListUnmanaged(PrefabSpan).initCapacity(allocator, desc.prefab_capacity);
             errdefer prefab_spans.deinit(allocator);
 
-            var prefab_temporary = try allocator.alloc(u8, @sizeOf(EntityHandle) * desc.prefab_capacity);
+            const prefab_temporary = try allocator.alloc(u8, @sizeOf(EntityHandle) * desc.prefab_capacity);
             errdefer allocator.free(prefab_temporary);
 
             var remove = try ArrayListUnmanaged(Handle).initCapacity(allocator, desc.remove_capacity);
@@ -168,7 +168,7 @@ pub fn CommandBuffer(comptime Entities: type) type {
 
 test "basics" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{
         .a = u8,
@@ -405,7 +405,7 @@ test "basics" {
 
 test "ecs out of memory" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const Entities = ecs.entities.Entities(.{
         .a = u8,

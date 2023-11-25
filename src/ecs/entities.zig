@@ -199,7 +199,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             return self.handles.len();
         }
 
-        fn componentTag(comptime name: []const u8) ComponentTag {
+        inline fn componentTag(comptime name: []const u8) ComponentTag {
             const maybe_index = std.meta.fieldIndex(@TypeOf(registered_components), name);
             if (maybe_index) |index| {
                 return @enumFromInt(index);
@@ -491,8 +491,8 @@ pub fn Entities(comptime registered_components: anytype) type {
                                 comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).prealloc_count == 0);
                                 comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);
 
-                                comptime var component = componentTag(field.name);
-                                comptime var ComponentType = component_types[@intFromEnum(component)];
+                                const component = componentTag(field.name);
+                                const ComponentType = component_types[@intFromEnum(component)];
 
                                 const required = @field(descriptor, field.name) != null and !@field(descriptor, field.name).?.optional;
                                 const next_exists = required or self.archetype_list.?.archetype.isNameSet(field.name);
@@ -644,14 +644,14 @@ test "basic" {
     try std.testing.expect(entities.getComponent(e1, .y) == null);
 
     var iter = entities.iterator(.{ .x = .{}, .y = .{} });
-    var e = iter.next().?;
+    const e = iter.next().?;
     try std.testing.expect(e.x.* == 10);
     try std.testing.expect(e.y.* == 'a');
     try std.testing.expect(iter.next() == null);
 }
 
 test "zero-sized-component" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var entities = try Entities(.{ .x = void }).init(allocator);
     defer entities.deinit();
 
@@ -685,7 +685,7 @@ test "zero-sized-component" {
 }
 
 test "iter desc" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     var entities = try Entities(.{ .x = u32, .y = u8 }).init(allocator);
     defer entities.deinit();
@@ -844,7 +844,7 @@ test "iter desc" {
 }
 
 test "iter remove" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     // Remove from the beginning
     {
@@ -1068,7 +1068,7 @@ test "iter remove" {
 }
 
 test "clear retaining capacity" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     // Remove from the beginning
     {
@@ -1214,7 +1214,7 @@ test "limits" {
         assert(std.math.maxInt(IndexInPage) > page_size);
     }
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var entities = try Entities(.{}).init(allocator);
     defer entities.deinit();
     var created = std.ArrayList(Handle).init(allocator);
@@ -1264,7 +1264,7 @@ test "limits" {
 }
 
 test "safety" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var entities = try Entities(.{}).init(allocator);
     defer entities.deinit();
 
@@ -1279,7 +1279,7 @@ test "safety" {
 
 test "change archetype" {
     const expectEqual = std.testing.expectEqual;
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     const E = Entities(.{ .x = u32, .y = u8, .z = u16 });
     var entities = try E.init(allocator);
@@ -1287,7 +1287,7 @@ test "change archetype" {
 
     const ComponentFlags = E.ComponentFlags;
 
-    var e = entities.create(.{});
+    const e = entities.create(.{});
     try expectEqual(entities.getComponent(e, .x), null);
     try expectEqual(entities.getComponent(e, .y), null);
     try expectEqual(entities.getComponent(e, .z), null);
@@ -1353,7 +1353,7 @@ test "random data" {
     const ComponentFlags = E.ComponentFlags;
     const ArchetypeChange = E.ArchetypeChange;
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var entities = try E.init(allocator);
     defer entities.deinit();
 
@@ -1583,7 +1583,7 @@ test "random data" {
 
             var iter_xyz = entities.iterator(.{ .x = .{}, .y = .{}, .z = .{} });
             while (iter_xyz.next()) |entity| {
-                var expected = truth_xyz.get(iter_xyz.handle()).?;
+                const expected = truth_xyz.get(iter_xyz.handle()).?;
                 _ = truth_xyz.swapRemove(iter_xyz.handle());
                 try std.testing.expectEqual(expected.x.?, entity.x.*);
                 try std.testing.expectEqual(expected.y.?, entity.y.*);
@@ -1593,7 +1593,7 @@ test "random data" {
 
             var iter_xz = entities.iterator(.{ .x = .{}, .z = .{} });
             while (iter_xz.next()) |entity| {
-                var expected = truth_xz.get(iter_xz.handle()).?;
+                const expected = truth_xz.get(iter_xz.handle()).?;
                 _ = truth_xz.swapRemove(iter_xz.handle());
                 try std.testing.expectEqual(expected.x.?, entity.x.*);
                 try std.testing.expectEqual(expected.z.?, entity.z.*);
@@ -1602,7 +1602,7 @@ test "random data" {
 
             var iter_y = entities.iterator(.{ .y = .{} });
             while (iter_y.next()) |entity| {
-                var expected = truth_y.get(iter_y.handle()).?;
+                const expected = truth_y.get(iter_y.handle()).?;
                 _ = truth_y.swapRemove(iter_y.handle());
                 try std.testing.expectEqual(expected.y.?, entity.y.*);
             }
@@ -1618,7 +1618,7 @@ test "random data" {
 }
 
 test "minimal iter test" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
     defer entities.deinit();
 
@@ -1688,13 +1688,13 @@ test "minimal iter test" {
 }
 
 test "prefab entities" {
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
     var entities = try Entities(.{ .x = u32, .y = u8, .z = u16 }).init(allocator);
     defer entities.deinit();
 
-    var prefab: @TypeOf(entities).PrefabEntity = .{ .y = 10, .z = 20 };
-    var instance = entities.create(prefab);
+    const prefab: @TypeOf(entities).PrefabEntity = .{ .y = 10, .z = 20 };
+    const instance = entities.create(prefab);
 
     try std.testing.expect(entities.getComponent(instance, .x) == null);
     try std.testing.expect(entities.getComponent(instance, .y).?.* == 10);
