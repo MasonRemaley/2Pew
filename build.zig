@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
     // https://github.com/MasonRemaley/2Pew/issues/2
     exe.want_lto = false;
 
-    if (target.isNativeOs() and target.getOsTag() == .linux) {
+    if (target.query.isNativeOs() and target.result.os.tag == .linux) {
         // The SDL package doesn't work for Linux yet, so we rely on system
         // packages for now.
         exe.linkSystemLibrary("SDL2");
