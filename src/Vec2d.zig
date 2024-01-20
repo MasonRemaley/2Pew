@@ -52,7 +52,7 @@ pub fn angle(v: Vec2d) f32 {
     if (v.lengthSqrd() == 0) {
         return 0;
     } else {
-        return math.atan2(f32, v.y, v.x);
+        return math.atan2(v.y, v.x);
     }
 }
 
