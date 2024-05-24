@@ -32,7 +32,8 @@ pub fn Entities(comptime registered_components: anytype) type {
             for (fields, 0..) |field, i| {
                 values[i] = @field(registered_components, field.name);
             }
-            break :ct &values;
+            const result = values;
+            break :ct &result;
         };
         pub const component_names = std.meta.fieldNames(@TypeOf(registered_components));
 
@@ -247,7 +248,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             }
         }
 
-        pub const PrefabEntity = ComponentMap(.Auto, struct {
+        pub const PrefabEntity = ComponentMap(.auto, struct {
             fn FieldType(comptime _: ComponentTag, comptime C: type) type {
                 return ?C;
             }
@@ -262,7 +263,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         };
         pub const ComponentFlags = packed struct {
             pub const Int = @typeInfo(ComponentFlags).Struct.backing_integer.?;
-            const Mask = ComponentMap(.Packed, struct {
+            const Mask = ComponentMap(.@"packed", struct {
                 fn FieldType(comptime _: ComponentTag, comptime _: type) type {
                     return bool;
                 }
@@ -380,7 +381,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                         .type = FieldType,
                         .default_value = Map.default_value(component, FieldType),
                         .is_comptime = false,
-                        .alignment = if (layout == .Packed) 0 else @alignOf(FieldType),
+                        .alignment = if (layout == .@"packed") 0 else @alignOf(FieldType),
                     };
                     i += 1;
                 }
@@ -405,7 +406,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             optional: bool = false,
         };
 
-        pub const IteratorDescriptor = ComponentMap(.Auto, struct {
+        pub const IteratorDescriptor = ComponentMap(.auto, struct {
             fn FieldType(comptime _: ComponentTag, comptime _: type) type {
                 return ?IteratorComponentDescriptor;
             }
@@ -426,7 +427,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         fn BaseIterator(comptime mutable: bool, comptime descriptor: IteratorDescriptor) type {
             return struct {
                 const required_components = ComponentFlags.initFromIteratorDescriptorRequired(descriptor);
-                const Item = ComponentMap(.Auto, struct {
+                const Item = ComponentMap(.auto, struct {
                     fn FieldType(comptime component: ComponentTag, comptime C: type) type {
                         const name = @tagName(component);
 
@@ -548,7 +549,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         const ArchetypeList = struct {
-            const ComponentLists = ComponentMap(.Auto, struct {
+            const ComponentLists = ComponentMap(.auto, struct {
                 fn FieldType(comptime _: ComponentTag, comptime C: type) type {
                     return SegmentedListFirstShelfCount(C, first_shelf_count, false);
                 }

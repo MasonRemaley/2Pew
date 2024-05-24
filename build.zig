@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
         .name = "pew",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -46,13 +46,13 @@ pub fn build(b: *std.Build) void {
 
     // TODO extract this into a proper zig package
     exe.addCSourceFile(.{
-        .file = .{ .path = "src/stb_image.c" },
+        .file = b.path("src/stb_image.c"),
         .flags = &.{"-std=c99"},
     });
-    exe.addIncludePath(.{ .path = "src" });
+    exe.addIncludePath(b.path("src"));
 
     b.installDirectory(.{
-        .source_dir = .{ .path = "data" },
+        .source_dir = b.path("data"),
         .install_dir = .prefix,
         .install_subdir = "data",
     });
@@ -86,14 +86,14 @@ pub fn build(b: *std.Build) void {
 
     // Creates a step for unit testing.
     const exe_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const bench_exe = b.addExecutable(.{
         .name = "bench",
-        .root_source_file = .{ .path = "src/bench.zig" },
+        .root_source_file = b.path("src/bench.zig"),
         .target = target,
         .optimize = optimize,
     });

@@ -1,10 +1,11 @@
 .{
     .name = "2Pew",
     .version = "0.0.0",
+    .minimum_zig_version = "0.12.0",
     .dependencies = .{
         .zig_sdl = .{
-            .url = "https://github.com/andrewrk/SDL/archive/db4a162db2f6f59f737d03f441455dc9524d5793.tar.gz",
-            .hash = "1220c5360c9c71c215baa41b46ec18d0711059b48416a2b1cf96c7c2d87b2e8e4cf6",
+            .url = "https://github.com/andrewrk/SDL/archive/3a8010729221c6e5d2596aba602a6f714cc44fd3.tar.gz",
+            .hash = "122029b1250b3cb390f409f0c0253344bc996698d0d241f3ef6496cf22446b1b0705",
         },
     },
     .paths = .{
