@@ -1424,7 +1424,7 @@ const Game = struct {
 
     particle: Sprite.Index,
 
-    rng: std.rand.DefaultPrng,
+    rng: std.Random.DefaultPrng,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -2166,7 +2166,7 @@ const Game = struct {
         };
 
         return .{
-            .rng = std.rand.DefaultPrng.init(random_seed),
+            .rng = std.Random.DefaultPrng.init(random_seed),
             .assets = assets,
             .teams = undefined,
             .teams_buffer = undefined,
@@ -2702,7 +2702,7 @@ const Star = struct {
     const Kind = enum { large, small, planet_red };
 };
 
-fn generateStars(stars: []Star, rng: std.rand.Random) void {
+fn generateStars(stars: []Star, rng: std.Random) void {
     for (stars) |*star| {
         star.* = .{
             .x = rng.uintLessThanBiased(u31, display_width),

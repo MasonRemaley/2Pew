@@ -33,7 +33,7 @@ pub fn init(comptime ActionT: type) type {
 
             pub fn update(self: *@This()) void {
                 for (&self.action_states.values) |*action_state| {
-                    inline for (@typeInfo(Direction).Enum.fields) |field| {
+                    inline for (@typeInfo(Direction).@"enum".fields) |field| {
                         const direction: Direction = @enumFromInt(field.value);
                         const phase = action_state.getPtr(direction);
                         switch (phase.*) {
@@ -47,7 +47,7 @@ pub fn init(comptime ActionT: type) type {
 
             pub fn applyControlScheme(self: *@This(), control_scheme: *const ControlScheme, controllers: []?*c.SDL_GameController) void {
                 inline for (comptime std.meta.tags(Action)) |action| {
-                    inline for (@typeInfo(Direction).Enum.fields) |field| {
+                    inline for (@typeInfo(Direction).@"enum".fields) |field| {
                         const direction: Direction = @enumFromInt(field.value);
 
                         // Check if the keyboard or controller control is activated

@@ -9,7 +9,7 @@ const NoAlloc = @import("no_alloc.zig").NoAlloc;
 
 pub fn Handle(comptime exact_capacity: usize, comptime GenerationTag: type) type {
     const IndexT = @Type(std.builtin.Type{
-        .Int = .{
+        .int = .{
             .signedness = .unsigned,
             .bits = if (exact_capacity == 0) 0 else std.math.log2_int_ceil(usize, exact_capacity),
         },

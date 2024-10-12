@@ -241,29 +241,29 @@ pub fn init(comptime Entities: type) type {
 
             switch (@typeInfo(@TypeOf(value.*))) {
                 // Ignore
-                .Type,
-                .Void,
-                .Bool,
-                .NoReturn,
-                .Int,
-                .Float,
-                .ComptimeFloat,
-                .ComptimeInt,
-                .Undefined,
-                .Null,
-                .ErrorUnion,
-                .ErrorSet,
-                .Enum,
-                .EnumLiteral,
+                .type,
+                .void,
+                .bool,
+                .noreturn,
+                .int,
+                .float,
+                .comptime_float,
+                .comptime_int,
+                .undefined,
+                .null,
+                .error_union,
+                .error_set,
+                .@"enum",
+                .enum_literal,
                 => {},
 
                 // Recurse
-                .Optional => if (value.*) |*inner| try visitHandles(Error, context, inner, component_name, cb),
-                .Array => for (value) |*item| try visitHandles(Error, context, item, component_name, cb),
-                .Struct => |s| inline for (s.fields) |field| {
+                .optional => if (value.*) |*inner| try visitHandles(Error, context, inner, component_name, cb),
+                .array => for (value) |*item| try visitHandles(Error, context, item, component_name, cb),
+                .@"struct" => |s| inline for (s.fields) |field| {
                     try visitHandles(Error, context, &@field(value.*, field.name), component_name, cb);
                 },
-                .Union => |u| if (u.tag_type) |Tag| {
+                .@"union" => |u| if (u.tag_type) |Tag| {
                     inline for (u.fields) |field| {
                         if (@field(Tag, field.name) == @as(Tag, value.*)) {
                             try visitHandles(Error, context, &@field(value.*, field.name), component_name, cb);
@@ -274,16 +274,16 @@ pub fn init(comptime Entities: type) type {
                 },
 
                 // Give up
-                .AnyFrame,
-                .Frame,
-                .Fn,
-                .Opaque,
-                .Pointer,
+                .@"anyframe",
+                .frame,
+                .@"fn",
+                .@"opaque",
+                .pointer,
                 => unsupportedType(component_name, @TypeOf(value.*), "pointers"),
 
                 // We only support numerical vectors
-                .Vector => |vector| switch (vector.child) {
-                    .Int, .Float => {},
+                .vector => |vector| switch (vector.child) {
+                    .int, .float => {},
                     _ => unsupportedType(component_name, @TypeOf(value.*), "pointers"),
                 },
             }

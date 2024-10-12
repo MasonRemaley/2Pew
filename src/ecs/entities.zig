@@ -27,7 +27,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         // Component info
         pub const ComponentTag = std.meta.FieldEnum(@TypeOf(registered_components));
         pub const component_types = ct: {
-            const fields = @typeInfo(@TypeOf(registered_components)).Struct.fields;
+            const fields = @typeInfo(@TypeOf(registered_components)).@"struct".fields;
             var values: [fields.len]type = undefined;
             for (fields, 0..) |field, i| {
                 values[i] = @field(registered_components, field.name);
@@ -237,7 +237,7 @@ pub fn Entities(comptime registered_components: anytype) type {
         }
 
         fn setComponents(pointer: *const EntityPointer, components: anytype) void {
-            inline for (@typeInfo(@TypeOf(components)).Struct.fields) |f| {
+            inline for (@typeInfo(@TypeOf(components)).@"struct".fields) |f| {
                 if (@TypeOf(components) == Self.PrefabEntity) {
                     if (@field(components, f.name)) |component| {
                         pointer.archetype_list.getComponentUnchecked(pointer.index, componentTag(f.name)).* = component;
@@ -262,7 +262,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             remove: ComponentFlags = ComponentFlags.init(.{}),
         };
         pub const ComponentFlags = packed struct {
-            pub const Int = @typeInfo(ComponentFlags).Struct.backing_integer.?;
+            pub const Int = @typeInfo(ComponentFlags).@"struct".backing_integer.?;
             const Mask = ComponentMap(.@"packed", struct {
                 fn FieldType(comptime _: ComponentTag, comptime _: type) type {
                     return bool;
@@ -286,7 +286,7 @@ pub fn Entities(comptime registered_components: anytype) type {
             fn initFromComponents(components: anytype) ComponentFlags {
                 if (@TypeOf(components) == PrefabEntity) {
                     var self = ComponentFlags{};
-                    inline for (comptime @typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                    inline for (comptime @typeInfo(@TypeOf(components)).@"struct".fields) |field| {
                         if (@field(components, field.name) != null) {
                             self.setName(field.name);
                         }
@@ -294,7 +294,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                     return self;
                 } else return comptime blk: {
                     var self = ComponentFlags{};
-                    for (@typeInfo(@TypeOf(components)).Struct.fields) |field| {
+                    for (@typeInfo(@TypeOf(components)).@"struct".fields) |field| {
                         self.setName(field.name);
                     }
                     break :blk self;
@@ -387,7 +387,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                 }
             }
             return @Type(Type{
-                .Struct = Type.Struct{
+                .@"struct" = Type.Struct{
                     .layout = layout,
                     .backing_integer = null,
                     .fields = fields[0..i],
@@ -487,7 +487,7 @@ pub fn Entities(comptime registered_components: anytype) type {
                             var item: Item = undefined;
                             self.current_handle = current_handle.*;
                             comptime assert(@TypeOf(self.archetype_list.?.handles).prealloc_count == 0);
-                            inline for (@typeInfo(Item).Struct.fields) |field| {
+                            inline for (@typeInfo(Item).@"struct".fields) |field| {
                                 // Make sure the component list is compatible with the handle iterator
                                 comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).prealloc_count == 0);
                                 comptime assert(@TypeOf(@field(self.archetype_list.?.comps, field.name)).first_shelf_exp == @TypeOf(self.archetype_list.?.handles).first_shelf_exp);

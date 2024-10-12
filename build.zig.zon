@@ -1,7 +1,7 @@
 .{
     .name = "2Pew",
     .version = "0.0.0",
-    .minimum_zig_version = "0.12.0",
+    .minimum_zig_version = "0.14.0-dev.1888+7e530c13b",
     .dependencies = .{
         .zig_sdl = .{
             .url = "https://github.com/andrewrk/SDL/archive/3a8010729221c6e5d2596aba602a6f714cc44fd3.tar.gz",

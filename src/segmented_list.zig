@@ -97,7 +97,7 @@ pub fn SegmentedListFirstShelfCount(comptime T: type, comptime first_shelf_count
         pub const prealloc_count = if (prealloc) first_shelf_count else 0;
 
         fn AtType(comptime SelfType: type) type {
-            if (@typeInfo(SelfType).Pointer.is_const) {
+            if (@typeInfo(SelfType).pointer.is_const) {
                 return *const T;
             } else {
                 return *T;

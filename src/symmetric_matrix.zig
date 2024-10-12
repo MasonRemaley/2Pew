@@ -6,7 +6,7 @@ pub fn SymmetricMatrix(comptime Enum: type, comptime Value: type) type {
     // The length is equal to the upper right half of the matrix, ounding up. We calculate it by
     // dividing the full size of the matrix by two, and then adding back the half of the diagonal
     // that we lost to integer rounding.
-    const fields = @typeInfo(Enum).Enum.fields.len;
+    const fields = @typeInfo(Enum).@"enum".fields.len;
     const len = (fields * fields + fields) / 2;
 
     return struct {
