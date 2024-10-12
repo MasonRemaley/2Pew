@@ -19,6 +19,7 @@ const input_system = @import("input_system.zig").init(enum {
     thrust_x,
     thrust_y,
     fire,
+    start,
 });
 
 const display_width = 1920;
@@ -223,6 +224,12 @@ fn update(
         for (&game.input_state, &game.control_schemes) |*input_state, *control_scheme| {
             input_state.update();
             input_state.applyControlScheme(control_scheme, &game.controllers);
+        }
+    }
+
+    for (&game.input_state) |*input_state| {
+        if (input_state.isAction(.start, .positive, .activated)) {
+            game.setupScenario(command_buffer, .deathmatch_1v1_one_rock);
         }
     }
 
@@ -2112,6 +2119,9 @@ const Game = struct {
             .fire = .{
                 .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_A },
             },
+            .start = .{
+                .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_START },
+            },
         };
         const keyboard_wasd = input_system.ControlScheme.Keyboard{
             .turn = .{
@@ -2129,6 +2139,9 @@ const Game = struct {
             },
             .fire = .{
                 .positive = c.SDL_SCANCODE_LSHIFT,
+            },
+            .start = .{
+                .positive = c.SDL_SCANCODE_TAB,
             },
         };
         const keyboard_arrows = input_system.ControlScheme.Keyboard{
@@ -2150,6 +2163,9 @@ const Game = struct {
             .fire = .{
                 .positive = c.SDL_SCANCODE_RSHIFT,
             },
+            .start = .{
+                .positive = c.SDL_SCANCODE_RETURN,
+            },
         };
         const keyboard_none: input_system.ControlScheme.Keyboard = .{
             .turn = .{},
@@ -2157,6 +2173,7 @@ const Game = struct {
             .thrust_x = .{},
             .thrust_y = .{},
             .fire = .{},
+            .start = .{},
         };
 
         const random_seed: u64 = s: {

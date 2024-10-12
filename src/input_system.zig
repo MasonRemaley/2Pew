@@ -143,6 +143,7 @@ pub fn init(comptime ActionT: type) type {
                     thrust_x: T,
                     thrust_y: T,
                     fire: T,
+                    start: T,
 
                     fn init(default: T) @This() {
                         var map: @This() = undefined;
