@@ -8,7 +8,14 @@ const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const math = std.math;
 const assert = std.debug.assert;
 const V = @import("Vec2d.zig");
+// XXX: remove
 const ecs = @import("ecs/index.zig");
+// XXX: alias shorthands once we only have this ECS present
+const zcs = @import("zcs");
+const Entities = zcs.Entities;
+const Entity = zcs.Entity;
+const Component = zcs.Component;
+const CommandBuffer = zcs.CommandBuffer;
 const FieldEnum = std.meta.FieldEnum;
 const MinimumAlignmentAllocator = @import("minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
@@ -30,28 +37,29 @@ const display_center: V = .{
 };
 const display_radius = display_height / 2.0;
 
-const Entities = ecs.entities.Entities(.{
-    .parent = ?EntityHandle,
-    .damage = Damage,
-    .animate_on_input = AnimateOnInput,
-    .ship = Ship,
-    .transform = Transform,
-    .rb = RigidBody,
-    .player_index = u2,
-    .team_index = u2,
-    .lifetime = Lifetime,
-    .sprite = Sprite.Index,
-    .animation = Animation.Playback,
-    .collider = Collider,
-    .turret = Turret,
-    .grapple_gun = GrappleGun,
-    .health = Health,
-    .spring = Spring,
-    .hook = Hook,
-    .front_shield = struct {},
-});
+// XXX: rename?
+const Components: []const type = &.{
+    Parent,
+    Damage,
+    AnimateOnInput,
+    Ship,
+    Transform,
+    RigidBody,
+    PlayerIndex,
+    TeamIndex,
+    Lifetime,
+    Sprite.Index,
+    Animation.Playback,
+    Collider,
+    Turret,
+    GrappleGun,
+    Health,
+    Spring,
+    Hook,
+    FrontShield,
+};
+
 const PrefabEntity = Entities.PrefabEntity;
-const CommandBuffer = ecs.command_buffer.CommandBuffer(Entities);
 const EntityHandle = ecs.entities.Handle;
 const DeferredHandle = ecs.command_buffer.DeferredHandle;
 const ComponentFlags = Entities.ComponentFlags;
@@ -119,18 +127,15 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
     const allocator = maa.allocator();
-    var entities = try Entities.init(allocator);
-    defer entities.deinit();
+    var entities = try zcs.Entities.init(allocator, 100000, Components);
+    defer entities.deinit(allocator);
 
-    var command_buffer = try CommandBuffer.init(allocator, &entities, .{
-        .prefab_entity_capacity = 8192,
-        .prefab_capacity = 8192,
-        .remove_capacity = 8192,
-        .arch_change_capacity = 8192,
-    });
+    // XXX: remember to check usage
+    // XXX: use shorthands where reasonable once it works
+    var command_buffer = try zcs.CommandBuffer.init(allocator, &entities, 8192);
     defer command_buffer.deinit(allocator);
 
-    game.setupScenario(&command_buffer, .deathmatch_2v2);
+    game.setupScenario(&entities, &command_buffer, .deathmatch_2v2);
 
     // Run sim
     var delta_s: f32 = 1.0 / 60.0;
@@ -145,7 +150,9 @@ pub fn main() !void {
     var warned_memory_usage = false;
 
     while (true) {
-        if (poll(&entities, &command_buffer, &game)) return;
+        // XXX: ..
+        // if (poll(&entities, &command_buffer, &game)) return;
+        if (poll({}, {}, &game)) return;
         update(&entities, &command_buffer, &game, delta_s);
         render(assets, &entities, game, delta_s, fx_loop_s);
 
@@ -172,40 +179,46 @@ pub fn main() !void {
     }
 }
 
-fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
+// XXX: ...
+// fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
+fn poll(entities: anytype, command_buffer: anytype, game: *Game) bool {
+    _ = game;
+    _ = entities;
+    _ = command_buffer;
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) != 0) {
         switch (event.type) {
             c.SDL_QUIT => return true,
-            c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
-                c.SDL_SCANCODE_ESCAPE => return true,
-                c.SDL_SCANCODE_RETURN => {
-                    // Clear invulnerability so you don't have to wait when testing
-                    var it = entities.iterator(.{ .health = .{ .mutable = true } });
-                    while (it.next()) |entity| {
-                        entity.health.invulnerable_s = 0.0;
-                    }
-                },
-                c.SDL_SCANCODE_1 => {
-                    game.setupScenario(command_buffer, .deathmatch_2v2);
-                },
-                c.SDL_SCANCODE_2 => {
-                    game.setupScenario(command_buffer, .deathmatch_2v2_no_rocks);
-                },
-                c.SDL_SCANCODE_3 => {
-                    game.setupScenario(command_buffer, .deathmatch_2v2_one_rock);
-                },
-                c.SDL_SCANCODE_4 => {
-                    game.setupScenario(command_buffer, .deathmatch_1v1);
-                },
-                c.SDL_SCANCODE_5 => {
-                    game.setupScenario(command_buffer, .deathmatch_1v1_one_rock);
-                },
-                c.SDL_SCANCODE_6 => {
-                    game.setupScenario(command_buffer, .royale_4p);
-                },
-                else => {},
-            },
+            // XXX: ...
+            // c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
+            //     c.SDL_SCANCODE_ESCAPE => return true,
+            //     c.SDL_SCANCODE_RETURN => {
+            //         // Clear invulnerability so you don't have to wait when testing
+            //         var it = entities.iterator(.{ .health = .{ .mutable = true } });
+            //         while (it.next()) |entity| {
+            //             entity.health.invulnerable_s = 0.0;
+            //         }
+            //     },
+            //     c.SDL_SCANCODE_1 => {
+            //         game.setupScenario(command_buffer, .deathmatch_2v2);
+            //     },
+            //     c.SDL_SCANCODE_2 => {
+            //         game.setupScenario(command_buffer, .deathmatch_2v2_no_rocks);
+            //     },
+            //     c.SDL_SCANCODE_3 => {
+            //         game.setupScenario(command_buffer, .deathmatch_2v2_one_rock);
+            //     },
+            //     c.SDL_SCANCODE_4 => {
+            //         game.setupScenario(command_buffer, .deathmatch_1v1);
+            //     },
+            //     c.SDL_SCANCODE_5 => {
+            //         game.setupScenario(command_buffer, .deathmatch_1v1_one_rock);
+            //     },
+            //     c.SDL_SCANCODE_6 => {
+            //         game.setupScenario(command_buffer, .royale_4p);
+            //     },
+            //     else => {},
+            // },
             else => {},
         }
     }
@@ -229,19 +242,19 @@ fn update(
 
     for (&game.input_state) |*input_state| {
         if (input_state.isAction(.start, .positive, .activated)) {
-            game.setupScenario(command_buffer, .deathmatch_1v1_one_rock);
+            game.setupScenario(entities, command_buffer, .deathmatch_1v1_one_rock);
         }
     }
 
     // Prevent invulnerable entities from firing
     {
-        var it = entities.iterator(.{
-            .player_index = .{},
-            .health = .{},
+        var it = entities.viewIterator(struct {
+            player_index: *const PlayerIndex,
+            health: *const Health,
         });
         while (it.next()) |entity| {
             if (entity.health.invulnerable_s > 0.0) {
-                var input_state = &game.input_state[entity.player_index.*];
+                var input_state = &game.input_state[entity.player_index.index];
                 input_state.setAction(.fire, .positive, .inactive);
             }
         }
@@ -249,13 +262,14 @@ fn update(
 
     // Bonk
     {
-        var it = entities.iterator(.{
-            .rb = .{ .mutable = true },
-            .transform = .{},
-            .collider = .{},
-            .health = .{ .mutable = true, .optional = true },
-            .front_shield = .{ .optional = true },
-            .hook = .{ .optional = true },
+        var it = entities.viewIterator(struct {
+            rb: *RigidBody,
+            transform: *const Transform,
+            collider: *const Collider,
+            health: ?*Health,
+            front_shield: ?*const FrontShield,
+            hook: ?*const Hook,
+            entity: Entity,
         });
         while (it.next()) |entity| {
             var other_it = it;
@@ -336,25 +350,23 @@ fn update(
                     const base_vel = if (rng.boolean()) entity.rb.vel else other.rb.vel;
                     const random_vel = V.unit(rng.float(f32) * math.pi * 2)
                         .scaled(rng.float(f32) * base_vel.length() * 2);
-                    _ = command_buffer.appendInstantiate(true, &.{
-                        .{
-                            .lifetime = .{
-                                .seconds = 1.5 + rng.float(f32) * 1.0,
-                            },
-                            .transform = .{
-                                .pos = shrapnel_center.plus(random_offset),
-                                .angle = 2 * math.pi * rng.float(f32),
-                            },
-                            .rb = .{
-                                .vel = avg_vel.plus(random_vel),
-                                .rotation_vel = 2 * math.pi * rng.float(f32),
-                                .radius = game.animationRadius(shrapnel_animation),
-                                .density = 0.001,
-                            },
-                            .animation = .{
-                                .index = shrapnel_animation,
-                                .destroys_entity = true,
-                            },
+                    command_buffer.create(entities, .{
+                        Lifetime{
+                            .seconds = 1.5 + rng.float(f32) * 1.0,
+                        },
+                        Transform{
+                            .pos = shrapnel_center.plus(random_offset),
+                            .angle = 2 * math.pi * rng.float(f32),
+                        },
+                        RigidBody{
+                            .vel = avg_vel.plus(random_vel),
+                            .rotation_vel = 2 * math.pi * rng.float(f32),
+                            .radius = game.animationRadius(shrapnel_animation),
+                            .density = 0.001,
+                        },
+                        Animation.Playback{
+                            .index = shrapnel_animation,
+                            .destroys_entity = true,
                         },
                     });
                 }
@@ -367,32 +379,26 @@ fn update(
                 {
                     var hooked = false;
                     if (entity.hook) |hook| {
-                        command_buffer.appendArchChange(it.handle(), .{
-                            .add = .{
-                                .spring = Spring{
-                                    .start = it.handle(),
-                                    .end = other_it.handle(),
-                                    .k = hook.k,
-                                    .length = entity.transform.pos.distance(other.transform.pos),
-                                    .damping = hook.damping,
-                                },
+                        command_buffer.changeArchetype(entities, entity.entity, Component.flags(entities, &.{Hook}), .{
+                            Spring{
+                                .start = entity.entity,
+                                .end = other.entity,
+                                .k = hook.k,
+                                .length = entity.transform.pos.distance(other.transform.pos),
+                                .damping = hook.damping,
                             },
-                            .remove = ComponentFlags.init(.{.hook}),
                         });
                         hooked = true;
                     }
                     if (other.hook) |hook| {
-                        command_buffer.appendArchChange(other_it.handle(), .{
-                            .add = .{
-                                .spring = Spring{
-                                    .start = it.handle(),
-                                    .end = other_it.handle(),
-                                    .k = hook.k,
-                                    .length = entity.transform.pos.distance(other.transform.pos),
-                                    .damping = hook.damping,
-                                },
+                        command_buffer.changeArchetype(entities, other.entity, Component.flags(entities, &.{Hook}), .{
+                            Spring{
+                                .start = entity.entity,
+                                .end = other.entity,
+                                .k = hook.k,
+                                .length = entity.transform.pos.distance(other.transform.pos),
+                                .damping = hook.damping,
                             },
-                            .remove = ComponentFlags.init(.{.hook}),
                         });
                         hooked = true;
                     }
@@ -407,10 +413,10 @@ fn update(
 
     // Update rbs
     {
-        var it = entities.iterator(.{
-            .rb = .{ .mutable = true },
-            .transform = .{ .mutable = true },
-            .health = .{ .mutable = true, .optional = true },
+        var it = entities.viewIterator(struct {
+            rb: *RigidBody,
+            transform: *Transform,
+            health: ?*Health,
         });
         while (it.next()) |entity| {
             entity.transform.pos.add(entity.rb.vel.scaled(delta_s));
@@ -433,6 +439,7 @@ fn update(
         }
     }
 
+    // XXX: springs were already disabled
     // Update springs
     // {
     //     var it = entities.iterator(.{ .spring = .{} });
@@ -486,16 +493,17 @@ fn update(
     // Update entities that do damage
     {
         // TODO(mason): hard to keep the components straight, make shorter handles names and get rid of comps
-        var damage_it = entities.iterator(.{
-            .damage = .{},
-            .rb = .{},
-            .transform = .{ .mutable = true },
+        var damage_it = entities.viewIterator(struct {
+            damage: *const Damage,
+            rb: *const RigidBody,
+            transform: *Transform,
+            entity: Entity,
         });
         while (damage_it.next()) |damage_entity| {
-            var health_it = entities.iterator(.{
-                .health = .{ .mutable = true },
-                .rb = .{},
-                .transform = .{},
+            var health_it = entities.viewIterator(struct {
+                health: *Health,
+                rb: *const RigidBody,
+                transform: *const Transform,
             });
             while (health_it.next()) |health_entity| {
                 if (health_entity.transform.pos.distanceSqrd(damage_entity.transform.pos) <
@@ -508,29 +516,27 @@ fn update(
                         ];
                         const random_vector = V.unit(rng.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
-                        _ = command_buffer.appendInstantiate(true, &.{
-                            .{
-                                .lifetime = .{
-                                    .seconds = 1.5 + rng.float(f32) * 1.0,
-                                },
-                                .transform = .{
-                                    .pos = health_entity.transform.pos,
-                                    .angle = 2 * math.pi * rng.float(f32),
-                                },
-                                .rb = .{
-                                    .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
-                                    .rotation_vel = 2 * math.pi * rng.float(f32),
-                                    .radius = game.animationRadius(shrapnel_animation),
-                                    .density = 0.001,
-                                },
-                                .animation = .{
-                                    .index = shrapnel_animation,
-                                    .destroys_entity = true,
-                                },
+                        command_buffer.create(entities, .{
+                            Lifetime{
+                                .seconds = 1.5 + rng.float(f32) * 1.0,
+                            },
+                            Transform{
+                                .pos = health_entity.transform.pos,
+                                .angle = 2 * math.pi * rng.float(f32),
+                            },
+                            RigidBody{
+                                .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
+                                .rotation_vel = 2 * math.pi * rng.float(f32),
+                                .radius = game.animationRadius(shrapnel_animation),
+                                .density = 0.001,
+                            },
+                            Animation.Playback{
+                                .index = shrapnel_animation,
+                                .destroys_entity = true,
                             },
                         });
 
-                        command_buffer.appendRemove(damage_it.handle());
+                        command_buffer.destroy(damage_entity.entity);
                     }
                 }
             }
@@ -542,35 +548,34 @@ fn update(
     // TODO(mason): take velocity from before impact? i may have messed that up somehow
     // Explode things that reach 0 hp
     {
-        var it = entities.iterator(.{
-            .health = .{ .mutable = true },
-            .rb = .{ .optional = true },
-            .transform = .{ .optional = true },
-            .player_index = .{ .optional = true },
-            .team_index = .{ .optional = true },
+        var it = entities.viewIterator(struct {
+            health: *Health,
+            rb: ?*const RigidBody,
+            transform: ?*const Transform,
+            player_index: ?*const PlayerIndex,
+            team_index: ?*const TeamIndex,
+            entity: Entity,
         });
         while (it.next()) |entity| {
             if (entity.health.hp <= 0) {
                 // spawn explosion here
                 if (entity.transform) |trans| {
-                    _ = command_buffer.appendInstantiate(true, &.{
-                        .{
-                            .lifetime = .{
-                                .seconds = 100,
-                            },
-                            .transform = .{
-                                .pos = trans.pos,
-                            },
-                            .rb = .{
-                                .vel = if (entity.rb) |rb| rb.vel else V{ .x = 0, .y = 0 },
-                                .rotation_vel = 0,
-                                .radius = 32,
-                                .density = 0.001,
-                            },
-                            .animation = .{
-                                .index = game.explosion_animation,
-                                .destroys_entity = true,
-                            },
+                    command_buffer.create(entities, .{
+                        Lifetime{
+                            .seconds = 100,
+                        },
+                        Transform{
+                            .pos = trans.pos,
+                        },
+                        RigidBody{
+                            .vel = if (entity.rb) |rb| rb.vel else V{ .x = 0, .y = 0 },
+                            .rotation_vel = 0,
+                            .radius = 32,
+                            .density = 0.001,
+                        },
+                        Animation.Playback{
+                            .index = game.explosion_animation,
+                            .destroys_entity = true,
                         },
                     });
                 }
@@ -578,27 +583,33 @@ fn update(
                 // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
                 if (entity.player_index) |player_index| {
+                    _ = player_index; // XXX: ...
                     if (entity.team_index) |team_index| {
                         // give player their next ship
-                        const team = &game.teams[team_index.*];
+                        const team = &game.teams[team_index.index];
                         if (team.ship_progression_index >= team.ship_progression.len) {
                             const already_over = game.over();
                             team.players_alive -= 1;
                             if (game.over() and !already_over) {
                                 const happy_team = game.aliveTeam();
-                                game.spawnTeamVictory(entities, display_center, happy_team);
+                                _ = happy_team;
+                                // XXX: ...
+                                // game.spawnTeamVictory(entities, display_center, happy_team);
                             }
                         } else {
                             const new_angle = math.pi * 2 * rng.float(f32);
                             const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
                             const facing_angle = new_angle + math.pi;
-                            _ = game.createShip(command_buffer, player_index.*, team_index.*, new_pos, facing_angle);
+                            _ = facing_angle;
+                            _ = new_pos;
+                            // XXX: ...
+                            // _ = game.createShip(command_buffer, player_index.*, team_index.*, new_pos, facing_angle);
                         }
                     }
                 }
 
                 // Destroy the entity
-                command_buffer.appendRemove(it.handle());
+                command_buffer.destroy(entity.entity);
             }
 
             // Regen health
@@ -616,15 +627,15 @@ fn update(
 
     // Update ships
     {
-        var it = entities.iterator(.{
-            .ship = .{},
-            .rb = .{ .mutable = true },
-            .transform = .{ .mutable = true },
-            .player_index = .{},
-            .animation = .{ .optional = true, .mutable = true },
+        var it = entities.viewIterator(struct {
+            ship: *const Ship,
+            rb: *RigidBody,
+            transform: *Transform,
+            player_index: *const PlayerIndex,
+            animation: ?*Animation.Playback,
         });
         while (it.next()) |entity| {
-            const input_state = &game.input_state[entity.player_index.*];
+            const input_state = &game.input_state[entity.player_index.index];
             if (entity.ship.omnithrusters) {
                 entity.rb.vel.add(.{
                     .x = input_state.getAxis(.thrust_x) * entity.ship.thrust * delta_s,
@@ -646,13 +657,13 @@ fn update(
 
     // Update animate on input
     {
-        var it = entities.iterator(.{
-            .player_index = .{},
-            .animate_on_input = .{},
-            .animation = .{ .mutable = true },
+        var it = entities.viewIterator(struct {
+            player_index: *const PlayerIndex,
+            animate_on_input: *const AnimateOnInput,
+            animation: *Animation.Playback,
         });
         while (it.next()) |entity| {
-            const input_state = &game.input_state[entity.player_index.*];
+            const input_state = &game.input_state[entity.player_index.index];
             if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
                 entity.animation.* = .{
                     .index = entity.animate_on_input.activated,
@@ -668,29 +679,30 @@ fn update(
     // TODO: break out cooldown logic or no?
     // Update grapple guns
     {
-        var it = entities.iterator(.{
-            .grapple_gun = .{ .mutable = true },
-            .player_index = .{},
-            .rb = .{},
-            .transform = .{},
+        var it = entities.viewIterator(struct {
+            grapple_gun: *GrappleGun,
+            player_index: *const PlayerIndex,
+            rb: *const RigidBody,
+            transform: *const Transform,
+            entity: Entity,
         });
         while (it.next()) |entity| {
             var gg = entity.grapple_gun;
             const rb = entity.rb;
             gg.cooldown_s -= delta_s;
-            const input_state = &game.input_state[entity.player_index.*];
+            const input_state = &game.input_state[entity.player_index.index];
             if (input_state.isAction(.fire, .positive, .activated) and gg.cooldown_s <= 0) {
                 gg.cooldown_s = gg.max_cooldown_s;
 
                 // TODO: increase cooldown_s?
                 if (gg.live) |live| {
                     for (live.joints) |piece| {
-                        command_buffer.appendRemove(piece);
+                        command_buffer.destroy(piece);
                     }
                     for (live.springs) |piece| {
-                        command_buffer.appendRemove(piece);
+                        command_buffer.destroy(piece);
                     }
-                    command_buffer.appendRemove(live.hook);
+                    command_buffer.destroy(live.hook);
                     gg.live = null;
                 } else {
                     // TODO: behave sensibly if the ship that fired it dies...right now crashes cause
@@ -719,11 +731,15 @@ fn update(
                     const segment_len = 50.0;
                     var pos = entity.transform.pos.plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
-                        gg.live.?.joints[i] = entities.create(.{
-                            .transform = .{
+                        // XXX: creating while iterating? I think this was a bug right? Or I guess it's okay
+                        // because we know there's no overlap in archetype, but it will trip our new assertions.
+                        // think this through. we COULD have per component type generation counters instead of
+                        // a single one? Or just do this on the cb somehow to keep it simple?
+                        gg.live.?.joints[i] = Entity.create(entities, .{
+                            Transform{
                                 .pos = pos,
                             },
-                            .rb = .{
+                            RigidBody{
                                 .vel = vel,
                                 .radius = 2,
                                 .density = 0.001,
@@ -741,30 +757,32 @@ fn update(
                         .damping = 0.0,
                         .k = 100.0,
                     };
-                    gg.live.?.hook = entities.create(.{
-                        .transform = .{
+                    // XXX: also creating while iterating
+                    gg.live.?.hook = Entity.create(entities, .{
+                        Transform{
                             .pos = pos,
                             .angle = 0,
                         },
-                        .rb = .{
+                        RigidBody{
                             .vel = vel,
                             .rotation_vel = 0,
                             .radius = 2,
                             .density = 0.001,
                         },
-                        .collider = .{
+                        Collider{
                             .collision_damping = 0,
                             .layer = .hook,
                         },
-                        .hook = hook,
+                        hook,
                         // TODO: ...
                         // .sprite = game.bullet_small,
                     });
                     for (0..(gg.live.?.springs.len)) |i| {
-                        gg.live.?.springs[i] = entities.create(.{
-                            .spring = .{
+                        // XXX: same deal here, creation while iterating
+                        gg.live.?.springs[i] = Entity.create(entities, .{
+                            Spring{
                                 .start = if (i == 0)
-                                    it.handle()
+                                    entity.entity
                                 else
                                     gg.live.?.joints[i - 1],
                                 .end = if (i < gg.live.?.joints.len)
@@ -784,49 +802,56 @@ fn update(
 
     // Update animations
     {
-        var it = entities.iterator(.{ .animation = .{} });
+        var it = entities.viewIterator(struct {
+            animation: *const Animation.Playback,
+            entity: Entity,
+        });
         while (it.next()) |entity| {
             if (entity.animation.destroys_entity and entity.animation.index == .none) {
-                command_buffer.appendRemove(it.handle());
+                command_buffer.destroy(entity.entity);
             }
         }
     }
 
     // Update lifetimes
     {
-        var it = entities.iterator(.{ .lifetime = .{ .mutable = true } });
+        var it = entities.viewIterator(struct {
+            lifetime: *Lifetime,
+            entity: Entity,
+        });
         while (it.next()) |entity| {
             entity.lifetime.seconds -= delta_s;
             if (entity.lifetime.seconds <= 0) {
-                command_buffer.appendRemove(it.handle());
+                command_buffer.destroy(entity.entity);
             }
         }
     }
 
     // Update cached world positions and angles
     {
-        var it = entities.iterator(.{ .transform = .{ .mutable = true } });
+        var it = entities.viewIterator(struct { transform: *Transform });
         while (it.next()) |entity| {
             entity.transform.pos_world_cached = V.zero;
             entity.transform.angle_world_cached = 0;
 
-            var parent_it = parenting.iterator(entities, it.handle());
-            while (parent_it.next()) |current| {
-                if (entities.getComponent(current, .transform)) |transform| {
-                    entity.transform.pos_world_cached.add(transform.pos);
-                    entity.transform.angle_world_cached += transform.angle;
-                } else break;
-            }
+            // XXX: ...
+            // var parent_it = parenting.iterator(entities, it.handle());
+            // while (parent_it.next()) |current| {
+            //     if (entities.getComponent(current, .transform)) |transform| {
+            //         entity.transform.pos_world_cached.add(transform.pos);
+            //         entity.transform.angle_world_cached += transform.angle;
+            //     } else break;
+            // }
         }
     }
 
     // Update turrets
     {
-        var it = entities.iterator(.{
-            .turret = .{ .mutable = true },
-            .player_index = .{},
-            .rb = .{},
-            .transform = .{},
+        var it = entities.viewIterator(struct {
+            turret: *Turret,
+            player_index: *const PlayerIndex,
+            rb: *const RigidBody,
+            transform: *const Transform,
         });
         while (it.next()) |entity| {
             var angle = entity.transform.angle_world_cached;
@@ -848,38 +873,36 @@ fn update(
                 else
                     true,
             };
-            const input_state = &game.input_state[entity.player_index.*];
+            const input_state = &game.input_state[entity.player_index.index];
             if (input_state.isAction(.fire, .positive, .active) and ready) {
                 switch (entity.turret.cooldown) {
                     .time => |*time| time.current_s = time.max_s,
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                _ = command_buffer.appendInstantiate(true, &.{
-                    .{
-                        .damage = .{
-                            .hp = entity.turret.projectile_damage,
-                        },
-                        .transform = .{
-                            .pos = fire_pos,
-                            .angle = vel.angle() + math.pi / 2.0,
-                        },
-                        .rb = .{
-                            .vel = vel,
-                            .rotation_vel = 0,
-                            .radius = entity.turret.projectile_radius,
-                            // TODO(mason): modify math to accept 0 and inf mass
-                            .density = entity.turret.projectile_density,
-                        },
-                        .sprite = sprite,
-                        .collider = .{
-                            // Lasers gain energy when bouncing off of rocks
-                            .collision_damping = 1,
-                            .layer = .projectile,
-                        },
-                        .lifetime = .{
-                            .seconds = entity.turret.projectile_lifetime,
-                        },
+                command_buffer.create(entities, .{
+                    Damage{
+                        .hp = entity.turret.projectile_damage,
+                    },
+                    Transform{
+                        .pos = fire_pos,
+                        .angle = vel.angle() + math.pi / 2.0,
+                    },
+                    RigidBody{
+                        .vel = vel,
+                        .rotation_vel = 0,
+                        .radius = entity.turret.projectile_radius,
+                        // TODO(mason): modify math to accept 0 and inf mass
+                        .density = entity.turret.projectile_density,
+                    },
+                    sprite,
+                    Collider{
+                        // Lasers gain energy when bouncing off of rocks
+                        .collision_damping = 1,
+                        .layer = .projectile,
+                    },
+                    Lifetime{
+                        .seconds = entity.turret.projectile_lifetime,
                     },
                 });
             }
@@ -887,8 +910,8 @@ fn update(
     }
 
     // Apply queued deletions
-    command_buffer.execute();
-    command_buffer.clearRetainingCapacity();
+    command_buffer.submit(entities);
+    command_buffer.clear();
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
@@ -938,35 +961,37 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw animations
     {
-        var it = entities.iterator(.{
-            .rb = .{},
-            .transform = .{},
-            .animation = .{ .mutable = true },
-            .health = .{ .optional = true },
-            .team_index = .{ .optional = true },
-            .parent = .{ .optional = true },
+        var it = entities.viewIterator(struct {
+            rb: *const RigidBody,
+            transform: *const Transform,
+            animation: *Animation.Playback,
+            health: ?*const Health,
+            team_index: ?*const TeamIndex,
+            parent: ?*const Parent,
         });
-        draw: while (it.next()) |entity| {
-            // Skip rendering if flashing, or if any parent is flashing.
-            //
-            // We should probably make the sprites half opacity instead of turning them off when
-            // flashing for a less jarring effect, but that is difficult right now.
-            {
-                var parent_it = parenting.iterator(entities, it.handle());
-                while (parent_it.next()) |current| {
-                    if (entities.getComponent(current, .health)) |health| {
-                        if (health.invulnerable_s > 0.0) {
-                            var flashes_ps: f32 = 2;
-                            if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
-                                flashes_ps = 4;
-                            }
-                            if (std.math.sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
-                                continue :draw;
-                            }
-                        }
-                    }
-                }
-            }
+        // draw: // XXX: ...
+        while (it.next()) |entity| {
+            // XXX: ...
+            // // Skip rendering if flashing, or if any parent is flashing.
+            // //
+            // // We should probably make the sprites half opacity instead of turning them off when
+            // // flashing for a less jarring effect, but that is difficult right now.
+            // {
+            //     var parent_it = parenting.iterator(entities, it.handle());
+            //     while (parent_it.next()) |current| {
+            //         if (entities.getComponent(current, .health)) |health| {
+            //             if (health.invulnerable_s > 0.0) {
+            //                 var flashes_ps: f32 = 2;
+            //                 if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
+            //                     flashes_ps = 4;
+            //                 }
+            //                 if (std.math.sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
+            //                     continue :draw;
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
 
             if (entity.animation.index != .none) {
                 const frame = assets.animate(entity.animation, delta_s);
@@ -978,7 +1003,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
                 sdlAssertZero(c.SDL_RenderCopyEx(
                     renderer,
-                    frame.sprite.getTint(if (entity.team_index) |i| i.* else null),
+                    frame.sprite.getTint(if (entity.team_index) |ti| ti.index else null),
                     null, // source rectangle
                     &dest_rect,
                     toDegrees(entity.transform.angle_world_cached + frame.angle),
@@ -991,7 +1016,11 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw health bars
     {
-        var it = entities.iterator(.{ .health = .{}, .rb = .{}, .transform = .{} });
+        var it = entities.viewIterator(struct {
+            health: *const Health,
+            rb: *const RigidBody,
+            transform: *const Transform,
+        });
         while (it.next()) |entity| {
             if (entity.health.hp < entity.health.max_hp) {
                 const health_bar_size: V = .{ .x = 32, .y = 4 };
@@ -1021,11 +1050,11 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     // Draw sprites
     // TODO(mason): sort draw calls somehow (can the sdl renderer do depth buffers?)
     {
-        var it = entities.iterator(.{
-            .sprite = .{},
-            .rb = .{},
-            .transform = .{},
-            .team_index = .{ .optional = true },
+        var it = entities.viewIterator(struct {
+            sprite: *const Sprite.Index,
+            rb: *const RigidBody,
+            transform: *const Transform,
+            team_index: ?*const TeamIndex,
         });
         while (it.next()) |entity| {
             const sprite = assets.sprite(entity.sprite.*);
@@ -1036,7 +1065,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             const dest_rect = sdlRect(entity.transform.pos.minus(sprite_size.scaled(0.5)), sprite_size);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
-                sprite.getTint(if (entity.team_index) |i| i.* else null),
+                sprite.getTint(if (entity.team_index) |ti| ti.index else null),
                 null, // source rectangle
                 &dest_rect,
                 toDegrees(entity.transform.angle),
@@ -1051,10 +1080,10 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     // same!
     // Draw springs
     {
-        var it = entities.iterator(.{ .spring = .{} });
+        var it = entities.viewIterator(struct { spring: *const Spring });
         while (it.next()) |entity| {
-            const start = (entities.getComponent(entity.spring.start, .transform) orelse continue).pos;
-            const end = (entities.getComponent(entity.spring.end, .transform) orelse continue).pos;
+            const start = (entity.spring.start.getComponent(entities, Transform) orelse continue).pos;
+            const end = (entity.spring.end.getComponent(entities, Transform) orelse continue).pos;
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,
@@ -1068,43 +1097,44 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw the ships in the bank.
     {
-        const row_height = 64;
-        const col_width = 64;
-        const top_left: V = .{ .x = 20, .y = 20 };
+        // XXX: ...
+        // const row_height = 64;
+        // const col_width = 64;
+        // const top_left: V = .{ .x = 20, .y = 20 };
 
-        for (game.teams, 0..) |team, team_index| {
-            {
-                const sprite = assets.sprite(game.particle);
-                const pos = top_left.plus(.{
-                    .x = col_width * @as(f32, @floatFromInt(team_index)),
-                    .y = 0,
-                });
-                sdlAssertZero(c.SDL_RenderCopy(
-                    renderer,
-                    sprite.getTint(team_index),
-                    null,
-                    &sprite.toSdlRect(pos),
-                ));
-            }
-            for (team.ship_progression, 0..) |class, display_prog_index| {
-                const dead = team.ship_progression_index > display_prog_index;
-                if (dead) continue;
+        // for (game.teams, 0..) |team, team_index| {
+        //     {
+        //         const sprite = assets.sprite(game.particle);
+        //         const pos = top_left.plus(.{
+        //             .x = col_width * @as(f32, @floatFromInt(team_index)),
+        //             .y = 0,
+        //         });
+        //         sdlAssertZero(c.SDL_RenderCopy(
+        //             renderer,
+        //             sprite.getTint(team_index),
+        //             null,
+        //             &sprite.toSdlRect(pos),
+        //         ));
+        //     }
+        //     for (team.ship_progression, 0..) |class, display_prog_index| {
+        //         const dead = team.ship_progression_index > display_prog_index;
+        //         if (dead) continue;
 
-                const sprite = assets.sprite(game.shipLifeSprite(class));
-                const pos = top_left.plus(.{
-                    .x = col_width * @as(f32, @floatFromInt(team_index)),
-                    .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
-                });
-                const sprite_size = sprite.size().scaled(0.5);
-                const dest_rect = sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
-                sdlAssertZero(c.SDL_RenderCopy(
-                    renderer,
-                    sprite.getTint(team_index),
-                    null,
-                    &dest_rect,
-                ));
-            }
-        }
+        //         const sprite = assets.sprite(game.shipLifeSprite(class));
+        //         const pos = top_left.plus(.{
+        //             .x = col_width * @as(f32, @floatFromInt(team_index)),
+        //             .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
+        //         });
+        //         const sprite_size = sprite.size().scaled(0.5);
+        //         const dest_rect = sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
+        //         sdlAssertZero(c.SDL_RenderCopy(
+        //             renderer,
+        //             sprite.getTint(team_index),
+        //             null,
+        //             &dest_rect,
+        //         ));
+        //     }
+        // }
     }
 
     c.SDL_RenderPresent(renderer);
@@ -1127,6 +1157,19 @@ const User = union(enum) {
     npc: EntityHandle,
 };
 
+const Parent = struct {
+    entity: zcs.Entity = .none,
+};
+
+// XXX: combine these?
+pub const PlayerIndex = struct {
+    index: u2,
+};
+
+pub const TeamIndex = struct {
+    index: u2,
+};
+
 const Damage = struct {
     hp: f32,
 };
@@ -1135,8 +1178,8 @@ const Damage = struct {
 ///
 /// You can simulate a rod by choosing a high spring constant and setting the damping factor to 1.0.
 const Spring = struct {
-    start: EntityHandle,
-    end: EntityHandle,
+    start: Entity,
+    end: Entity,
 
     /// 0.0 is no damping, 1.0 is critical damping (no bouncing), greater than 1.0 is overdamped.
     damping: f32,
@@ -1152,6 +1195,8 @@ const Hook = struct {
     damping: f32,
     k: f32,
 };
+
+pub const FrontShield = struct {};
 
 const Lifetime = struct {
     seconds: f32,
@@ -1242,9 +1287,9 @@ const GrappleGun = struct {
 
     /// The live chain of projectiles.
     live: ?struct {
-        springs: [segments]EntityHandle,
-        joints: [segments - 1]EntityHandle,
-        hook: EntityHandle,
+        springs: [segments]Entity,
+        joints: [segments - 1]Entity,
+        hook: Entity,
     } = null,
 };
 
@@ -2311,108 +2356,109 @@ const Game = struct {
         royale_4p,
     };
 
-    fn setupScenario(game: *Game, command_buffer: *CommandBuffer, scenario: Scenario) void {
+    fn setupScenario(game: *Game, entities: *const Entities, command_buffer: *zcs.CommandBuffer, scenario: Scenario) void {
         const rng = game.rng.random();
-        command_buffer.entities.clearRetainingCapacity();
+        command_buffer.clear(); // XXX: why clear at start?
 
-        var player_teams: []const u2 = undefined;
+        // XXX: ...
+        // var player_teams: []const u2 = undefined;
 
-        switch (scenario) {
-            .deathmatch_2v2,
-            .deathmatch_2v2_no_rocks,
-            .deathmatch_2v2_one_rock,
-            => {
-                const progression = &.{
-                    .ranger,
-                    .militia,
-                    .ranger,
-                    .militia,
-                    .triangle,
-                    .triangle,
-                    .wendy,
-                    .kevin,
-                };
-                const team_init: Team = .{
-                    .ship_progression_index = 0,
-                    .ship_progression = progression,
-                    .players_alive = 2,
-                };
-                const teams = game.teams_buffer[0..2];
-                teams.* = .{ team_init, team_init };
-                game.teams = teams;
+        // switch (scenario) {
+        //     .deathmatch_2v2,
+        //     .deathmatch_2v2_no_rocks,
+        //     .deathmatch_2v2_one_rock,
+        //     => {
+        //         const progression = &.{
+        //             .ranger,
+        //             .militia,
+        //             .ranger,
+        //             .militia,
+        //             .triangle,
+        //             .triangle,
+        //             .wendy,
+        //             .kevin,
+        //         };
+        //         const team_init: Team = .{
+        //             .ship_progression_index = 0,
+        //             .ship_progression = progression,
+        //             .players_alive = 2,
+        //         };
+        //         const teams = game.teams_buffer[0..2];
+        //         teams.* = .{ team_init, team_init };
+        //         game.teams = teams;
 
-                player_teams = &.{ 0, 1, 0, 1 };
-            },
+        //         player_teams = &.{ 0, 1, 0, 1 };
+        //     },
 
-            .deathmatch_1v1, .deathmatch_1v1_one_rock => {
-                const progression = &.{
-                    .ranger,
-                    .militia,
-                    .triangle,
-                    .wendy,
-                    .kevin,
-                };
-                const team_init: Team = .{
-                    .ship_progression_index = 0,
-                    .ship_progression = progression,
-                    .players_alive = 1,
-                };
-                const teams = game.teams_buffer[0..2];
-                teams.* = .{ team_init, team_init };
-                game.teams = teams;
+        //     .deathmatch_1v1, .deathmatch_1v1_one_rock => {
+        //         const progression = &.{
+        //             .ranger,
+        //             .militia,
+        //             .triangle,
+        //             .wendy,
+        //             .kevin,
+        //         };
+        //         const team_init: Team = .{
+        //             .ship_progression_index = 0,
+        //             .ship_progression = progression,
+        //             .players_alive = 1,
+        //         };
+        //         const teams = game.teams_buffer[0..2];
+        //         teams.* = .{ team_init, team_init };
+        //         game.teams = teams;
 
-                player_teams = &.{ 0, 1 };
-            },
+        //         player_teams = &.{ 0, 1 };
+        //     },
 
-            .royale_4p => {
-                const progression = &.{
-                    .ranger,
-                    .militia,
-                    .triangle,
-                    .wendy,
-                    .kevin,
-                };
-                const team_init: Team = .{
-                    .ship_progression_index = 0,
-                    .ship_progression = progression,
-                    .players_alive = 1,
-                };
-                const teams = game.teams_buffer[0..4];
-                teams.* = .{ team_init, team_init, team_init, team_init };
-                game.teams = teams;
+        //     .royale_4p => {
+        //         const progression = &.{
+        //             .ranger,
+        //             .militia,
+        //             .triangle,
+        //             .wendy,
+        //             .kevin,
+        //         };
+        //         const team_init: Team = .{
+        //             .ship_progression_index = 0,
+        //             .ship_progression = progression,
+        //             .players_alive = 1,
+        //         };
+        //         const teams = game.teams_buffer[0..4];
+        //         teams.* = .{ team_init, team_init, team_init, team_init };
+        //         game.teams = teams;
 
-                player_teams = &.{ 0, 1, 2, 3 };
-            },
-        }
+        //         player_teams = &.{ 0, 1, 2, 3 };
+        //     },
+        // }
 
-        // Set up players
-        {
-            {
-                var player_index: u32 = 0;
-                for (0..@as(usize, @intCast(c.SDL_NumJoysticks()))) |i_usize| {
-                    const i: u31 = @intCast(i_usize);
-                    if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
-                        const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
-                            panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
-                        };
-                        if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
-                            game.controllers[i] = sdl_controller;
-                            player_index += 1;
-                            if (player_index >= game.controllers.len) break;
-                        } else {
-                            c.SDL_GameControllerClose(sdl_controller);
-                        }
-                    }
-                }
-            }
+        // // Set up players
+        // {
+        //     {
+        //         var player_index: u32 = 0;
+        //         for (0..@as(usize, @intCast(c.SDL_NumJoysticks()))) |i_usize| {
+        //             const i: u31 = @intCast(i_usize);
+        //             if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
+        //                 const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
+        //                     panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
+        //                 };
+        //                 if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
+        //                     game.controllers[i] = sdl_controller;
+        //                     player_index += 1;
+        //                     if (player_index >= game.controllers.len) break;
+        //                 } else {
+        //                     c.SDL_GameControllerClose(sdl_controller);
+        //                 }
+        //             }
+        //         }
+        //     }
 
-            for (player_teams, 0..) |team_index, i| {
-                const angle = math.pi / 2.0 * @as(f32, @floatFromInt(i));
-                const pos = display_center.plus(V.unit(angle).scaled(50));
-                const player_index: u2 = @intCast(i);
-                _ = game.createShip(command_buffer, player_index, team_index, pos, angle);
-            }
-        }
+        //     for (player_teams, 0..) |team_index, i| {
+        //         const angle = math.pi / 2.0 * @as(f32, @floatFromInt(i));
+        //         const pos = display_center.plus(V.unit(angle).scaled(50));
+        //         const player_index: u2 = @intCast(i);
+        //         _ = game.createShip(command_buffer, player_index, team_index, pos, angle);
+        //     }
+        // }
 
         // Create rocks
         const rock_amt: usize = switch (scenario) {
@@ -2431,22 +2477,20 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, rng.float(f32)))
                 .plus(display_center);
 
-            _ = command_buffer.appendInstantiate(true, &.{
-                .{
-                    .sprite = sprite,
-                    .transform = .{
-                        .pos = pos,
-                    },
-                    .rb = .{
-                        .vel = V.unit(rng.float(f32) * math.pi * 2).scaled(speed),
-                        .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
-                        .radius = radius,
-                        .density = 0.10,
-                    },
-                    .collider = .{
-                        .collision_damping = 1,
-                        .layer = .hazard,
-                    },
+            command_buffer.create(entities, .{
+                sprite,
+                Transform{
+                    .pos = pos,
+                },
+                RigidBody{
+                    .vel = V.unit(rng.float(f32) * math.pi * 2).scaled(speed),
+                    .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
+                    .radius = radius,
+                    .density = 0.10,
+                },
+                Collider{
+                    .collision_damping = 1,
+                    .layer = .hazard,
                 },
             });
         }
@@ -2459,22 +2503,22 @@ const Game = struct {
         const rng = game.rng.random();
         for (0..500) |_| {
             const random_vel = V.unit(rng.float(f32) * math.pi * 2).scaled(300);
-            _ = entities.create(.{
-                .lifetime = .{
+            _ = Entity.create(entities, .{
+                Lifetime{
                     .seconds = 1000,
                 },
-                .transform = .{
+                Transform{
                     .pos = pos,
                     .angle = 2 * math.pi * rng.float(f32),
                 },
-                .rb = .{
+                RigidBody{
                     .vel = random_vel,
                     .rotation_vel = 2 * math.pi * rng.float(f32),
                     .radius = 16,
                     .density = 0.001,
                 },
-                .sprite = game.particle,
-                .team_index = team_index,
+                game.particle,
+                TeamIndex{ .index = team_index },
             });
         }
     }

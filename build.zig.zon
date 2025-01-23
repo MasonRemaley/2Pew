@@ -1,11 +1,15 @@
 .{
     .name = "2Pew",
     .version = "0.0.0",
-    .minimum_zig_version = "0.14.0-dev.1888+7e530c13b",
+    .minimum_zig_version = "0.14.0-dev.2544+94df665fe",
     .dependencies = .{
         .zig_sdl = .{
-            .url = "https://github.com/andrewrk/SDL/archive/3a8010729221c6e5d2596aba602a6f714cc44fd3.tar.gz",
-            .hash = "122029b1250b3cb390f409f0c0253344bc996698d0d241f3ef6496cf22446b1b0705",
+            .url = "https://github.com/andrewrk/SDL/archive/a13d7e80e8d847db2b2ff8f334d57eb5bbb489dd.tar.gz",
+            .hash = "12200aa79b05aaeefff144b9e376371e2e7ddc982b9207d146163baf56361331a834",
+        },
+        .zcs = .{
+            .url = "https://github.com/Games-by-Mason/ZCS/archive/e900a1441f23231a80ce03c77b9e631b1a79d8d9.tar.gz",
+            .hash = "12200c72aca56c1886daede93f64164f67e3875d1370893721652662aec606627dda",
         },
     },
     .paths = .{

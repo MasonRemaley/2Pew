@@ -24,6 +24,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const zcs = b.dependency("zcs", .{
+        .optimize = optimize,
+        .target = target,
+    });
+    exe.root_module.addImport("zcs", zcs.module("zcs"));
+
     const use_llvm = b.option(bool, "use-llvm", "use zig's llvm backend");
     exe.use_llvm = use_llvm;
     exe.use_lld = use_llvm;
