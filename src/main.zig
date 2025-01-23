@@ -8,9 +8,6 @@ const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const math = std.math;
 const assert = std.debug.assert;
 const V = @import("Vec2d.zig");
-// XXX: remove
-const ecs = @import("ecs/index.zig");
-// XXX: alias shorthands once we only have this ECS present
 const zcs = @import("zcs");
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
@@ -37,8 +34,7 @@ const display_center: V = .{
 };
 const display_radius = display_height / 2.0;
 
-// XXX: rename?
-const Components: []const type = &.{
+const component_types: []const type = &.{
     Parent,
     Damage,
     AnimateOnInput,
@@ -60,12 +56,7 @@ const Components: []const type = &.{
 };
 
 const PrefabEntity = Entities.PrefabEntity;
-const EntityHandle = ecs.entities.Handle;
-const DeferredHandle = ecs.command_buffer.DeferredHandle;
 const ComponentFlags = Entities.ComponentFlags;
-const parenting = ecs.parenting.init(Entities).?;
-const prefabs = ecs.prefabs.init(Entities);
-const PrefabHandle = prefabs.Handle;
 
 const dead_zone = 10000;
 
@@ -120,14 +111,16 @@ pub fn main() !void {
 
     var game = try Game.init(gpa, &assets);
 
+    // XXX: revisit allocation
     // Create initial entities
     var pa = std.heap.page_allocator;
-    const buffer = try pa.alloc(u8, ecs.entities.max_entities * 1024);
+    const max_entities = 100000;
+    const buffer = try pa.alloc(u8, max_entities * 1024);
     defer pa.free(buffer);
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
     const allocator = maa.allocator();
-    var entities = try zcs.Entities.init(allocator, 100000, Components);
+    var entities = try zcs.Entities.init(allocator, 100000, component_types);
     defer entities.deinit(allocator);
 
     // XXX: remember to check usage
@@ -150,9 +143,7 @@ pub fn main() !void {
     var warned_memory_usage = false;
 
     while (true) {
-        // XXX: ..
-        // if (poll(&entities, &command_buffer, &game)) return;
-        if (poll({}, {}, &game)) return;
+        if (poll(&entities, &command_buffer, &game)) return;
         update(&entities, &command_buffer, &game, delta_s);
         render(assets, &entities, game, delta_s, fx_loop_s);
 
@@ -179,46 +170,40 @@ pub fn main() !void {
     }
 }
 
-// XXX: ...
-// fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
-fn poll(entities: anytype, command_buffer: anytype, game: *Game) bool {
-    _ = game;
-    _ = entities;
-    _ = command_buffer;
+fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) != 0) {
         switch (event.type) {
             c.SDL_QUIT => return true,
-            // XXX: ...
-            // c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
-            //     c.SDL_SCANCODE_ESCAPE => return true,
-            //     c.SDL_SCANCODE_RETURN => {
-            //         // Clear invulnerability so you don't have to wait when testing
-            //         var it = entities.iterator(.{ .health = .{ .mutable = true } });
-            //         while (it.next()) |entity| {
-            //             entity.health.invulnerable_s = 0.0;
-            //         }
-            //     },
-            //     c.SDL_SCANCODE_1 => {
-            //         game.setupScenario(command_buffer, .deathmatch_2v2);
-            //     },
-            //     c.SDL_SCANCODE_2 => {
-            //         game.setupScenario(command_buffer, .deathmatch_2v2_no_rocks);
-            //     },
-            //     c.SDL_SCANCODE_3 => {
-            //         game.setupScenario(command_buffer, .deathmatch_2v2_one_rock);
-            //     },
-            //     c.SDL_SCANCODE_4 => {
-            //         game.setupScenario(command_buffer, .deathmatch_1v1);
-            //     },
-            //     c.SDL_SCANCODE_5 => {
-            //         game.setupScenario(command_buffer, .deathmatch_1v1_one_rock);
-            //     },
-            //     c.SDL_SCANCODE_6 => {
-            //         game.setupScenario(command_buffer, .royale_4p);
-            //     },
-            //     else => {},
-            // },
+            c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
+                c.SDL_SCANCODE_ESCAPE => return true,
+                c.SDL_SCANCODE_RETURN => {
+                    // Clear invulnerability so you don't have to wait when testing
+                    var it = entities.viewIterator(struct { health: *Health });
+                    while (it.next()) |entity| {
+                        entity.health.invulnerable_s = 0.0;
+                    }
+                },
+                c.SDL_SCANCODE_1 => {
+                    game.setupScenario(entities, command_buffer, .deathmatch_2v2);
+                },
+                c.SDL_SCANCODE_2 => {
+                    game.setupScenario(entities, command_buffer, .deathmatch_2v2_no_rocks);
+                },
+                c.SDL_SCANCODE_3 => {
+                    game.setupScenario(entities, command_buffer, .deathmatch_2v2_one_rock);
+                },
+                c.SDL_SCANCODE_4 => {
+                    game.setupScenario(entities, command_buffer, .deathmatch_1v1);
+                },
+                c.SDL_SCANCODE_5 => {
+                    game.setupScenario(entities, command_buffer, .deathmatch_1v1_one_rock);
+                },
+                c.SDL_SCANCODE_6 => {
+                    game.setupScenario(entities, command_buffer, .royale_4p);
+                },
+                else => {},
+            },
             else => {},
         }
     }
@@ -254,7 +239,7 @@ fn update(
         });
         while (it.next()) |entity| {
             if (entity.health.invulnerable_s > 0.0) {
-                var input_state = &game.input_state[entity.player_index.index];
+                var input_state = &game.input_state[@intFromEnum(entity.player_index.*)];
                 input_state.setAction(.fire, .positive, .inactive);
             }
         }
@@ -583,27 +568,21 @@ fn update(
                 // If this is a player controlled ship, spawn a new ship for the player using this
                 // ship's input before we destroy it!
                 if (entity.player_index) |player_index| {
-                    _ = player_index; // XXX: ...
                     if (entity.team_index) |team_index| {
                         // give player their next ship
-                        const team = &game.teams[team_index.index];
+                        const team = &game.teams[@intFromEnum(team_index.*)];
                         if (team.ship_progression_index >= team.ship_progression.len) {
                             const already_over = game.over();
                             team.players_alive -= 1;
                             if (game.over() and !already_over) {
                                 const happy_team = game.aliveTeam();
-                                _ = happy_team;
-                                // XXX: ...
-                                // game.spawnTeamVictory(entities, display_center, happy_team);
+                                game.spawnTeamVictory(entities, display_center, happy_team);
                             }
                         } else {
                             const new_angle = math.pi * 2 * rng.float(f32);
                             const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
                             const facing_angle = new_angle + math.pi;
-                            _ = facing_angle;
-                            _ = new_pos;
-                            // XXX: ...
-                            // _ = game.createShip(command_buffer, player_index.*, team_index.*, new_pos, facing_angle);
+                            game.createShip(entities, command_buffer, player_index.*, team_index.*, new_pos, facing_angle);
                         }
                     }
                 }
@@ -635,7 +614,7 @@ fn update(
             animation: ?*Animation.Playback,
         });
         while (it.next()) |entity| {
-            const input_state = &game.input_state[entity.player_index.index];
+            const input_state = &game.input_state[@intFromEnum(entity.player_index.*)];
             if (entity.ship.omnithrusters) {
                 entity.rb.vel.add(.{
                     .x = input_state.getAxis(.thrust_x) * entity.ship.thrust * delta_s,
@@ -663,7 +642,7 @@ fn update(
             animation: *Animation.Playback,
         });
         while (it.next()) |entity| {
-            const input_state = &game.input_state[entity.player_index.index];
+            const input_state = &game.input_state[@intFromEnum(entity.player_index.*)];
             if (input_state.isAction(entity.animate_on_input.action, entity.animate_on_input.direction, .activated)) {
                 entity.animation.* = .{
                     .index = entity.animate_on_input.activated,
@@ -690,7 +669,7 @@ fn update(
             var gg = entity.grapple_gun;
             const rb = entity.rb;
             gg.cooldown_s -= delta_s;
-            const input_state = &game.input_state[entity.player_index.index];
+            const input_state = &game.input_state[@intFromEnum(entity.player_index.*)];
             if (input_state.isAction(.fire, .positive, .activated) and gg.cooldown_s <= 0) {
                 gg.cooldown_s = gg.max_cooldown_s;
 
@@ -831,10 +810,16 @@ fn update(
     {
         var it = entities.viewIterator(struct { transform: *Transform });
         while (it.next()) |entity| {
-            entity.transform.pos_world_cached = V.zero;
-            entity.transform.angle_world_cached = 0;
+            // XXX: remove this, just assigns the current position to work around lack of parenting
+            // while porting
+            // XXX: note that health bars aren't using the cached one for some reason
+            entity.transform.pos_world_cached = entity.transform.pos;
+            entity.transform.angle_world_cached = entity.transform.angle;
 
             // XXX: ...
+            // entity.transform.pos_world_cached = V.zero;
+            // entity.transform.angle_world_cached = 0;
+
             // var parent_it = parenting.iterator(entities, it.handle());
             // while (parent_it.next()) |current| {
             //     if (entities.getComponent(current, .transform)) |transform| {
@@ -873,7 +858,7 @@ fn update(
                 else
                     true,
             };
-            const input_state = &game.input_state[entity.player_index.index];
+            const input_state = &game.input_state[@intFromEnum(entity.player_index.*)];
             if (input_state.isAction(.fire, .positive, .active) and ready) {
                 switch (entity.turret.cooldown) {
                     .time => |*time| time.current_s = time.max_s,
@@ -1003,7 +988,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
                 sdlAssertZero(c.SDL_RenderCopyEx(
                     renderer,
-                    frame.sprite.getTint(if (entity.team_index) |ti| ti.index else null),
+                    frame.sprite.getTint(if (entity.team_index) |ti| ti.* else null),
                     null, // source rectangle
                     &dest_rect,
                     toDegrees(entity.transform.angle_world_cached + frame.angle),
@@ -1065,7 +1050,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             const dest_rect = sdlRect(entity.transform.pos.minus(sprite_size.scaled(0.5)), sprite_size);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
-                sprite.getTint(if (entity.team_index) |ti| ti.index else null),
+                sprite.getTint(if (entity.team_index) |ti| ti.* else null),
                 null, // source rectangle
                 &dest_rect,
                 toDegrees(entity.transform.angle),
@@ -1097,44 +1082,43 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw the ships in the bank.
     {
-        // XXX: ...
-        // const row_height = 64;
-        // const col_width = 64;
-        // const top_left: V = .{ .x = 20, .y = 20 };
+        const row_height = 64;
+        const col_width = 64;
+        const top_left: V = .{ .x = 20, .y = 20 };
 
-        // for (game.teams, 0..) |team, team_index| {
-        //     {
-        //         const sprite = assets.sprite(game.particle);
-        //         const pos = top_left.plus(.{
-        //             .x = col_width * @as(f32, @floatFromInt(team_index)),
-        //             .y = 0,
-        //         });
-        //         sdlAssertZero(c.SDL_RenderCopy(
-        //             renderer,
-        //             sprite.getTint(team_index),
-        //             null,
-        //             &sprite.toSdlRect(pos),
-        //         ));
-        //     }
-        //     for (team.ship_progression, 0..) |class, display_prog_index| {
-        //         const dead = team.ship_progression_index > display_prog_index;
-        //         if (dead) continue;
+        for (game.teams, 0..) |team, team_index| {
+            {
+                const sprite = assets.sprite(game.particle);
+                const pos = top_left.plus(.{
+                    .x = col_width * @as(f32, @floatFromInt(team_index)),
+                    .y = 0,
+                });
+                sdlAssertZero(c.SDL_RenderCopy(
+                    renderer,
+                    sprite.getTint(@enumFromInt(team_index)),
+                    null,
+                    &sprite.toSdlRect(pos),
+                ));
+            }
+            for (team.ship_progression, 0..) |class, display_prog_index| {
+                const dead = team.ship_progression_index > display_prog_index;
+                if (dead) continue;
 
-        //         const sprite = assets.sprite(game.shipLifeSprite(class));
-        //         const pos = top_left.plus(.{
-        //             .x = col_width * @as(f32, @floatFromInt(team_index)),
-        //             .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
-        //         });
-        //         const sprite_size = sprite.size().scaled(0.5);
-        //         const dest_rect = sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
-        //         sdlAssertZero(c.SDL_RenderCopy(
-        //             renderer,
-        //             sprite.getTint(team_index),
-        //             null,
-        //             &dest_rect,
-        //         ));
-        //     }
-        // }
+                const sprite = assets.sprite(game.shipLifeSprite(class));
+                const pos = top_left.plus(.{
+                    .x = col_width * @as(f32, @floatFromInt(team_index)),
+                    .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
+                });
+                const sprite_size = sprite.size().scaled(0.5);
+                const dest_rect = sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
+                sdlAssertZero(c.SDL_RenderCopy(
+                    renderer,
+                    sprite.getTint(@enumFromInt(team_index)),
+                    null,
+                    &dest_rect,
+                ));
+            }
+        }
     }
 
     c.SDL_RenderPresent(renderer);
@@ -1152,23 +1136,12 @@ pub fn sdlAssertZero(ret: c_int) void {
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
 
-const User = union(enum) {
-    player_index: usize,
-    npc: EntityHandle,
-};
-
 const Parent = struct {
     entity: zcs.Entity = .none,
 };
 
-// XXX: combine these?
-pub const PlayerIndex = struct {
-    index: u2,
-};
-
-pub const TeamIndex = struct {
-    index: u2,
-};
+const PlayerIndex = enum(u2) { _ };
+const TeamIndex = enum(u2) { _ };
 
 const Damage = struct {
     hp: f32,
@@ -1390,9 +1363,9 @@ const Sprite = struct {
     rect: c.SDL_Rect,
 
     // If this sprite supports tinting, returns the tint. Otherwise returns the default tint.
-    fn getTint(self: *const @This(), index: ?usize) *c.SDL_Texture {
+    fn getTint(self: *const @This(), index: ?TeamIndex) *c.SDL_Texture {
         if (index != null and self.tints.len > 1) {
-            return self.tints[index.?];
+            return self.tints[@intFromEnum(index.?)];
         }
         return self.tints[0];
     }
@@ -1501,450 +1474,455 @@ const Game = struct {
 
     fn createRanger(
         self: *const @This(),
+        entities: *const Entities,
         command_buffer: *CommandBuffer,
-        player_index: u2,
-        team_index: u2,
+        player_index: PlayerIndex,
+        team_index: TeamIndex,
         pos: V,
         angle: f32,
-    ) PrefabHandle {
-        const ship_handle = PrefabHandle.init(0);
-        return command_buffer.appendInstantiate(true, &.{
-            .{
-                .ship = .{
-                    .class = .ranger,
-                    .turn_speed = math.pi * 1.0,
-                    .thrust = 160,
-                },
-                .health = .{
-                    .hp = 80,
-                    .max_hp = 80,
-                },
-                .transform = .{
-                    .pos = pos,
-                    .angle = angle,
-                },
-                .rb = .{
-                    .vel = .{ .x = 0, .y = 0 },
-                    .radius = self.ranger_radius,
-                    .rotation_vel = 0.0,
-                    .density = 0.02,
-                },
-                .collider = .{
-                    .collision_damping = 0.4,
-                    .layer = .vehicle,
-                },
-                .animation = .{
-                    .index = self.ranger_animations.still,
-                },
-                .turret = .{
-                    .angle = 0,
-                    .radius = self.ranger_radius,
-                    .cooldown = .{ .time = .{ .max_s = 0.1 } },
-                    .projectile_speed = 550,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 6,
-                    .projectile_radius = 8,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+    ) void {
+        // XXX: ...
+        // const ship_handle = PrefabHandle.init(0);
+        command_buffer.create(entities, .{
+            Ship{
+                .class = .ranger,
+                .turn_speed = math.pi * 1.0,
+                .thrust = 160,
             },
-            .{
-                .parent = ship_handle.relative,
-                .transform = .{},
-                .rb = .{
-                    .radius = self.ranger_radius,
-                    .density = std.math.inf(f32),
-                },
-                .animate_on_input = .{
-                    .action = .thrust_forward,
-                    .direction = .positive,
-                    .activated = self.ranger_animations.accel,
-                    .deactivated = .none,
-                },
-                .animation = .{
-                    .index = .none,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+            Health{
+                .hp = 80,
+                .max_hp = 80,
             },
-        }).?;
+            Transform{
+                .pos = pos,
+                .angle = angle,
+            },
+            RigidBody{
+                .vel = .{ .x = 0, .y = 0 },
+                .radius = self.ranger_radius,
+                .rotation_vel = 0.0,
+                .density = 0.02,
+            },
+            Collider{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            Animation.Playback{
+                .index = self.ranger_animations.still,
+            },
+            Turret{
+                .angle = 0,
+                .radius = self.ranger_radius,
+                .cooldown = .{ .time = .{ .max_s = 0.1 } },
+                .projectile_speed = 550,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 6,
+                .projectile_radius = 8,
+            },
+            player_index,
+            team_index,
+        });
+        // XXX: ... make child
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .transform = .{},
+        //     .rb = .{
+        //         .radius = self.ranger_radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .animate_on_input = .{
+        //         .action = .thrust_forward,
+        //         .direction = .positive,
+        //         .activated = self.ranger_animations.accel,
+        //         .deactivated = .none,
+        //     },
+        //     .animation = .{
+        //         .index = .none,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        // },
     }
 
     fn createTriangle(
         self: *const @This(),
+        entities: *const Entities,
         command_buffer: *CommandBuffer,
-        player_index: u2,
-        team_index: u2,
+        player_index: PlayerIndex,
+        team_index: TeamIndex,
         pos: V,
         angle: f32,
-    ) PrefabHandle {
+    ) void {
         const radius = 24;
-        const ship_handle = PrefabHandle.init(0);
-        return command_buffer.appendInstantiate(true, &.{
-            .{
-                .ship = .{
-                    .class = .triangle,
-                    .turn_speed = math.pi * 0.9,
-                    .thrust = 250,
-                },
-                .health = .{
-                    .hp = 100,
-                    .max_hp = 100,
-                    .regen_ratio = 0.5,
-                },
-                .transform = .{
-                    .pos = pos,
-                    .angle = angle,
-                },
-                .rb = .{
-                    .vel = .{ .x = 0, .y = 0 },
-                    .radius = 26,
-                    .rotation_vel = 0.0,
-                    .density = 0.02,
-                },
-                .collider = .{
-                    .collision_damping = 0.4,
-                    .layer = .vehicle,
-                },
-                .animation = .{
-                    .index = self.triangle_animations.still,
-                },
-                .turret = .{
-                    .angle = 0,
-                    .radius = radius,
-                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                    .projectile_speed = 700,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 12,
-                    .projectile_radius = 12,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+        // XXX: ...
+        // const ship_handle = PrefabHandle.init(0);
+        command_buffer.create(entities, .{
+            Ship{
+                .class = .triangle,
+                .turn_speed = math.pi * 0.9,
+                .thrust = 250,
             },
-            .{
-                .parent = ship_handle.relative,
-                .transform = .{},
-                .rb = .{
-                    .radius = self.militia_radius,
-                    .density = std.math.inf(f32),
-                },
-                .animate_on_input = .{
-                    .action = .thrust_forward,
-                    .direction = .positive,
-                    .activated = self.triangle_animations.accel,
-                    .deactivated = .none,
-                },
-                .animation = .{
-                    .index = .none,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+            Health{
+                .hp = 100,
+                .max_hp = 100,
+                .regen_ratio = 0.5,
             },
-        }).?;
+            Transform{
+                .pos = pos,
+                .angle = angle,
+            },
+            RigidBody{
+                .vel = .{ .x = 0, .y = 0 },
+                .radius = 26,
+                .rotation_vel = 0.0,
+                .density = 0.02,
+            },
+            Collider{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            Animation.Playback{
+                .index = self.triangle_animations.still,
+            },
+            Turret{
+                .angle = 0,
+                .radius = radius,
+                .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                .projectile_speed = 700,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 12,
+                .projectile_radius = 12,
+            },
+            player_index,
+            team_index,
+        });
+        // XXX: make child
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .transform = .{},
+        //     .rb = .{
+        //         .radius = self.militia_radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .animate_on_input = .{
+        //         .action = .thrust_forward,
+        //         .direction = .positive,
+        //         .activated = self.triangle_animations.accel,
+        //         .deactivated = .none,
+        //     },
+        //     .animation = .{
+        //         .index = .none,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        // },
     }
 
     fn createMilitia(
         self: *const @This(),
+        entities: *const Entities,
         command_buffer: *CommandBuffer,
-        player_index: u2,
-        team_index: u2,
+        player_index: PlayerIndex,
+        team_index: TeamIndex,
         pos: V,
         angle: f32,
-    ) PrefabHandle {
-        const ship_handle = PrefabHandle.init(0);
-        return command_buffer.appendInstantiate(true, &.{
-            .{
-                .ship = .{
-                    .class = .militia,
-                    .turn_speed = math.pi * 1.4,
-                    .thrust = 400,
-                },
-                .health = .{
-                    .hp = 80,
-                    .max_hp = 80,
-                },
-                .transform = .{
-                    .pos = pos,
-                    .angle = angle,
-                },
-                .rb = .{
-                    .vel = .{ .x = 0, .y = 0 },
-                    .rotation_vel = 0.0,
-                    .radius = self.militia_radius,
-                    .density = 0.06,
-                },
-                .collider = .{
-                    .collision_damping = 0.4,
-                    .layer = .vehicle,
-                },
-                .animation = .{
-                    .index = self.militia_animations.still,
-                },
-                // .grapple_gun = .{
-                //     .radius = self.ranger_radius * 10.0,
-                //     .angle = 0,
-                //     .cooldown_s = 0,
-                //     .max_cooldown_s = 0.2,
-                //     // TODO: when nonzero, causes the ship to move. wouldn't happen if there was equal
-                //     // kickback!
-                //     .projectile_speed = 0,
-                // },
-                .player_index = player_index,
-                .team_index = team_index,
-                .front_shield = .{},
+    ) void {
+        // XXX: ...
+        // const ship_handle = PrefabHandle.init(0);
+        command_buffer.create(entities, .{
+            Ship{
+                .class = .militia,
+                .turn_speed = math.pi * 1.4,
+                .thrust = 400,
             },
-            .{
-                .parent = ship_handle.relative,
-                .transform = .{},
-                .rb = .{
-                    .radius = self.militia_radius,
-                    .density = std.math.inf(f32),
-                },
-                .animate_on_input = .{
-                    .action = .thrust_forward,
-                    .direction = .positive,
-                    .activated = self.militia_animations.accel,
-                    .deactivated = .none,
-                },
-                .animation = .{
-                    .index = .none,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+            Health{
+                .hp = 80,
+                .max_hp = 80,
             },
-        }).?;
+            Transform{
+                .pos = pos,
+                .angle = angle,
+            },
+            RigidBody{
+                .vel = .{ .x = 0, .y = 0 },
+                .rotation_vel = 0.0,
+                .radius = self.militia_radius,
+                .density = 0.06,
+            },
+            Collider{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            Animation.Playback{
+                .index = self.militia_animations.still,
+            },
+            // .grapple_gun = .{
+            //     .radius = self.ranger_radius * 10.0,
+            //     .angle = 0,
+            //     .cooldown_s = 0,
+            //     .max_cooldown_s = 0.2,
+            //     // TODO: when nonzero, causes the ship to move. wouldn't happen if there was equal
+            //     // kickback!
+            //     .projectile_speed = 0,
+            // },
+            player_index,
+            team_index,
+            FrontShield{},
+        });
+        // XXX: make child
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .transform = .{},
+        //     .rb = .{
+        //         .radius = self.militia_radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .animate_on_input = .{
+        //         .action = .thrust_forward,
+        //         .direction = .positive,
+        //         .activated = self.militia_animations.accel,
+        //         .deactivated = .none,
+        //     },
+        //     .animation = .{
+        //         .index = .none,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        // },
     }
 
     fn createKevin(
         self: *const @This(),
+        entities: *const Entities,
         command_buffer: *CommandBuffer,
-        player_index: u2,
-        team_index: u2,
+        player_index: PlayerIndex,
+        team_index: TeamIndex,
         pos: V,
         angle: f32,
-    ) PrefabHandle {
-        const ship_handle = PrefabHandle.init(0);
+    ) void {
+        // XXX: ...
+        // const ship_handle = PrefabHandle.init(0);
 
         const radius = 32;
-        return command_buffer.appendInstantiate(true, &.{
-            .{
-                .ship = .{
-                    .class = .kevin,
-                    .turn_speed = math.pi * 1.1,
-                    .thrust = 300,
-                },
-                .health = .{
-                    .hp = 300,
-                    .max_hp = 300,
-                },
-                .transform = .{
-                    .pos = pos,
-                    .angle = angle,
-                },
-                .rb = .{
-                    .vel = .{ .x = 0, .y = 0 },
-                    .radius = radius,
-                    .rotation_vel = 0.0,
-                    .density = 0.02,
-                },
-                .collider = .{
-                    .collision_damping = 0.4,
-                    .layer = .vehicle,
-                },
-                .animation = .{
-                    .index = self.kevin_animations.still,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+        command_buffer.create(entities, .{
+            Ship{
+                .class = .kevin,
+                .turn_speed = math.pi * 1.1,
+                .thrust = 300,
             },
-            .{
-                .parent = ship_handle.relative,
-                .turret = .{
-                    .radius = 32,
-                    .angle = math.pi * 0.1,
-                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                    .projectile_speed = 500,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 18,
-                    .projectile_radius = 18,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
-                .rb = .{
-                    .radius = radius,
-                    .density = std.math.inf(f32),
-                },
-                .transform = .{},
+            Health{
+                .hp = 300,
+                .max_hp = 300,
             },
-            .{
-                .parent = ship_handle.relative,
-                .turret = .{
-                    .radius = radius,
-                    .angle = math.pi * -0.1,
-                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                    .projectile_speed = 500,
-                    .projectile_lifetime = 1.0,
-                    .projectile_damage = 18,
-                    .projectile_radius = 18,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
-                .rb = .{
-                    .radius = radius,
-                    .density = std.math.inf(f32),
-                },
-                .transform = .{},
+            Transform{
+                .pos = pos,
+                .angle = angle,
             },
-            .{
-                .parent = ship_handle.relative,
-                .transform = .{},
-                .rb = .{
-                    .radius = self.kevin_radius,
-                    .density = std.math.inf(f32),
-                },
-                .animate_on_input = .{
-                    .action = .thrust_forward,
-                    .direction = .positive,
-                    .activated = self.kevin_animations.accel,
-                    .deactivated = .none,
-                },
-                .animation = .{
-                    .index = .none,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+            RigidBody{
+                .vel = .{ .x = 0, .y = 0 },
+                .radius = radius,
+                .rotation_vel = 0.0,
+                .density = 0.02,
             },
-        }).?;
+            Collider{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
+            },
+            Animation.Playback{
+                .index = self.kevin_animations.still,
+            },
+            player_index,
+            team_index,
+        });
+        // XXX: make child
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .turret = .{
+        //         .radius = 32,
+        //         .angle = math.pi * 0.1,
+        //         .cooldown = .{ .time = .{ .max_s = 0.2 } },
+        //         .projectile_speed = 500,
+        //         .projectile_lifetime = 1.0,
+        //         .projectile_damage = 18,
+        //         .projectile_radius = 18,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        //     .rb = .{
+        //         .radius = radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .transform = .{},
+        // },
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .turret = .{
+        //         .radius = radius,
+        //         .angle = math.pi * -0.1,
+        //         .cooldown = .{ .time = .{ .max_s = 0.2 } },
+        //         .projectile_speed = 500,
+        //         .projectile_lifetime = 1.0,
+        //         .projectile_damage = 18,
+        //         .projectile_radius = 18,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        //     .rb = .{
+        //         .radius = radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .transform = .{},
+        // },
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .transform = .{},
+        //     .rb = .{
+        //         .radius = self.kevin_radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .animate_on_input = .{
+        //         .action = .thrust_forward,
+        //         .direction = .positive,
+        //         .activated = self.kevin_animations.accel,
+        //         .deactivated = .none,
+        //     },
+        //     .animation = .{
+        //         .index = .none,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        // },
     }
 
     fn createWendy(
         self: *const @This(),
+        entities: *const Entities,
         command_buffer: *CommandBuffer,
-        player_index: u2,
-        team_index: u2,
+        player_index: PlayerIndex,
+        team_index: TeamIndex,
         pos: V,
         _: f32,
-    ) PrefabHandle {
-        const ship_handle = PrefabHandle.init(0);
-        return command_buffer.appendInstantiate(true, &.{
-            .{
-                .ship = .{
-                    .class = .wendy,
-                    .turn_speed = math.pi * 1.0,
-                    .thrust = 200,
-                    .omnithrusters = true,
-                },
-                .health = .{
-                    .hp = 400,
-                    .max_hp = 400,
-                },
-                .transform = .{
-                    .pos = pos,
-                },
-                .rb = .{
-                    .vel = .{ .x = 0, .y = 0 },
-                    .radius = self.wendy_radius,
-                    .rotation_vel = 0.0,
-                    .density = 0.02,
-                },
-                .collider = .{
-                    .collision_damping = 0.4,
-                    .layer = .vehicle,
-                },
-                .animation = .{
-                    .index = self.wendy_animations.still,
-                },
-                .turret = .{
-                    .radius = self.wendy_radius,
-                    .angle = 0,
-                    .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
-                    .projectile_speed = 0,
-                    .projectile_lifetime = 5.0,
-                    .projectile_damage = 50,
-                    .projectile_radius = 8,
-                    .projectile_density = std.math.inf(f32),
-                    .aim_opposite_movement = true,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+    ) void {
+        // XXX: ...
+        // const ship_handle = PrefabHandle.init(0);
+        command_buffer.create(entities, .{
+            Ship{
+                .class = .wendy,
+                .turn_speed = math.pi * 1.0,
+                .thrust = 200,
+                .omnithrusters = true,
             },
-            .{
-                .parent = ship_handle.relative,
-                .transform = .{},
-                .rb = .{
-                    .radius = self.wendy_radius,
-                    .density = std.math.inf(f32),
-                },
-                .animate_on_input = .{
-                    .action = .thrust_y,
-                    .direction = .positive,
-                    .activated = self.wendy_animations.thrusters_left.?,
-                    .deactivated = .none,
-                },
-                .animation = .{
-                    .index = .none,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+            Health{
+                .hp = 400,
+                .max_hp = 400,
             },
-            .{
-                .parent = ship_handle.relative,
-                .transform = .{},
-                .rb = .{
-                    .radius = self.wendy_radius,
-                    .density = std.math.inf(f32),
-                },
-                .animate_on_input = .{
-                    .action = .thrust_y,
-                    .direction = .negative,
-                    .activated = self.wendy_animations.thrusters_right.?,
-                    .deactivated = .none,
-                },
-                .animation = .{
-                    .index = .none,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+            Transform{
+                .pos = pos,
             },
-            .{
-                .parent = ship_handle.relative,
-                .transform = .{},
-                .rb = .{
-                    .radius = self.wendy_radius,
-                    .density = std.math.inf(f32),
-                },
-                .animate_on_input = .{
-                    .action = .thrust_x,
-                    .direction = .negative,
-                    .activated = self.wendy_animations.thrusters_top.?,
-                    .deactivated = .none,
-                },
-                .animation = .{
-                    .index = .none,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+            RigidBody{
+                .vel = .{ .x = 0, .y = 0 },
+                .radius = self.wendy_radius,
+                .rotation_vel = 0.0,
+                .density = 0.02,
             },
-            .{
-                .parent = ship_handle.relative,
-                .transform = .{},
-                .rb = .{
-                    .radius = self.wendy_radius,
-                    .density = std.math.inf(f32),
-                },
-                .animate_on_input = .{
-                    .action = .thrust_x,
-                    .direction = .positive,
-                    .activated = self.wendy_animations.thrusters_bottom.?,
-                    .deactivated = .none,
-                },
-                .animation = .{
-                    .index = .none,
-                },
-                .player_index = player_index,
-                .team_index = team_index,
+            Collider{
+                .collision_damping = 0.4,
+                .layer = .vehicle,
             },
-        }).?;
+            Animation.Playback{
+                .index = self.wendy_animations.still,
+            },
+            Turret{
+                .radius = self.wendy_radius,
+                .angle = 0,
+                .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
+                .projectile_speed = 0,
+                .projectile_lifetime = 5.0,
+                .projectile_damage = 50,
+                .projectile_radius = 8,
+                .projectile_density = std.math.inf(f32),
+                .aim_opposite_movement = true,
+            },
+            player_index,
+            team_index,
+        });
+        // XXX: make children
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .transform = .{},
+        //     .rb = .{
+        //         .radius = self.wendy_radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .animate_on_input = .{
+        //         .action = .thrust_y,
+        //         .direction = .positive,
+        //         .activated = self.wendy_animations.thrusters_left.?,
+        //         .deactivated = .none,
+        //     },
+        //     .animation = .{
+        //         .index = .none,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        // },
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .transform = .{},
+        //     .rb = .{
+        //         .radius = self.wendy_radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .animate_on_input = .{
+        //         .action = .thrust_y,
+        //         .direction = .negative,
+        //         .activated = self.wendy_animations.thrusters_right.?,
+        //         .deactivated = .none,
+        //     },
+        //     .animation = .{
+        //         .index = .none,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        // },
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .transform = .{},
+        //     .rb = .{
+        //         .radius = self.wendy_radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .animate_on_input = .{
+        //         .action = .thrust_x,
+        //         .direction = .negative,
+        //         .activated = self.wendy_animations.thrusters_top.?,
+        //         .deactivated = .none,
+        //     },
+        //     .animation = .{
+        //         .index = .none,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        // },
+        // .{
+        //     .parent = ship_handle.relative,
+        //     .transform = .{},
+        //     .rb = .{
+        //         .radius = self.wendy_radius,
+        //         .density = std.math.inf(f32),
+        //     },
+        //     .animate_on_input = .{
+        //         .action = .thrust_x,
+        //         .direction = .positive,
+        //         .activated = self.wendy_animations.thrusters_bottom.?,
+        //         .deactivated = .none,
+        //     },
+        //     .animation = .{
+        //         .index = .none,
+        //     },
+        //     .player_index = player_index,
+        //     .team_index = team_index,
+        // },
     }
 
     fn init(allocator: Allocator, assets: *Assets) !Game {
@@ -2308,22 +2286,23 @@ const Game = struct {
 
     fn createShip(
         game: *Game,
+        entities: *const Entities,
         command_buffer: *CommandBuffer,
-        player_index: u2,
-        team_index: u2,
+        player_index: PlayerIndex,
+        team_index: TeamIndex,
         pos: V,
         angle: f32,
-    ) PrefabHandle {
-        const team = &game.teams[team_index];
+    ) void {
+        const team = &game.teams[@intFromEnum(team_index)];
         const progression_index = team.ship_progression_index;
         team.ship_progression_index += 1;
-        return switch (team.ship_progression[progression_index]) {
-            .ranger => game.createRanger(command_buffer, player_index, team_index, pos, angle),
-            .militia => game.createMilitia(command_buffer, player_index, team_index, pos, angle),
-            .triangle => game.createTriangle(command_buffer, player_index, team_index, pos, angle),
-            .kevin => game.createKevin(command_buffer, player_index, team_index, pos, angle),
-            .wendy => game.createWendy(command_buffer, player_index, team_index, pos, angle),
-        };
+        switch (team.ship_progression[progression_index]) {
+            .ranger => game.createRanger(entities, command_buffer, player_index, team_index, pos, angle),
+            .militia => game.createMilitia(entities, command_buffer, player_index, team_index, pos, angle),
+            .triangle => game.createTriangle(entities, command_buffer, player_index, team_index, pos, angle),
+            .kevin => game.createKevin(entities, command_buffer, player_index, team_index, pos, angle),
+            .wendy => game.createWendy(entities, command_buffer, player_index, team_index, pos, angle),
+        }
     }
 
     fn shipLifeSprite(game: Game, class: Ship.Class) Sprite.Index {
@@ -2358,107 +2337,106 @@ const Game = struct {
 
     fn setupScenario(game: *Game, entities: *const Entities, command_buffer: *zcs.CommandBuffer, scenario: Scenario) void {
         const rng = game.rng.random();
-        command_buffer.clear(); // XXX: why clear at start?
+        command_buffer.clear();
 
-        // XXX: ...
-        // var player_teams: []const u2 = undefined;
+        var player_teams: []const u2 = undefined;
 
-        // switch (scenario) {
-        //     .deathmatch_2v2,
-        //     .deathmatch_2v2_no_rocks,
-        //     .deathmatch_2v2_one_rock,
-        //     => {
-        //         const progression = &.{
-        //             .ranger,
-        //             .militia,
-        //             .ranger,
-        //             .militia,
-        //             .triangle,
-        //             .triangle,
-        //             .wendy,
-        //             .kevin,
-        //         };
-        //         const team_init: Team = .{
-        //             .ship_progression_index = 0,
-        //             .ship_progression = progression,
-        //             .players_alive = 2,
-        //         };
-        //         const teams = game.teams_buffer[0..2];
-        //         teams.* = .{ team_init, team_init };
-        //         game.teams = teams;
+        switch (scenario) {
+            .deathmatch_2v2,
+            .deathmatch_2v2_no_rocks,
+            .deathmatch_2v2_one_rock,
+            => {
+                const progression = &.{
+                    .ranger,
+                    .militia,
+                    .ranger,
+                    .militia,
+                    .triangle,
+                    .triangle,
+                    .wendy,
+                    .kevin,
+                };
+                const team_init: Team = .{
+                    .ship_progression_index = 0,
+                    .ship_progression = progression,
+                    .players_alive = 2,
+                };
+                const teams = game.teams_buffer[0..2];
+                teams.* = .{ team_init, team_init };
+                game.teams = teams;
 
-        //         player_teams = &.{ 0, 1, 0, 1 };
-        //     },
+                player_teams = &.{ 0, 1, 0, 1 };
+            },
 
-        //     .deathmatch_1v1, .deathmatch_1v1_one_rock => {
-        //         const progression = &.{
-        //             .ranger,
-        //             .militia,
-        //             .triangle,
-        //             .wendy,
-        //             .kevin,
-        //         };
-        //         const team_init: Team = .{
-        //             .ship_progression_index = 0,
-        //             .ship_progression = progression,
-        //             .players_alive = 1,
-        //         };
-        //         const teams = game.teams_buffer[0..2];
-        //         teams.* = .{ team_init, team_init };
-        //         game.teams = teams;
+            .deathmatch_1v1, .deathmatch_1v1_one_rock => {
+                const progression = &.{
+                    .ranger,
+                    .militia,
+                    .triangle,
+                    .wendy,
+                    .kevin,
+                };
+                const team_init: Team = .{
+                    .ship_progression_index = 0,
+                    .ship_progression = progression,
+                    .players_alive = 1,
+                };
+                const teams = game.teams_buffer[0..2];
+                teams.* = .{ team_init, team_init };
+                game.teams = teams;
 
-        //         player_teams = &.{ 0, 1 };
-        //     },
+                player_teams = &.{ 0, 1 };
+            },
 
-        //     .royale_4p => {
-        //         const progression = &.{
-        //             .ranger,
-        //             .militia,
-        //             .triangle,
-        //             .wendy,
-        //             .kevin,
-        //         };
-        //         const team_init: Team = .{
-        //             .ship_progression_index = 0,
-        //             .ship_progression = progression,
-        //             .players_alive = 1,
-        //         };
-        //         const teams = game.teams_buffer[0..4];
-        //         teams.* = .{ team_init, team_init, team_init, team_init };
-        //         game.teams = teams;
+            .royale_4p => {
+                const progression = &.{
+                    .ranger,
+                    .militia,
+                    .triangle,
+                    .wendy,
+                    .kevin,
+                };
+                const team_init: Team = .{
+                    .ship_progression_index = 0,
+                    .ship_progression = progression,
+                    .players_alive = 1,
+                };
+                const teams = game.teams_buffer[0..4];
+                teams.* = .{ team_init, team_init, team_init, team_init };
+                game.teams = teams;
 
-        //         player_teams = &.{ 0, 1, 2, 3 };
-        //     },
-        // }
+                player_teams = &.{ 0, 1, 2, 3 };
+            },
+        }
 
-        // // Set up players
-        // {
-        //     {
-        //         var player_index: u32 = 0;
-        //         for (0..@as(usize, @intCast(c.SDL_NumJoysticks()))) |i_usize| {
-        //             const i: u31 = @intCast(i_usize);
-        //             if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
-        //                 const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
-        //                     panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
-        //                 };
-        //                 if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
-        //                     game.controllers[i] = sdl_controller;
-        //                     player_index += 1;
-        //                     if (player_index >= game.controllers.len) break;
-        //                 } else {
-        //                     c.SDL_GameControllerClose(sdl_controller);
-        //                 }
-        //             }
-        //         }
-        //     }
+        // Set up players
+        {
+            {
+                var player_index: u32 = 0;
+                for (0..@as(usize, @intCast(c.SDL_NumJoysticks()))) |i_usize| {
+                    const i: u31 = @intCast(i_usize);
+                    if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
+                        const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
+                            panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
+                        };
+                        if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
+                            game.controllers[i] = sdl_controller;
+                            player_index += 1;
+                            if (player_index >= game.controllers.len) break;
+                        } else {
+                            c.SDL_GameControllerClose(sdl_controller);
+                        }
+                    }
+                }
+            }
 
-        //     for (player_teams, 0..) |team_index, i| {
-        //         const angle = math.pi / 2.0 * @as(f32, @floatFromInt(i));
-        //         const pos = display_center.plus(V.unit(angle).scaled(50));
-        //         const player_index: u2 = @intCast(i);
-        //         _ = game.createShip(command_buffer, player_index, team_index, pos, angle);
-        //     }
-        // }
+            for (player_teams, 0..) |team_index, i| {
+                const angle = math.pi / 2.0 * @as(f32, @floatFromInt(i));
+                const pos = display_center.plus(V.unit(angle).scaled(50));
+                const player_index: PlayerIndex = @enumFromInt(i);
+                game.createShip(entities, command_buffer, player_index, @enumFromInt(team_index), pos, angle);
+            }
+        }
 
         // Create rocks
         const rock_amt: usize = switch (scenario) {
@@ -2499,7 +2477,7 @@ const Game = struct {
         generateStars(&game.stars, rng);
     }
 
-    fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team_index: u2) void {
+    fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team_index: TeamIndex) void {
         const rng = game.rng.random();
         for (0..500) |_| {
             const random_vel = V.unit(rng.float(f32) * math.pi * 2).scaled(300);
@@ -2518,14 +2496,14 @@ const Game = struct {
                     .density = 0.001,
                 },
                 game.particle,
-                TeamIndex{ .index = team_index },
+                team_index,
             });
         }
     }
 
-    fn aliveTeam(game: Game) u2 {
+    fn aliveTeam(game: Game) TeamIndex {
         for (game.teams, 0..) |team, i| {
-            if (team.players_alive > 0) return @intCast(i);
+            if (team.players_alive > 0) return @enumFromInt(i);
         } else unreachable;
     }
 
@@ -2834,7 +2812,6 @@ fn remap_clamped(
 test {
     _ = @import("slot_map.zig");
     _ = @import("minimum_alignment_allocator.zig");
-    _ = ecs;
     _ = @import("segmented_list.zig");
     _ = @import("symmetric_matrix.zig");
 }
