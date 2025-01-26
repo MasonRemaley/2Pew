@@ -8,8 +8,8 @@
             .hash = "12200aa79b05aaeefff144b9e376371e2e7ddc982b9207d146163baf56361331a834",
         },
         .zcs = .{
-            .url = "https://github.com/Games-by-Mason/ZCS/archive/e900a1441f23231a80ce03c77b9e631b1a79d8d9.tar.gz",
-            .hash = "12200c72aca56c1886daede93f64164f67e3875d1370893721652662aec606627dda",
+            .url = "https://github.com/Games-by-Mason/ZCS/archive/db67bcc003ad842e9db36fcd24396ae09a8527d8.tar.gz",
+            .hash = "1220663e20e2884287fb5b177812c5ef8a96248012466916961a256952489bf81f1e",
         },
     },
     .paths = .{

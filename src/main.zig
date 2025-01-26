@@ -12,7 +12,7 @@ const zcs = @import("zcs");
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const Component = zcs.Component;
-const CommandBuffer = zcs.CommandBuffer;
+const CmdBuf = zcs.CmdBuf;
 const FieldEnum = std.meta.FieldEnum;
 const MinimumAlignmentAllocator = @import("minimum_alignment_allocator.zig").MinimumAlignmentAllocator;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
@@ -120,15 +120,15 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
     const allocator = maa.allocator();
-    var entities = try zcs.Entities.init(allocator, 100000, component_types);
-    defer entities.deinit(allocator);
+    var es = try zcs.Entities.init(allocator, 100000, component_types);
+    defer es.deinit(allocator);
 
     // XXX: remember to check usage
     // XXX: use shorthands where reasonable once it works
-    var command_buffer = try zcs.CommandBuffer.init(allocator, &entities, 8192);
-    defer command_buffer.deinit(allocator);
+    var cmds = try zcs.CmdBuf.init(allocator, &es, 8192);
+    defer cmds.deinit(allocator, &es);
 
-    game.setupScenario(&entities, &command_buffer, .deathmatch_2v2);
+    game.setupScenario(&es, &cmds, .deathmatch_2v2);
 
     // Run sim
     var delta_s: f32 = 1.0 / 60.0;
@@ -143,9 +143,9 @@ pub fn main() !void {
     var warned_memory_usage = false;
 
     while (true) {
-        if (poll(&entities, &command_buffer, &game)) return;
-        update(&entities, &command_buffer, &game, delta_s);
-        render(assets, &entities, game, delta_s, fx_loop_s);
+        if (poll(&es, &cmds, &game)) return;
+        update(&es, &cmds, &game, delta_s);
+        render(assets, &es, game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
         // results if it's too close to zero!
@@ -170,7 +170,7 @@ pub fn main() !void {
     }
 }
 
-fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
+fn poll(es: *Entities, cmds: *CmdBuf, game: *Game) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) != 0) {
         switch (event.type) {
@@ -179,28 +179,28 @@ fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
                 c.SDL_SCANCODE_ESCAPE => return true,
                 c.SDL_SCANCODE_RETURN => {
                     // Clear invulnerability so you don't have to wait when testing
-                    var it = entities.viewIterator(struct { health: *Health });
+                    var it = es.viewIterator(struct { health: *Health });
                     while (it.next()) |entity| {
                         entity.health.invulnerable_s = 0.0;
                     }
                 },
                 c.SDL_SCANCODE_1 => {
-                    game.setupScenario(entities, command_buffer, .deathmatch_2v2);
+                    game.setupScenario(es, cmds, .deathmatch_2v2);
                 },
                 c.SDL_SCANCODE_2 => {
-                    game.setupScenario(entities, command_buffer, .deathmatch_2v2_no_rocks);
+                    game.setupScenario(es, cmds, .deathmatch_2v2_no_rocks);
                 },
                 c.SDL_SCANCODE_3 => {
-                    game.setupScenario(entities, command_buffer, .deathmatch_2v2_one_rock);
+                    game.setupScenario(es, cmds, .deathmatch_2v2_one_rock);
                 },
                 c.SDL_SCANCODE_4 => {
-                    game.setupScenario(entities, command_buffer, .deathmatch_1v1);
+                    game.setupScenario(es, cmds, .deathmatch_1v1);
                 },
                 c.SDL_SCANCODE_5 => {
-                    game.setupScenario(entities, command_buffer, .deathmatch_1v1_one_rock);
+                    game.setupScenario(es, cmds, .deathmatch_1v1_one_rock);
                 },
                 c.SDL_SCANCODE_6 => {
-                    game.setupScenario(entities, command_buffer, .royale_4p);
+                    game.setupScenario(es, cmds, .royale_4p);
                 },
                 else => {},
             },
@@ -211,8 +211,8 @@ fn poll(entities: *Entities, command_buffer: *CommandBuffer, game: *Game) bool {
 }
 
 fn update(
-    entities: *Entities,
-    command_buffer: *CommandBuffer,
+    es: *Entities,
+    cmds: *CmdBuf,
     game: *Game,
     delta_s: f32,
 ) void {
@@ -227,13 +227,13 @@ fn update(
 
     for (&game.input_state) |*input_state| {
         if (input_state.isAction(.start, .positive, .activated)) {
-            game.setupScenario(entities, command_buffer, .deathmatch_1v1_one_rock);
+            game.setupScenario(es, cmds, .deathmatch_1v1_one_rock);
         }
     }
 
-    // Prevent invulnerable entities from firing
+    // Prevent invulnerable es from firing
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             player_index: *const PlayerIndex,
             health: *const Health,
         });
@@ -247,7 +247,7 @@ fn update(
 
     // Bonk
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             rb: *RigidBody,
             transform: *const Transform,
             collider: *const Collider,
@@ -335,23 +335,25 @@ fn update(
                     const base_vel = if (rng.boolean()) entity.rb.vel else other.rb.vel;
                     const random_vel = V.unit(rng.float(f32) * math.pi * 2)
                         .scaled(rng.float(f32) * base_vel.length() * 2);
-                    command_buffer.create(entities, .{
-                        Lifetime{
-                            .seconds = 1.5 + rng.float(f32) * 1.0,
-                        },
-                        Transform{
-                            .pos = shrapnel_center.plus(random_offset),
-                            .angle = 2 * math.pi * rng.float(f32),
-                        },
-                        RigidBody{
-                            .vel = avg_vel.plus(random_vel),
-                            .rotation_vel = 2 * math.pi * rng.float(f32),
-                            .radius = game.animationRadius(shrapnel_animation),
-                            .density = 0.001,
-                        },
-                        Animation.Playback{
-                            .index = shrapnel_animation,
-                            .destroys_entity = true,
+                    Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+                        .add = .{
+                            Lifetime{
+                                .seconds = 1.5 + rng.float(f32) * 1.0,
+                            },
+                            Transform{
+                                .pos = shrapnel_center.plus(random_offset),
+                                .angle = 2 * math.pi * rng.float(f32),
+                            },
+                            RigidBody{
+                                .vel = avg_vel.plus(random_vel),
+                                .rotation_vel = 2 * math.pi * rng.float(f32),
+                                .radius = game.animationRadius(shrapnel_animation),
+                                .density = 0.001,
+                            },
+                            Animation.Playback{
+                                .index = shrapnel_animation,
+                                .destroys_entity = true,
+                            },
                         },
                     });
                 }
@@ -364,25 +366,31 @@ fn update(
                 {
                     var hooked = false;
                     if (entity.hook) |hook| {
-                        command_buffer.changeArchetype(entities, entity.entity, Component.flags(entities, &.{Hook}), .{
-                            Spring{
-                                .start = entity.entity,
-                                .end = other.entity,
-                                .k = hook.k,
-                                .length = entity.transform.pos.distance(other.transform.pos),
-                                .damping = hook.damping,
+                        entity.entity.changeArchetypeCmd(es, cmds, .{
+                            .remove = Component.flags(es, &.{Hook}),
+                            .add = .{
+                                Spring{
+                                    .start = entity.entity,
+                                    .end = other.entity,
+                                    .k = hook.k,
+                                    .length = entity.transform.pos.distance(other.transform.pos),
+                                    .damping = hook.damping,
+                                },
                             },
                         });
                         hooked = true;
                     }
                     if (other.hook) |hook| {
-                        command_buffer.changeArchetype(entities, other.entity, Component.flags(entities, &.{Hook}), .{
-                            Spring{
-                                .start = entity.entity,
-                                .end = other.entity,
-                                .k = hook.k,
-                                .length = entity.transform.pos.distance(other.transform.pos),
-                                .damping = hook.damping,
+                        other.entity.changeArchetypeCmd(es, cmds, .{
+                            .remove = Component.flags(es, &.{Hook}),
+                            .add = .{
+                                Spring{
+                                    .start = entity.entity,
+                                    .end = other.entity,
+                                    .k = hook.k,
+                                    .length = entity.transform.pos.distance(other.transform.pos),
+                                    .damping = hook.damping,
+                                },
                             },
                         });
                         hooked = true;
@@ -398,7 +406,7 @@ fn update(
 
     // Update rbs
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             rb: *RigidBody,
             transform: *Transform,
             health: ?*Health,
@@ -427,28 +435,28 @@ fn update(
     // XXX: springs were already disabled
     // Update springs
     // {
-    //     var it = entities.iterator(.{ .spring = .{} });
+    //     var it = es.iterator(.{ .spring = .{} });
     //     while (it.next()) |entity| {
     //         // TODO: crashes if either end has been deleted right now. we may wanna actually make
     //         // checking if an entity is valid or not a feature if there's not a bette way to handle this?
-    //         var start_trans = entities.getComponent(entity.spring.start, .transform) orelse {
+    //         var start_trans = es.getComponent(entity.spring.start, .transform) orelse {
     //             std.log.err("spring connections require transform, destroying spring entity", .{});
     //             it.swapRemove();
     //             continue;
     //         };
 
-    //         var end_trans = entities.getComponent(entity.spring.end, .transform) orelse {
+    //         var end_trans = es.getComponent(entity.spring.end, .transform) orelse {
     //             std.log.err("spring connections require transform, destroying spring entity", .{});
     //             it.swapRemove();
     //             continue;
     //         };
-    //         var start_rb = entities.getComponent(entity.spring.start, .rb) orelse {
+    //         var start_rb = es.getComponent(entity.spring.start, .rb) orelse {
     //             std.log.err("spring connections require rb, destroying spring entity", .{});
     //             it.swapRemove();
     //             continue;
     //         };
 
-    //         var end_rb = entities.getComponent(entity.spring.end, .rb) orelse {
+    //         var end_rb = es.getComponent(entity.spring.end, .rb) orelse {
     //             std.log.err("spring connections require rb, destroying spring entity", .{});
     //             it.swapRemove();
     //             continue;
@@ -475,17 +483,17 @@ fn update(
     //     }
     // }
 
-    // Update entities that do damage
+    // Update es that do damage
     {
         // TODO(mason): hard to keep the components straight, make shorter handles names and get rid of comps
-        var damage_it = entities.viewIterator(struct {
+        var damage_it = es.viewIterator(struct {
             damage: *const Damage,
             rb: *const RigidBody,
             transform: *Transform,
             entity: Entity,
         });
         while (damage_it.next()) |damage_entity| {
-            var health_it = entities.viewIterator(struct {
+            var health_it = es.viewIterator(struct {
                 health: *Health,
                 rb: *const RigidBody,
                 transform: *const Transform,
@@ -501,27 +509,29 @@ fn update(
                         ];
                         const random_vector = V.unit(rng.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
-                        command_buffer.create(entities, .{
-                            Lifetime{
-                                .seconds = 1.5 + rng.float(f32) * 1.0,
-                            },
-                            Transform{
-                                .pos = health_entity.transform.pos,
-                                .angle = 2 * math.pi * rng.float(f32),
-                            },
-                            RigidBody{
-                                .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
-                                .rotation_vel = 2 * math.pi * rng.float(f32),
-                                .radius = game.animationRadius(shrapnel_animation),
-                                .density = 0.001,
-                            },
-                            Animation.Playback{
-                                .index = shrapnel_animation,
-                                .destroys_entity = true,
+                        Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+                            .add = .{
+                                Lifetime{
+                                    .seconds = 1.5 + rng.float(f32) * 1.0,
+                                },
+                                Transform{
+                                    .pos = health_entity.transform.pos,
+                                    .angle = 2 * math.pi * rng.float(f32),
+                                },
+                                RigidBody{
+                                    .vel = health_entity.rb.vel.plus(damage_entity.rb.vel.scaled(0.2)).plus(random_vector),
+                                    .rotation_vel = 2 * math.pi * rng.float(f32),
+                                    .radius = game.animationRadius(shrapnel_animation),
+                                    .density = 0.001,
+                                },
+                                Animation.Playback{
+                                    .index = shrapnel_animation,
+                                    .destroys_entity = true,
+                                },
                             },
                         });
 
-                        command_buffer.destroy(damage_entity.entity);
+                        damage_entity.entity.destroyCmd(es, cmds);
                     }
                 }
             }
@@ -533,7 +543,7 @@ fn update(
     // TODO(mason): take velocity from before impact? i may have messed that up somehow
     // Explode things that reach 0 hp
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             health: *Health,
             rb: ?*const RigidBody,
             transform: ?*const Transform,
@@ -545,22 +555,24 @@ fn update(
             if (entity.health.hp <= 0) {
                 // spawn explosion here
                 if (entity.transform) |trans| {
-                    command_buffer.create(entities, .{
-                        Lifetime{
-                            .seconds = 100,
-                        },
-                        Transform{
-                            .pos = trans.pos,
-                        },
-                        RigidBody{
-                            .vel = if (entity.rb) |rb| rb.vel else V{ .x = 0, .y = 0 },
-                            .rotation_vel = 0,
-                            .radius = 32,
-                            .density = 0.001,
-                        },
-                        Animation.Playback{
-                            .index = game.explosion_animation,
-                            .destroys_entity = true,
+                    Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+                        .add = .{
+                            Lifetime{
+                                .seconds = 100,
+                            },
+                            Transform{
+                                .pos = trans.pos,
+                            },
+                            RigidBody{
+                                .vel = if (entity.rb) |rb| rb.vel else V{ .x = 0, .y = 0 },
+                                .rotation_vel = 0,
+                                .radius = 32,
+                                .density = 0.001,
+                            },
+                            Animation.Playback{
+                                .index = game.explosion_animation,
+                                .destroys_entity = true,
+                            },
                         },
                     });
                 }
@@ -576,19 +588,19 @@ fn update(
                             team.players_alive -= 1;
                             if (game.over() and !already_over) {
                                 const happy_team = game.aliveTeam();
-                                game.spawnTeamVictory(entities, display_center, happy_team);
+                                game.spawnTeamVictory(es, cmds, display_center, happy_team);
                             }
                         } else {
                             const new_angle = math.pi * 2 * rng.float(f32);
                             const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
                             const facing_angle = new_angle + math.pi;
-                            game.createShip(entities, command_buffer, player_index.*, team_index.*, new_pos, facing_angle);
+                            game.createShip(es, cmds, player_index.*, team_index.*, new_pos, facing_angle);
                         }
                     }
                 }
 
                 // Destroy the entity
-                command_buffer.destroy(entity.entity);
+                entity.entity.destroyCmd(es, cmds);
             }
 
             // Regen health
@@ -606,7 +618,7 @@ fn update(
 
     // Update ships
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             ship: *const Ship,
             rb: *RigidBody,
             transform: *Transform,
@@ -636,7 +648,7 @@ fn update(
 
     // Update animate on input
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             player_index: *const PlayerIndex,
             animate_on_input: *const AnimateOnInput,
             animation: *Animation.Playback,
@@ -658,7 +670,7 @@ fn update(
     // TODO: break out cooldown logic or no?
     // Update grapple guns
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             grapple_gun: *GrappleGun,
             player_index: *const PlayerIndex,
             rb: *const RigidBody,
@@ -676,12 +688,12 @@ fn update(
                 // TODO: increase cooldown_s?
                 if (gg.live) |live| {
                     for (live.joints) |piece| {
-                        command_buffer.destroy(piece);
+                        piece.destroyCmd(es, cmds);
                     }
                     for (live.springs) |piece| {
-                        command_buffer.destroy(piece);
+                        piece.destroyCmd(es, cmds);
                     }
-                    command_buffer.destroy(live.hook);
+                    live.hook.destroyCmd(es, cmds);
                     gg.live = null;
                 } else {
                     // TODO: behave sensibly if the ship that fired it dies...right now crashes cause
@@ -710,69 +722,78 @@ fn update(
                     const segment_len = 50.0;
                     var pos = entity.transform.pos.plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
-                        // XXX: creating while iterating? I think this was a bug right? Or I guess it's okay
-                        // because we know there's no overlap in archetype, but it will trip our new assertions.
-                        // think this through. we COULD have per component type generation counters instead of
-                        // a single one? Or just do this on the cb somehow to keep it simple?
-                        gg.live.?.joints[i] = Entity.create(entities, .{
-                            Transform{
-                                .pos = pos,
+                        const joint = Entity.nextReserved(cmds);
+                        joint.changeArchetypeCmd(es, cmds, .{
+                            .add = .{
+                                Transform{
+                                    .pos = pos,
+                                },
+                                RigidBody{
+                                    .vel = vel,
+                                    .radius = 2,
+                                    .density = 0.001,
+                                },
+                                // TODO: ...
+                                // .sprite = game.bullet_small,
                             },
-                            RigidBody{
-                                .vel = vel,
-                                .radius = 2,
-                                .density = 0.001,
-                            },
-                            // TODO: ...
-                            // .sprite = game.bullet_small,
                         });
+                        gg.live.?.joints[i] = joint;
                         pos.add(dir.scaled(segment_len));
                     }
                     // TODO: i think the damping code is broken, if i set this to be critically damped
                     // it explodes--even over damping shouldn't do that it should slow things down
                     // extra!
                     // TODO: ah yeah, damping prevents len from going to low for some reason??
+                    // XXX: also creating while iterating
                     const hook = Hook{
                         .damping = 0.0,
                         .k = 100.0,
                     };
-                    // XXX: also creating while iterating
-                    gg.live.?.hook = Entity.create(entities, .{
-                        Transform{
-                            .pos = pos,
-                            .angle = 0,
+                    const hook_entity = Entity.reserveImmediately(es);
+                    hook_entity.changeArchetypeImmediately(es, .{
+                        .add = .{
+                            Transform{
+                                .pos = pos,
+                                .angle = 0,
+                            },
+                            RigidBody{
+                                .vel = vel,
+                                .rotation_vel = 0,
+                                .radius = 2,
+                                .density = 0.001,
+                            },
+                            Collider{
+                                .collision_damping = 0,
+                                .layer = .hook,
+                            },
+                            hook,
+                            // TODO: ...
+                            // .sprite = game.bullet_small,
                         },
-                        RigidBody{
-                            .vel = vel,
-                            .rotation_vel = 0,
-                            .radius = 2,
-                            .density = 0.001,
-                        },
-                        Collider{
-                            .collision_damping = 0,
-                            .layer = .hook,
-                        },
-                        hook,
-                        // TODO: ...
-                        // .sprite = game.bullet_small,
                     });
+                    // XXX: why nullable?
+                    gg.live.?.hook = hook_entity;
                     for (0..(gg.live.?.springs.len)) |i| {
                         // XXX: same deal here, creation while iterating
-                        gg.live.?.springs[i] = Entity.create(entities, .{
-                            Spring{
-                                .start = if (i == 0)
-                                    entity.entity
-                                else
-                                    gg.live.?.joints[i - 1],
-                                .end = if (i < gg.live.?.joints.len)
-                                    gg.live.?.joints[i]
-                                else
-                                    gg.live.?.hook,
-                                .k = hook.k,
-                                .length = segment_len,
-                                .damping = hook.damping,
+                        const spring = Entity.reserveImmediately(es);
+                        spring.changeArchetypeImmediately(es, .{
+                            .add = .{
+                                Spring{
+                                    .start = if (i == 0)
+                                        entity.entity
+                                    else
+                                        gg.live.?.joints[i - 1],
+                                    .end = if (i < gg.live.?.joints.len)
+                                        gg.live.?.joints[i]
+                                    else
+                                        gg.live.?.hook,
+                                    .k = hook.k,
+                                    .length = segment_len,
+                                    .damping = hook.damping,
+                                },
                             },
                         });
+                        gg.live.?.springs[i] = spring;
                     }
                 }
             }
@@ -781,34 +802,34 @@ fn update(
 
     // Update animations
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             animation: *const Animation.Playback,
             entity: Entity,
         });
         while (it.next()) |entity| {
             if (entity.animation.destroys_entity and entity.animation.index == .none) {
-                command_buffer.destroy(entity.entity);
+                entity.entity.destroyCmd(es, cmds);
             }
         }
     }
 
     // Update lifetimes
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             lifetime: *Lifetime,
             entity: Entity,
         });
         while (it.next()) |entity| {
             entity.lifetime.seconds -= delta_s;
             if (entity.lifetime.seconds <= 0) {
-                command_buffer.destroy(entity.entity);
+                entity.entity.destroyCmd(es, cmds);
             }
         }
     }
 
     // Update cached world positions and angles
     {
-        var it = entities.viewIterator(struct { transform: *Transform });
+        var it = es.viewIterator(struct { transform: *Transform });
         while (it.next()) |entity| {
             // XXX: remove this, just assigns the current position to work around lack of parenting
             // while porting
@@ -820,9 +841,9 @@ fn update(
             // entity.transform.pos_world_cached = V.zero;
             // entity.transform.angle_world_cached = 0;
 
-            // var parent_it = parenting.iterator(entities, it.handle());
+            // var parent_it = parenting.iterator(es, it.handle());
             // while (parent_it.next()) |current| {
-            //     if (entities.getComponent(current, .transform)) |transform| {
+            //     if (es.getComponent(current, .transform)) |transform| {
             //         entity.transform.pos_world_cached.add(transform.pos);
             //         entity.transform.angle_world_cached += transform.angle;
             //     } else break;
@@ -832,7 +853,7 @@ fn update(
 
     // Update turrets
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             turret: *Turret,
             player_index: *const PlayerIndex,
             rb: *const RigidBody,
@@ -865,29 +886,31 @@ fn update(
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                command_buffer.create(entities, .{
-                    Damage{
-                        .hp = entity.turret.projectile_damage,
-                    },
-                    Transform{
-                        .pos = fire_pos,
-                        .angle = vel.angle() + math.pi / 2.0,
-                    },
-                    RigidBody{
-                        .vel = vel,
-                        .rotation_vel = 0,
-                        .radius = entity.turret.projectile_radius,
-                        // TODO(mason): modify math to accept 0 and inf mass
-                        .density = entity.turret.projectile_density,
-                    },
-                    sprite,
-                    Collider{
-                        // Lasers gain energy when bouncing off of rocks
-                        .collision_damping = 1,
-                        .layer = .projectile,
-                    },
-                    Lifetime{
-                        .seconds = entity.turret.projectile_lifetime,
+                Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+                    .add = .{
+                        Damage{
+                            .hp = entity.turret.projectile_damage,
+                        },
+                        Transform{
+                            .pos = fire_pos,
+                            .angle = vel.angle() + math.pi / 2.0,
+                        },
+                        RigidBody{
+                            .vel = vel,
+                            .rotation_vel = 0,
+                            .radius = entity.turret.projectile_radius,
+                            // TODO(mason): modify math to accept 0 and inf mass
+                            .density = entity.turret.projectile_density,
+                        },
+                        sprite,
+                        Collider{
+                            // Lasers gain energy when bouncing off of rocks
+                            .collision_damping = 1,
+                            .layer = .projectile,
+                        },
+                        Lifetime{
+                            .seconds = entity.turret.projectile_lifetime,
+                        },
                     },
                 });
             }
@@ -895,12 +918,12 @@ fn update(
     }
 
     // Apply queued deletions
-    command_buffer.submit(entities);
-    command_buffer.clear();
+    cmds.execute(es);
+    cmds.clear(es);
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop_s: f32) void {
+fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f32) void {
     const renderer = assets.renderer;
 
     // This was added for the flash effect and then not used since it already requires a timer
@@ -946,7 +969,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw animations
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             rb: *const RigidBody,
             transform: *const Transform,
             animation: *Animation.Playback,
@@ -962,9 +985,9 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
             // // We should probably make the sprites half opacity instead of turning them off when
             // // flashing for a less jarring effect, but that is difficult right now.
             // {
-            //     var parent_it = parenting.iterator(entities, it.handle());
+            //     var parent_it = parenting.iterator(es, it.handle());
             //     while (parent_it.next()) |current| {
-            //         if (entities.getComponent(current, .health)) |health| {
+            //         if (es.getComponent(current, .health)) |health| {
             //             if (health.invulnerable_s > 0.0) {
             //                 var flashes_ps: f32 = 2;
             //                 if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
@@ -1001,7 +1024,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
 
     // Draw health bars
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             health: *const Health,
             rb: *const RigidBody,
             transform: *const Transform,
@@ -1035,7 +1058,7 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     // Draw sprites
     // TODO(mason): sort draw calls somehow (can the sdl renderer do depth buffers?)
     {
-        var it = entities.viewIterator(struct {
+        var it = es.viewIterator(struct {
             sprite: *const Sprite.Index,
             rb: *const RigidBody,
             transform: *const Transform,
@@ -1065,10 +1088,10 @@ fn render(assets: Assets, entities: *Entities, game: Game, delta_s: f32, fx_loop
     // same!
     // Draw springs
     {
-        var it = entities.viewIterator(struct { spring: *const Spring });
+        var it = es.viewIterator(struct { spring: *const Spring });
         while (it.next()) |entity| {
-            const start = (entity.spring.start.getComponent(entities, Transform) orelse continue).pos;
-            const end = (entity.spring.end.getComponent(entities, Transform) orelse continue).pos;
+            const start = (entity.spring.start.getComponent(es, Transform) orelse continue).pos;
+            const end = (entity.spring.end.getComponent(es, Transform) orelse continue).pos;
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,
@@ -1147,7 +1170,7 @@ const Damage = struct {
     hp: f32,
 };
 
-/// A spring connecting to entities.
+/// A spring connecting to es.
 ///
 /// You can simulate a rod by choosing a high spring constant and setting the damping factor to 1.0.
 const Spring = struct {
@@ -1474,8 +1497,8 @@ const Game = struct {
 
     fn createRanger(
         self: *const @This(),
-        entities: *const Entities,
-        command_buffer: *CommandBuffer,
+        es: *const Entities,
+        cmds: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
@@ -1483,44 +1506,46 @@ const Game = struct {
     ) void {
         // XXX: ...
         // const ship_handle = PrefabHandle.init(0);
-        command_buffer.create(entities, .{
-            Ship{
-                .class = .ranger,
-                .turn_speed = math.pi * 1.0,
-                .thrust = 160,
+        Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+            .add = .{
+                Ship{
+                    .class = .ranger,
+                    .turn_speed = math.pi * 1.0,
+                    .thrust = 160,
+                },
+                Health{
+                    .hp = 80,
+                    .max_hp = 80,
+                },
+                Transform{
+                    .pos = pos,
+                    .angle = angle,
+                },
+                RigidBody{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .radius = self.ranger_radius,
+                    .rotation_vel = 0.0,
+                    .density = 0.02,
+                },
+                Collider{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                Animation.Playback{
+                    .index = self.ranger_animations.still,
+                },
+                Turret{
+                    .angle = 0,
+                    .radius = self.ranger_radius,
+                    .cooldown = .{ .time = .{ .max_s = 0.1 } },
+                    .projectile_speed = 550,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 6,
+                    .projectile_radius = 8,
+                },
+                player_index,
+                team_index,
             },
-            Health{
-                .hp = 80,
-                .max_hp = 80,
-            },
-            Transform{
-                .pos = pos,
-                .angle = angle,
-            },
-            RigidBody{
-                .vel = .{ .x = 0, .y = 0 },
-                .radius = self.ranger_radius,
-                .rotation_vel = 0.0,
-                .density = 0.02,
-            },
-            Collider{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            Animation.Playback{
-                .index = self.ranger_animations.still,
-            },
-            Turret{
-                .angle = 0,
-                .radius = self.ranger_radius,
-                .cooldown = .{ .time = .{ .max_s = 0.1 } },
-                .projectile_speed = 550,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 6,
-                .projectile_radius = 8,
-            },
-            player_index,
-            team_index,
         });
         // XXX: ... make child
         // .{
@@ -1546,8 +1571,8 @@ const Game = struct {
 
     fn createTriangle(
         self: *const @This(),
-        entities: *const Entities,
-        command_buffer: *CommandBuffer,
+        es: *const Entities,
+        cmds: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
@@ -1556,45 +1581,47 @@ const Game = struct {
         const radius = 24;
         // XXX: ...
         // const ship_handle = PrefabHandle.init(0);
-        command_buffer.create(entities, .{
-            Ship{
-                .class = .triangle,
-                .turn_speed = math.pi * 0.9,
-                .thrust = 250,
+        Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+            .add = .{
+                Ship{
+                    .class = .triangle,
+                    .turn_speed = math.pi * 0.9,
+                    .thrust = 250,
+                },
+                Health{
+                    .hp = 100,
+                    .max_hp = 100,
+                    .regen_ratio = 0.5,
+                },
+                Transform{
+                    .pos = pos,
+                    .angle = angle,
+                },
+                RigidBody{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .radius = 26,
+                    .rotation_vel = 0.0,
+                    .density = 0.02,
+                },
+                Collider{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                Animation.Playback{
+                    .index = self.triangle_animations.still,
+                },
+                Turret{
+                    .angle = 0,
+                    .radius = radius,
+                    .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                    .projectile_speed = 700,
+                    .projectile_lifetime = 1.0,
+                    .projectile_damage = 12,
+                    .projectile_radius = 12,
+                },
+                player_index,
+                team_index,
             },
-            Health{
-                .hp = 100,
-                .max_hp = 100,
-                .regen_ratio = 0.5,
-            },
-            Transform{
-                .pos = pos,
-                .angle = angle,
-            },
-            RigidBody{
-                .vel = .{ .x = 0, .y = 0 },
-                .radius = 26,
-                .rotation_vel = 0.0,
-                .density = 0.02,
-            },
-            Collider{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            Animation.Playback{
-                .index = self.triangle_animations.still,
-            },
-            Turret{
-                .angle = 0,
-                .radius = radius,
-                .cooldown = .{ .time = .{ .max_s = 0.2 } },
-                .projectile_speed = 700,
-                .projectile_lifetime = 1.0,
-                .projectile_damage = 12,
-                .projectile_radius = 12,
-            },
-            player_index,
-            team_index,
         });
         // XXX: make child
         // .{
@@ -1620,8 +1647,8 @@ const Game = struct {
 
     fn createMilitia(
         self: *const @This(),
-        entities: *const Entities,
-        command_buffer: *CommandBuffer,
+        es: *const Entities,
+        cmds: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
@@ -1629,45 +1656,47 @@ const Game = struct {
     ) void {
         // XXX: ...
         // const ship_handle = PrefabHandle.init(0);
-        command_buffer.create(entities, .{
-            Ship{
-                .class = .militia,
-                .turn_speed = math.pi * 1.4,
-                .thrust = 400,
+        Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+            .add = .{
+                Ship{
+                    .class = .militia,
+                    .turn_speed = math.pi * 1.4,
+                    .thrust = 400,
+                },
+                Health{
+                    .hp = 80,
+                    .max_hp = 80,
+                },
+                Transform{
+                    .pos = pos,
+                    .angle = angle,
+                },
+                RigidBody{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .rotation_vel = 0.0,
+                    .radius = self.militia_radius,
+                    .density = 0.06,
+                },
+                Collider{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                Animation.Playback{
+                    .index = self.militia_animations.still,
+                },
+                // .grapple_gun = .{
+                //     .radius = self.ranger_radius * 10.0,
+                //     .angle = 0,
+                //     .cooldown_s = 0,
+                //     .max_cooldown_s = 0.2,
+                //     // TODO: when nonzero, causes the ship to move. wouldn't happen if there was equal
+                //     // kickback!
+                //     .projectile_speed = 0,
+                // },
+                player_index,
+                team_index,
+                FrontShield{},
             },
-            Health{
-                .hp = 80,
-                .max_hp = 80,
-            },
-            Transform{
-                .pos = pos,
-                .angle = angle,
-            },
-            RigidBody{
-                .vel = .{ .x = 0, .y = 0 },
-                .rotation_vel = 0.0,
-                .radius = self.militia_radius,
-                .density = 0.06,
-            },
-            Collider{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            Animation.Playback{
-                .index = self.militia_animations.still,
-            },
-            // .grapple_gun = .{
-            //     .radius = self.ranger_radius * 10.0,
-            //     .angle = 0,
-            //     .cooldown_s = 0,
-            //     .max_cooldown_s = 0.2,
-            //     // TODO: when nonzero, causes the ship to move. wouldn't happen if there was equal
-            //     // kickback!
-            //     .projectile_speed = 0,
-            // },
-            player_index,
-            team_index,
-            FrontShield{},
         });
         // XXX: make child
         // .{
@@ -1693,8 +1722,8 @@ const Game = struct {
 
     fn createKevin(
         self: *const @This(),
-        entities: *const Entities,
-        command_buffer: *CommandBuffer,
+        es: *const Entities,
+        cmds: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
@@ -1704,35 +1733,37 @@ const Game = struct {
         // const ship_handle = PrefabHandle.init(0);
 
         const radius = 32;
-        command_buffer.create(entities, .{
-            Ship{
-                .class = .kevin,
-                .turn_speed = math.pi * 1.1,
-                .thrust = 300,
+        Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+            .add = .{
+                Ship{
+                    .class = .kevin,
+                    .turn_speed = math.pi * 1.1,
+                    .thrust = 300,
+                },
+                Health{
+                    .hp = 300,
+                    .max_hp = 300,
+                },
+                Transform{
+                    .pos = pos,
+                    .angle = angle,
+                },
+                RigidBody{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .radius = radius,
+                    .rotation_vel = 0.0,
+                    .density = 0.02,
+                },
+                Collider{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                Animation.Playback{
+                    .index = self.kevin_animations.still,
+                },
+                player_index,
+                team_index,
             },
-            Health{
-                .hp = 300,
-                .max_hp = 300,
-            },
-            Transform{
-                .pos = pos,
-                .angle = angle,
-            },
-            RigidBody{
-                .vel = .{ .x = 0, .y = 0 },
-                .radius = radius,
-                .rotation_vel = 0.0,
-                .density = 0.02,
-            },
-            Collider{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            Animation.Playback{
-                .index = self.kevin_animations.still,
-            },
-            player_index,
-            team_index,
         });
         // XXX: make child
         // .{
@@ -1796,8 +1827,8 @@ const Game = struct {
 
     fn createWendy(
         self: *const @This(),
-        entities: *const Entities,
-        command_buffer: *CommandBuffer,
+        es: *const Entities,
+        cmds: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
@@ -1805,46 +1836,48 @@ const Game = struct {
     ) void {
         // XXX: ...
         // const ship_handle = PrefabHandle.init(0);
-        command_buffer.create(entities, .{
-            Ship{
-                .class = .wendy,
-                .turn_speed = math.pi * 1.0,
-                .thrust = 200,
-                .omnithrusters = true,
+        Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+            .add = .{
+                Ship{
+                    .class = .wendy,
+                    .turn_speed = math.pi * 1.0,
+                    .thrust = 200,
+                    .omnithrusters = true,
+                },
+                Health{
+                    .hp = 400,
+                    .max_hp = 400,
+                },
+                Transform{
+                    .pos = pos,
+                },
+                RigidBody{
+                    .vel = .{ .x = 0, .y = 0 },
+                    .radius = self.wendy_radius,
+                    .rotation_vel = 0.0,
+                    .density = 0.02,
+                },
+                Collider{
+                    .collision_damping = 0.4,
+                    .layer = .vehicle,
+                },
+                Animation.Playback{
+                    .index = self.wendy_animations.still,
+                },
+                Turret{
+                    .radius = self.wendy_radius,
+                    .angle = 0,
+                    .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
+                    .projectile_speed = 0,
+                    .projectile_lifetime = 5.0,
+                    .projectile_damage = 50,
+                    .projectile_radius = 8,
+                    .projectile_density = std.math.inf(f32),
+                    .aim_opposite_movement = true,
+                },
+                player_index,
+                team_index,
             },
-            Health{
-                .hp = 400,
-                .max_hp = 400,
-            },
-            Transform{
-                .pos = pos,
-            },
-            RigidBody{
-                .vel = .{ .x = 0, .y = 0 },
-                .radius = self.wendy_radius,
-                .rotation_vel = 0.0,
-                .density = 0.02,
-            },
-            Collider{
-                .collision_damping = 0.4,
-                .layer = .vehicle,
-            },
-            Animation.Playback{
-                .index = self.wendy_animations.still,
-            },
-            Turret{
-                .radius = self.wendy_radius,
-                .angle = 0,
-                .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
-                .projectile_speed = 0,
-                .projectile_lifetime = 5.0,
-                .projectile_damage = 50,
-                .projectile_radius = 8,
-                .projectile_density = std.math.inf(f32),
-                .aim_opposite_movement = true,
-            },
-            player_index,
-            team_index,
         });
         // XXX: make children
         // .{
@@ -2286,8 +2319,8 @@ const Game = struct {
 
     fn createShip(
         game: *Game,
-        entities: *const Entities,
-        command_buffer: *CommandBuffer,
+        es: *const Entities,
+        cmds: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
@@ -2297,11 +2330,11 @@ const Game = struct {
         const progression_index = team.ship_progression_index;
         team.ship_progression_index += 1;
         switch (team.ship_progression[progression_index]) {
-            .ranger => game.createRanger(entities, command_buffer, player_index, team_index, pos, angle),
-            .militia => game.createMilitia(entities, command_buffer, player_index, team_index, pos, angle),
-            .triangle => game.createTriangle(entities, command_buffer, player_index, team_index, pos, angle),
-            .kevin => game.createKevin(entities, command_buffer, player_index, team_index, pos, angle),
-            .wendy => game.createWendy(entities, command_buffer, player_index, team_index, pos, angle),
+            .ranger => game.createRanger(es, cmds, player_index, team_index, pos, angle),
+            .militia => game.createMilitia(es, cmds, player_index, team_index, pos, angle),
+            .triangle => game.createTriangle(es, cmds, player_index, team_index, pos, angle),
+            .kevin => game.createKevin(es, cmds, player_index, team_index, pos, angle),
+            .wendy => game.createWendy(es, cmds, player_index, team_index, pos, angle),
         }
     }
 
@@ -2335,9 +2368,9 @@ const Game = struct {
         royale_4p,
     };
 
-    fn setupScenario(game: *Game, entities: *const Entities, command_buffer: *zcs.CommandBuffer, scenario: Scenario) void {
+    fn setupScenario(game: *Game, es: *Entities, cmds: *zcs.CmdBuf, scenario: Scenario) void {
         const rng = game.rng.random();
-        command_buffer.clear();
+        cmds.clear(es); // XXX: if we didn't clear here es could be const
 
         var player_teams: []const u2 = undefined;
 
@@ -2434,7 +2467,7 @@ const Game = struct {
                 const angle = math.pi / 2.0 * @as(f32, @floatFromInt(i));
                 const pos = display_center.plus(V.unit(angle).scaled(50));
                 const player_index: PlayerIndex = @enumFromInt(i);
-                game.createShip(entities, command_buffer, player_index, @enumFromInt(team_index), pos, angle);
+                game.createShip(es, cmds, player_index, @enumFromInt(team_index), pos, angle);
             }
         }
 
@@ -2455,20 +2488,22 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, rng.float(f32)))
                 .plus(display_center);
 
-            command_buffer.create(entities, .{
-                sprite,
-                Transform{
-                    .pos = pos,
-                },
-                RigidBody{
-                    .vel = V.unit(rng.float(f32) * math.pi * 2).scaled(speed),
-                    .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
-                    .radius = radius,
-                    .density = 0.10,
-                },
-                Collider{
-                    .collision_damping = 1,
-                    .layer = .hazard,
+            Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+                .add = .{
+                    sprite,
+                    Transform{
+                        .pos = pos,
+                    },
+                    RigidBody{
+                        .vel = V.unit(rng.float(f32) * math.pi * 2).scaled(speed),
+                        .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
+                        .radius = radius,
+                        .density = 0.10,
+                    },
+                    Collider{
+                        .collision_damping = 1,
+                        .layer = .hazard,
+                    },
                 },
             });
         }
@@ -2477,26 +2512,28 @@ const Game = struct {
         generateStars(&game.stars, rng);
     }
 
-    fn spawnTeamVictory(game: *Game, entities: *Entities, pos: V, team_index: TeamIndex) void {
+    fn spawnTeamVictory(game: *Game, es: *Entities, cmds: *CmdBuf, pos: V, team_index: TeamIndex) void {
         const rng = game.rng.random();
         for (0..500) |_| {
             const random_vel = V.unit(rng.float(f32) * math.pi * 2).scaled(300);
-            _ = Entity.create(entities, .{
-                Lifetime{
-                    .seconds = 1000,
+            _ = Entity.nextReserved(cmds).changeArchetypeCmd(es, cmds, .{
+                .add = .{
+                    Lifetime{
+                        .seconds = 1000,
+                    },
+                    Transform{
+                        .pos = pos,
+                        .angle = 2 * math.pi * rng.float(f32),
+                    },
+                    RigidBody{
+                        .vel = random_vel,
+                        .rotation_vel = 2 * math.pi * rng.float(f32),
+                        .radius = 16,
+                        .density = 0.001,
+                    },
+                    game.particle,
+                    team_index,
                 },
-                Transform{
-                    .pos = pos,
-                    .angle = 2 * math.pi * rng.float(f32),
-                },
-                RigidBody{
-                    .vel = random_vel,
-                    .rotation_vel = 2 * math.pi * rng.float(f32),
-                    .radius = 16,
-                    .density = 0.001,
-                },
-                game.particle,
-                team_index,
             });
         }
     }
