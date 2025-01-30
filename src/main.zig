@@ -99,7 +99,10 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     var maa = MinimumAlignmentAllocator(64).init(fba.allocator());
     const allocator = maa.allocator();
-    var es = try zcs.Entities.init(allocator, 10000);
+    var es = try zcs.Entities.init(allocator, .{
+        .max_entities = max_entities,
+        .comp_bytes = 1000000,
+    });
     defer es.deinit(allocator);
 
     // XXX: remember to check usage
@@ -107,7 +110,7 @@ pub fn main() !void {
     var cmds = try zcs.CmdBuf.init(
         allocator,
         &es,
-        .{ .cmds = 8192, .comp_bytes = @sizeOf(f32) * 16 },
+        .{ .cmds = 8192, .avg_comp_bytes = @sizeOf(f32) * 16 },
     );
     defer cmds.deinit(allocator, &es);
 
@@ -318,7 +321,7 @@ fn update(
                     const base_vel = if (rng.boolean()) entity.rb.vel else other.rb.vel;
                     const random_vel = V.unit(rng.float(f32) * math.pi * 2)
                         .scaled(rng.float(f32) * base_vel.length() * 2);
-                    const piece = Entity.nextReserved(cmds);
+                    const piece = Entity.popReserved(cmds);
                     piece.addCompCmd(cmds, Lifetime, .{
                         .seconds = 1.5 + rng.float(f32) * 1.0,
                     });
@@ -346,7 +349,7 @@ fn update(
                 {
                     var hooked = false;
                     if (entity.hook) |hook| {
-                        entity.entity.removeCompCmd(cmds, Hook);
+                        entity.entity.remCompCmd(cmds, Hook);
                         entity.entity.addCompCmd(cmds, Spring, .{
                             .start = entity.entity,
                             .end = other.entity,
@@ -357,7 +360,7 @@ fn update(
                         hooked = true;
                     }
                     if (other.hook) |hook| {
-                        other.entity.removeCompCmd(cmds, Hook);
+                        other.entity.remCompCmd(cmds, Hook);
                         other.entity.addCompCmd(cmds, Spring, .{
                             .start = entity.entity,
                             .end = other.entity,
@@ -481,7 +484,7 @@ fn update(
                         ];
                         const random_vector = V.unit(rng.float(f32) * math.pi * 2)
                             .scaled(damage_entity.rb.vel.length() * 0.2);
-                        const e = Entity.nextReserved(cmds);
+                        const e = Entity.popReserved(cmds);
                         e.addCompCmd(cmds, Lifetime, .{
                             .seconds = 1.5 + rng.float(f32) * 1.0,
                         });
@@ -524,7 +527,7 @@ fn update(
             if (entity.health.hp <= 0) {
                 // spawn explosion here
                 if (entity.transform) |trans| {
-                    const e = Entity.nextReserved(cmds);
+                    const e = Entity.popReserved(cmds);
                     e.addCompCmd(cmds, Lifetime, .{
                         .seconds = 100,
                     });
@@ -688,7 +691,7 @@ fn update(
                     const segment_len = 50.0;
                     var pos = entity.transform.pos.plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
-                        const joint = Entity.nextReserved(cmds);
+                        const joint = Entity.popReserved(cmds);
                         joint.addCompCmd(cmds, Transform, .{
                             .pos = pos,
                         });
@@ -711,7 +714,7 @@ fn update(
                         .damping = 0.0,
                         .k = 100.0,
                     };
-                    const hook_entity = Entity.nextReserved(cmds);
+                    const hook_entity = Entity.popReserved(cmds);
                     hook_entity.addCompCmd(cmds, Transform, .{
                         .pos = pos,
                         .angle = 0,
@@ -733,7 +736,7 @@ fn update(
                     gg.live.?.hook = hook_entity;
                     for (0..(gg.live.?.springs.len)) |i| {
                         // XXX: same deal here, creation while iterating
-                        const spring = Entity.nextReserved(cmds);
+                        const spring = Entity.popReserved(cmds);
                         spring.addCompCmd(cmds, Spring, .{
                             .start = if (i == 0)
                                 entity.entity
@@ -840,7 +843,7 @@ fn update(
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                const e = Entity.nextReserved(cmds);
+                const e = Entity.popReserved(cmds);
                 e.addCompCmd(cmds, Damage, .{
                     .hp = entity.turret.projectile_damage,
                 });
@@ -1456,7 +1459,7 @@ const Game = struct {
     ) void {
         // XXX: ...
         // const ship_handle = PrefabHandle.init(0);
-        const e = Entity.nextReserved(cmds);
+        const e = Entity.popReserved(cmds);
         e.addCompCmd(cmds, Ship, .{
             .class = .ranger,
             .turn_speed = math.pi * 1.0,
@@ -1527,7 +1530,7 @@ const Game = struct {
         const radius = 24;
         // XXX: ...
         // const ship_handle = PrefabHandle.init(0);
-        const e = Entity.nextReserved(cmds);
+        const e = Entity.popReserved(cmds);
         e.addCompCmd(cmds, Ship, .{
             .class = .triangle,
             .turn_speed = math.pi * 0.9,
@@ -1598,7 +1601,7 @@ const Game = struct {
     ) void {
         // XXX: ...
         // const ship_handle = PrefabHandle.init(0);
-        const e = Entity.nextReserved(cmds);
+        const e = Entity.popReserved(cmds);
         e.addCompCmd(cmds, Ship, .{
             .class = .militia,
             .turn_speed = math.pi * 1.4,
@@ -1671,7 +1674,7 @@ const Game = struct {
         // const ship_handle = PrefabHandle.init(0);
 
         const radius = 32;
-        const e = Entity.nextReserved(cmds);
+        const e = Entity.popReserved(cmds);
         e.addCompCmd(cmds, Ship, .{
             .class = .kevin,
             .turn_speed = math.pi * 1.1,
@@ -1770,7 +1773,7 @@ const Game = struct {
     ) void {
         // XXX: ...
         // const ship_handle = PrefabHandle.init(0);
-        const e = Entity.nextReserved(cmds);
+        const e = Entity.popReserved(cmds);
         e.addCompCmd(cmds, Ship, .{
             .class = .wendy,
             .turn_speed = math.pi * 1.0,
@@ -2418,7 +2421,7 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, rng.float(f32)))
                 .plus(display_center);
 
-            const e = Entity.nextReserved(cmds);
+            const e = Entity.popReserved(cmds);
             e.addCompCmd(cmds, Sprite.Index, sprite);
             e.addCompCmd(cmds, Transform, .{
                 .pos = pos,
@@ -2443,7 +2446,7 @@ const Game = struct {
         const rng = game.rng.random();
         for (0..500) |_| {
             const random_vel = V.unit(rng.float(f32) * math.pi * 2).scaled(300);
-            const e = Entity.nextReserved(cmds);
+            const e = Entity.popReserved(cmds);
             e.addCompCmd(cmds, Lifetime, .{
                 .seconds = 1000,
             });
