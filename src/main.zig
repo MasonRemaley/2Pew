@@ -13,6 +13,7 @@ const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const Component = zcs.Component;
 const CmdBuf = zcs.CmdBuf;
+const Node = zcs.ext.Node;
 const FieldEnum = std.meta.FieldEnum;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
 
@@ -99,14 +100,14 @@ pub fn main() !void {
 
     // XXX: remember to check usage
     // XXX: use shorthands where reasonable once it works
-    var cmds = try CmdBuf.init(
+    var cb = try CmdBuf.init(
         allocator,
         &es,
-        .{ .cmds = 8192, .avg_comp_bytes = @sizeOf(f32) * 16 },
+        .{ .cmds = 8192, .avg_any_bytes = @sizeOf(f32) * 16 },
     );
-    defer cmds.deinit(allocator, &es);
+    defer cb.deinit(allocator, &es);
 
-    game.setupScenario(&es, &cmds, .deathmatch_2v2);
+    game.setupScenario(&es, &cb, .deathmatch_2v2);
 
     // Run sim
     var delta_s: f32 = 1.0 / 60.0;
@@ -121,8 +122,8 @@ pub fn main() !void {
     // var warned_memory_usage = false;
 
     while (true) {
-        if (poll(&es, &cmds, &game)) return;
-        update(&es, &cmds, &game, delta_s);
+        if (poll(&es, &cb, &game)) return;
+        update(&es, &cb, &game, delta_s);
         render(assets, &es, game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
@@ -150,7 +151,7 @@ pub fn main() !void {
     }
 }
 
-fn poll(es: *Entities, cmds: *CmdBuf, game: *Game) bool {
+fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) != 0) {
         switch (event.type) {
@@ -165,22 +166,22 @@ fn poll(es: *Entities, cmds: *CmdBuf, game: *Game) bool {
                     }
                 },
                 c.SDL_SCANCODE_1 => {
-                    game.setupScenario(es, cmds, .deathmatch_2v2);
+                    game.setupScenario(es, cb, .deathmatch_2v2);
                 },
                 c.SDL_SCANCODE_2 => {
-                    game.setupScenario(es, cmds, .deathmatch_2v2_no_rocks);
+                    game.setupScenario(es, cb, .deathmatch_2v2_no_rocks);
                 },
                 c.SDL_SCANCODE_3 => {
-                    game.setupScenario(es, cmds, .deathmatch_2v2_one_rock);
+                    game.setupScenario(es, cb, .deathmatch_2v2_one_rock);
                 },
                 c.SDL_SCANCODE_4 => {
-                    game.setupScenario(es, cmds, .deathmatch_1v1);
+                    game.setupScenario(es, cb, .deathmatch_1v1);
                 },
                 c.SDL_SCANCODE_5 => {
-                    game.setupScenario(es, cmds, .deathmatch_1v1_one_rock);
+                    game.setupScenario(es, cb, .deathmatch_1v1_one_rock);
                 },
                 c.SDL_SCANCODE_6 => {
-                    game.setupScenario(es, cmds, .royale_4p);
+                    game.setupScenario(es, cb, .royale_4p);
                 },
                 else => {},
             },
@@ -192,7 +193,7 @@ fn poll(es: *Entities, cmds: *CmdBuf, game: *Game) bool {
 
 fn update(
     es: *Entities,
-    cmds: *CmdBuf,
+    cb: *CmdBuf,
     game: *Game,
     delta_s: f32,
 ) void {
@@ -207,7 +208,7 @@ fn update(
 
     for (&game.input_state) |*input_state| {
         if (input_state.isAction(.start, .positive, .activated)) {
-            game.setupScenario(es, cmds, .deathmatch_1v1_one_rock);
+            game.setupScenario(es, cb, .deathmatch_1v1_one_rock);
         }
     }
 
@@ -315,21 +316,21 @@ fn update(
                     const base_vel = if (rng.boolean()) vw.rb.vel else other.rb.vel;
                     const random_vel = V.unit(rng.float(f32) * math.pi * 2)
                         .scaled(rng.float(f32) * base_vel.length() * 2);
-                    const piece = Entity.popReserved(cmds);
-                    piece.addCompCmd(cmds, Lifetime, .{
+                    const piece = Entity.popReserved(cb);
+                    piece.addCompCmd(cb, Lifetime, .{
                         .seconds = 1.5 + rng.float(f32) * 1.0,
                     });
-                    piece.addCompCmd(cmds, Transform, .{
+                    piece.addCompCmd(cb, Transform, .{
                         .pos = shrapnel_center.plus(random_offset),
                         .angle = 2 * math.pi * rng.float(f32),
                     });
-                    piece.addCompCmd(cmds, RigidBody, .{
+                    piece.addCompCmd(cb, RigidBody, .{
                         .vel = avg_vel.plus(random_vel),
                         .rotation_vel = 2 * math.pi * rng.float(f32),
                         .radius = game.animationRadius(shrapnel_animation),
                         .density = 0.001,
                     });
-                    piece.addCompCmd(cmds, Animation.Playback, .{
+                    piece.addCompCmd(cb, Animation.Playback, .{
                         .index = shrapnel_animation,
                         .destroys_entity = true,
                     });
@@ -343,8 +344,8 @@ fn update(
                 {
                     var hooked = false;
                     if (vw.hook) |hook| {
-                        vw.entity.remCompCmd(cmds, Hook);
-                        vw.entity.addCompCmd(cmds, Spring, .{
+                        vw.entity.remCompCmd(cb, Hook);
+                        vw.entity.addCompCmd(cb, Spring, .{
                             .start = vw.entity,
                             .end = other.entity,
                             .k = hook.k,
@@ -354,8 +355,8 @@ fn update(
                         hooked = true;
                     }
                     if (other.hook) |hook| {
-                        other.entity.remCompCmd(cmds, Hook);
-                        other.entity.addCompCmd(cmds, Spring, .{
+                        other.entity.remCompCmd(cb, Hook);
+                        other.entity.addCompCmd(cb, Spring, .{
                             .start = vw.entity,
                             .end = other.entity,
                             .k = hook.k,
@@ -478,26 +479,26 @@ fn update(
                         ];
                         const random_vector = V.unit(rng.float(f32) * math.pi * 2)
                             .scaled(damage_vw.rb.vel.length() * 0.2);
-                        const e = Entity.popReserved(cmds);
-                        e.addCompCmd(cmds, Lifetime, .{
+                        const e = Entity.popReserved(cb);
+                        e.addCompCmd(cb, Lifetime, .{
                             .seconds = 1.5 + rng.float(f32) * 1.0,
                         });
-                        e.addCompCmd(cmds, Transform, .{
+                        e.addCompCmd(cb, Transform, .{
                             .pos = health_vw.transform.pos,
                             .angle = 2 * math.pi * rng.float(f32),
                         });
-                        e.addCompCmd(cmds, RigidBody, .{
+                        e.addCompCmd(cb, RigidBody, .{
                             .vel = health_vw.rb.vel.plus(damage_vw.rb.vel.scaled(0.2)).plus(random_vector),
                             .rotation_vel = 2 * math.pi * rng.float(f32),
                             .radius = game.animationRadius(shrapnel_animation),
                             .density = 0.001,
                         });
-                        e.addCompCmd(cmds, Animation.Playback, .{
+                        e.addCompCmd(cb, Animation.Playback, .{
                             .index = shrapnel_animation,
                             .destroys_entity = true,
                         });
 
-                        damage_vw.entity.destroyCmd(cmds);
+                        damage_vw.entity.destroyCmd(cb);
                     }
                 }
             }
@@ -521,20 +522,20 @@ fn update(
             if (vw.health.hp <= 0) {
                 // spawn explosion here
                 if (vw.transform) |trans| {
-                    const e = Entity.popReserved(cmds);
-                    e.addCompCmd(cmds, Lifetime, .{
+                    const e = Entity.popReserved(cb);
+                    e.addCompCmd(cb, Lifetime, .{
                         .seconds = 100,
                     });
-                    e.addCompCmd(cmds, Transform, .{
+                    e.addCompCmd(cb, Transform, .{
                         .pos = trans.pos,
                     });
-                    e.addCompCmd(cmds, RigidBody, .{
+                    e.addCompCmd(cb, RigidBody, .{
                         .vel = if (vw.rb) |rb| rb.vel else V{ .x = 0, .y = 0 },
                         .rotation_vel = 0,
                         .radius = 32,
                         .density = 0.001,
                     });
-                    e.addCompCmd(cmds, Animation.Playback, .{
+                    e.addCompCmd(cb, Animation.Playback, .{
                         .index = game.explosion_animation,
                         .destroys_entity = true,
                     });
@@ -551,19 +552,19 @@ fn update(
                             team.players_alive -= 1;
                             if (game.over() and !already_over) {
                                 const happy_team = game.aliveTeam();
-                                game.spawnTeamVictory(cmds, display_center, happy_team);
+                                game.spawnTeamVictory(cb, display_center, happy_team);
                             }
                         } else {
                             const new_angle = math.pi * 2 * rng.float(f32);
                             const new_pos = display_center.plus(V.unit(new_angle).scaled(display_radius));
                             const facing_angle = new_angle + math.pi;
-                            game.createShip(cmds, player_index.*, team_index.*, new_pos, facing_angle);
+                            game.createShip(cb, player_index.*, team_index.*, new_pos, facing_angle);
                         }
                     }
                 }
 
                 // Destroy the vw
-                vw.entity.destroyCmd(cmds);
+                vw.entity.destroyCmd(cb);
             }
 
             // Regen health
@@ -651,12 +652,12 @@ fn update(
                 // TODO: increase cooldown_s?
                 if (gg.live) |live| {
                     for (live.joints) |piece| {
-                        piece.destroyCmd(cmds);
+                        piece.destroyCmd(cb);
                     }
                     for (live.springs) |piece| {
-                        piece.destroyCmd(cmds);
+                        piece.destroyCmd(cb);
                     }
-                    live.hook.destroyCmd(cmds);
+                    live.hook.destroyCmd(cb);
                     gg.live = null;
                 } else {
                     // TODO: behave sensibly if the ship that fired it dies...right now crashes cause
@@ -685,11 +686,11 @@ fn update(
                     const segment_len = 50.0;
                     var pos = vw.transform.pos.plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
-                        const joint = Entity.popReserved(cmds);
-                        joint.addCompCmd(cmds, Transform, .{
+                        const joint = Entity.popReserved(cb);
+                        joint.addCompCmd(cb, Transform, .{
                             .pos = pos,
                         });
-                        joint.addCompCmd(cmds, RigidBody, .{
+                        joint.addCompCmd(cb, RigidBody, .{
                             .vel = vel,
                             .radius = 2,
                             .density = 0.001,
@@ -708,30 +709,30 @@ fn update(
                         .damping = 0.0,
                         .k = 100.0,
                     };
-                    const hook_entity = Entity.popReserved(cmds);
-                    hook_entity.addCompCmd(cmds, Transform, .{
+                    const hook_entity = Entity.popReserved(cb);
+                    hook_entity.addCompCmd(cb, Transform, .{
                         .pos = pos,
                         .angle = 0,
                     });
-                    hook_entity.addCompCmd(cmds, RigidBody, .{
+                    hook_entity.addCompCmd(cb, RigidBody, .{
                         .vel = vel,
                         .rotation_vel = 0,
                         .radius = 2,
                         .density = 0.001,
                     });
-                    hook_entity.addCompCmd(cmds, Collider, .{
+                    hook_entity.addCompCmd(cb, Collider, .{
                         .collision_damping = 0,
                         .layer = .hook,
                     });
-                    hook_entity.addCompCmd(cmds, Hook, hook);
+                    hook_entity.addCompCmd(cb, Hook, hook);
                     // TODO: ...
                     // .sprite = game.bullet_small,
                     // XXX: why nullable?
                     gg.live.?.hook = hook_entity;
                     for (0..(gg.live.?.springs.len)) |i| {
                         // XXX: same deal here, creation while iterating
-                        const spring = Entity.popReserved(cmds);
-                        spring.addCompCmd(cmds, Spring, .{
+                        const spring = Entity.popReserved(cb);
+                        spring.addCompCmd(cb, Spring, .{
                             .start = if (i == 0)
                                 vw.entity
                             else
@@ -759,7 +760,7 @@ fn update(
         });
         while (it.next()) |vw| {
             if (vw.animation.destroys_entity and vw.animation.index == .none) {
-                vw.entity.destroyCmd(cmds);
+                vw.entity.destroyCmd(cb);
             }
         }
     }
@@ -773,32 +774,39 @@ fn update(
         while (it.next()) |vw| {
             vw.lifetime.seconds -= delta_s;
             if (vw.lifetime.seconds <= 0) {
-                vw.entity.destroyCmd(cmds);
+                vw.entity.destroyCmd(cb);
             }
         }
     }
 
     // Update cached world positions and angles
     {
-        var it = es.viewIterator(struct { transform: *Transform });
+        var it = es.viewIterator(struct {
+            entity: Entity,
+            transform: *Transform,
+        });
         while (it.next()) |vw| {
-            // XXX: remove this, just assigns the current position to work around lack of parenting
-            // while porting
-            // XXX: note that health bars aren't using the cached one for some reason
+            // XXX: full update every time, this is slow just doing it to get the basics working first
             vw.transform.pos_world_cached = vw.transform.pos;
             vw.transform.angle_world_cached = vw.transform.angle;
 
-            // XXX: ...
-            // vw.transform.pos_world_cached = V.zero;
-            // vw.transform.angle_world_cached = 0;
+            const View = struct {
+                entity: Entity,
+                node: *const Node,
+                transform: ?*Transform,
 
-            // var parent_it = parenting.iterator(es, it.handle());
-            // while (parent_it.next()) |current| {
-            //     if (es.getComp(current, .transform)) |transform| {
-            //         vw.transform.pos_world_cached.add(transform.pos);
-            //         vw.transform.angle_world_cached += transform.angle;
-            //     } else break;
-            // }
+                const getParent = Node.View.Mixins(@This()).getParent;
+            };
+            var curr = vw.entity.view(es, View);
+            if (curr) |unwrapped| curr = unwrapped.getParent(es);
+            while (curr) |unwrapped| {
+                if (unwrapped.transform) |transform| {
+                    vw.transform.pos_world_cached.add(transform.pos);
+                    vw.transform.angle_world_cached += transform.angle;
+                }
+
+                curr = unwrapped.getParent(es);
+            }
         }
     }
 
@@ -837,28 +845,28 @@ fn update(
                     .distance => |*dist| dist.last_pos = fire_pos,
                 }
                 // TODO(mason): just make separate component for wall
-                const e = Entity.popReserved(cmds);
-                e.addCompCmd(cmds, Damage, .{
+                const e = Entity.popReserved(cb);
+                e.addCompCmd(cb, Damage, .{
                     .hp = vw.turret.projectile_damage,
                 });
-                e.addCompCmd(cmds, Transform, .{
+                e.addCompCmd(cb, Transform, .{
                     .pos = fire_pos,
                     .angle = vel.angle() + math.pi / 2.0,
                 });
-                e.addCompCmd(cmds, RigidBody, .{
+                e.addCompCmd(cb, RigidBody, .{
                     .vel = vel,
                     .rotation_vel = 0,
                     .radius = vw.turret.projectile_radius,
                     // TODO(mason): modify math to accept 0 and inf mass
                     .density = vw.turret.projectile_density,
                 });
-                e.addCompCmd(cmds, Sprite.Index, sprite);
-                e.addCompCmd(cmds, Collider, .{
+                e.addCompCmd(cb, Sprite.Index, sprite);
+                e.addCompCmd(cb, Collider, .{
                     // Lasers gain energy when bouncing off of rocks
                     .collision_damping = 1,
                     .layer = .projectile,
                 });
-                e.addCompCmd(cmds, Lifetime, .{
+                e.addCompCmd(cb, Lifetime, .{
                     .seconds = vw.turret.projectile_lifetime,
                 });
             }
@@ -866,8 +874,8 @@ fn update(
     }
 
     // Apply queued deletions
-    cmds.execute(es);
-    cmds.clear(es);
+    Node.Exec(null).allImmediate(es, &.{cb.*});
+    cb.clear(es);
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
@@ -923,7 +931,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             animation: *Animation.Playback,
             health: ?*const Health,
             team_index: ?*const TeamIndex,
-            parent: ?*const Parent,
+            // parent: ?*const Parent,
         });
         // draw: // XXX: ...
         while (it.next()) |vw| {
@@ -1107,10 +1115,6 @@ pub fn sdlAssertZero(ret: c_int) void {
     panic("sdl function returned an error: {s}", .{c.SDL_GetError()});
 }
 
-const Parent = struct {
-    entity: Entity = .none,
-};
-
 const PlayerIndex = enum(u2) { _ };
 const TeamIndex = enum(u2) { _ };
 
@@ -1118,7 +1122,7 @@ const Damage = struct {
     hp: f32,
 };
 
-/// A spring connecting to es.
+/// A spring connecting two entities.
 ///
 /// You can simulate a rod by choosing a high spring constant and setting the damping factor to 1.0.
 const Spring = struct {
@@ -1237,6 +1241,7 @@ const GrappleGun = struct {
     } = null,
 };
 
+// XXX: maybe move into zcs if involved enough!
 const Transform = struct {
     // parent: ?EntityHandle = null,
     /// pixels, relative to parent
@@ -1445,42 +1450,41 @@ const Game = struct {
 
     fn createRanger(
         self: *const @This(),
-        cmds: *CmdBuf,
+        cb: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
         angle: f32,
     ) void {
-        // XXX: ...
-        // const ship_handle = PrefabHandle.init(0);
-        const e = Entity.popReserved(cmds);
-        e.addCompCmd(cmds, Ship, .{
+        const ship = Entity.popReserved(cb);
+        ship.addCompCmd(cb, Node, .{});
+        ship.addCompCmd(cb, Ship, .{
             .class = .ranger,
             .turn_speed = math.pi * 1.0,
             .thrust = 160,
         });
-        e.addCompCmd(cmds, Health, .{
+        ship.addCompCmd(cb, Health, .{
             .hp = 80,
             .max_hp = 80,
         });
-        e.addCompCmd(cmds, Transform, .{
+        ship.addCompCmd(cb, Transform, .{
             .pos = pos,
             .angle = angle,
         });
-        e.addCompCmd(cmds, RigidBody, .{
+        ship.addCompCmd(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .radius = self.ranger_radius,
             .rotation_vel = 0.0,
             .density = 0.02,
         });
-        e.addCompCmd(cmds, Collider, .{
+        ship.addCompCmd(cb, Collider, .{
             .collision_damping = 0.4,
             .layer = .vehicle,
         });
-        e.addCompCmd(cmds, Animation.Playback, .{
+        ship.addCompCmd(cb, Animation.Playback, .{
             .index = self.ranger_animations.still,
         });
-        e.addCompCmd(cmds, Turret, .{
+        ship.addCompCmd(cb, Turret, .{
             .angle = 0,
             .radius = self.ranger_radius,
             .cooldown = .{ .time = .{ .max_s = 0.1 } },
@@ -1489,70 +1493,65 @@ const Game = struct {
             .projectile_damage = 6,
             .projectile_radius = 8,
         });
-        e.addCompCmd(cmds, PlayerIndex, player_index);
-        e.addCompCmd(cmds, TeamIndex, team_index);
-        // XXX: ... make child
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.ranger_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_forward,
-        //         .direction = .positive,
-        //         .activated = self.ranger_animations.accel,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        // },
+        ship.addCompCmd(cb, PlayerIndex, player_index);
+        ship.addCompCmd(cb, TeamIndex, team_index);
+
+        const thruster = Entity.popReserved(cb);
+        thruster.addCompCmd(cb, Transform, .{});
+        thruster.addCompCmd(cb, RigidBody, .{
+            .radius = self.ranger_radius,
+            .density = std.math.inf(f32),
+        });
+        thruster.addCompCmd(cb, AnimateOnInput, .{
+            .action = .thrust_forward,
+            .direction = .positive,
+            .activated = self.ranger_animations.accel,
+            .deactivated = .none,
+        });
+        thruster.addCompCmd(cb, Animation.Playback, .{ .index = .none });
+        thruster.addCompCmd(cb, PlayerIndex, player_index);
+        thruster.addCompCmd(cb, TeamIndex, team_index);
+        thruster.extCmd(cb, Node.SetParent, .{ship.toOptional()});
     }
 
     fn createTriangle(
         self: *const @This(),
-        cmds: *CmdBuf,
+        cb: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
         angle: f32,
     ) void {
         const radius = 24;
-        // XXX: ...
-        // const ship_handle = PrefabHandle.init(0);
-        const e = Entity.popReserved(cmds);
-        e.addCompCmd(cmds, Ship, .{
+        const ship = Entity.popReserved(cb);
+        ship.addCompCmd(cb, Ship, .{
             .class = .triangle,
             .turn_speed = math.pi * 0.9,
             .thrust = 250,
         });
-        e.addCompCmd(cmds, Health, .{
+        ship.addCompCmd(cb, Health, .{
             .hp = 100,
             .max_hp = 100,
             .regen_ratio = 0.5,
         });
-        e.addCompCmd(cmds, Transform, .{
+        ship.addCompCmd(cb, Transform, .{
             .pos = pos,
             .angle = angle,
         });
-        e.addCompCmd(cmds, RigidBody, .{
+        ship.addCompCmd(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .radius = 26,
             .rotation_vel = 0.0,
             .density = 0.02,
         });
-        e.addCompCmd(cmds, Collider, .{
+        ship.addCompCmd(cb, Collider, .{
             .collision_damping = 0.4,
             .layer = .vehicle,
         });
-        e.addCompCmd(cmds, Animation.Playback, .{
+        ship.addCompCmd(cb, Animation.Playback, .{
             .index = self.triangle_animations.still,
         });
-        e.addCompCmd(cmds, Turret, .{
+        ship.addCompCmd(cb, Turret, .{
             .angle = 0,
             .radius = radius,
             .cooldown = .{ .time = .{ .max_s = 0.2 } },
@@ -1561,65 +1560,61 @@ const Game = struct {
             .projectile_damage = 12,
             .projectile_radius = 12,
         });
-        e.addCompCmd(cmds, PlayerIndex, player_index);
-        e.addCompCmd(cmds, TeamIndex, team_index);
-        // XXX: make child
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.militia_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_forward,
-        //         .direction = .positive,
-        //         .activated = self.triangle_animations.accel,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        // },
+        ship.addCompCmd(cb, PlayerIndex, player_index);
+        ship.addCompCmd(cb, TeamIndex, team_index);
+
+        const thruster = Entity.popReserved(cb);
+        thruster.addCompCmd(cb, Transform, .{});
+        thruster.addCompCmd(cb, RigidBody, .{
+            .radius = self.militia_radius,
+            .density = std.math.inf(f32),
+        });
+        thruster.addCompCmd(cb, AnimateOnInput, .{
+            .action = .thrust_forward,
+            .direction = .positive,
+            .activated = self.triangle_animations.accel,
+            .deactivated = .none,
+        });
+        thruster.addCompCmd(cb, Animation.Playback, .{ .index = .none });
+        thruster.addCompCmd(cb, PlayerIndex, player_index);
+        thruster.addCompCmd(cb, TeamIndex, team_index);
+        thruster.extCmd(cb, Node.SetParent, .{ship.toOptional()});
     }
 
     fn createMilitia(
         self: *const @This(),
-        cmds: *CmdBuf,
+        cb: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
         angle: f32,
     ) void {
-        // XXX: ...
-        // const ship_handle = PrefabHandle.init(0);
-        const e = Entity.popReserved(cmds);
-        e.addCompCmd(cmds, Ship, .{
+        const ship = Entity.popReserved(cb);
+        ship.addCompCmd(cb, Node, .{});
+        ship.addCompCmd(cb, Ship, .{
             .class = .militia,
             .turn_speed = math.pi * 1.4,
             .thrust = 400,
         });
-        e.addCompCmd(cmds, Health, .{
+        ship.addCompCmd(cb, Health, .{
             .hp = 80,
             .max_hp = 80,
         });
-        e.addCompCmd(cmds, Transform, .{
+        ship.addCompCmd(cb, Transform, .{
             .pos = pos,
             .angle = angle,
         });
-        e.addCompCmd(cmds, RigidBody, .{
+        ship.addCompCmd(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .rotation_vel = 0.0,
             .radius = self.militia_radius,
             .density = 0.06,
         });
-        e.addCompCmd(cmds, Collider, .{
+        ship.addCompCmd(cb, Collider, .{
             .collision_damping = 0.4,
             .layer = .vehicle,
         });
-        e.addCompCmd(cmds, Animation.Playback, .{
+        ship.addCompCmd(cb, Animation.Playback, .{
             .index = self.militia_animations.still,
         });
         // .grapple_gun = .{
@@ -1631,170 +1626,141 @@ const Game = struct {
         //     // kickback!
         //     .projectile_speed = 0,
         // },
-        e.addCompCmd(cmds, PlayerIndex, player_index);
-        e.addCompCmd(cmds, TeamIndex, team_index);
-        e.addCompCmd(cmds, FrontShield, .{});
-        // XXX: make child
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.militia_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_forward,
-        //         .direction = .positive,
-        //         .activated = self.militia_animations.accel,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        // },
+        ship.addCompCmd(cb, PlayerIndex, player_index);
+        ship.addCompCmd(cb, TeamIndex, team_index);
+        ship.addCompCmd(cb, FrontShield, .{});
+
+        const thruster = Entity.popReserved(cb);
+        thruster.addCompCmd(cb, Transform, .{});
+        thruster.addCompCmd(cb, RigidBody, .{
+            .radius = self.militia_radius,
+            .density = std.math.inf(f32),
+        });
+        thruster.addCompCmd(cb, AnimateOnInput, .{
+            .action = .thrust_forward,
+            .direction = .positive,
+            .activated = self.militia_animations.accel,
+            .deactivated = .none,
+        });
+        thruster.addCompCmd(cb, Animation.Playback, .{ .index = .none });
+        thruster.addCompCmd(cb, PlayerIndex, player_index);
+        thruster.addCompCmd(cb, TeamIndex, team_index);
+        thruster.extCmd(cb, Node.SetParent, .{ship.toOptional()});
     }
 
     fn createKevin(
         self: *const @This(),
-        cmds: *CmdBuf,
+        cb: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
         angle: f32,
     ) void {
-        // XXX: ...
-        // const ship_handle = PrefabHandle.init(0);
-
         const radius = 32;
-        const e = Entity.popReserved(cmds);
-        e.addCompCmd(cmds, Ship, .{
+        const ship = Entity.popReserved(cb);
+        // ship.addCompCmd(cb, Node, .{});
+        ship.addCompCmd(cb, Ship, .{
             .class = .kevin,
             .turn_speed = math.pi * 1.1,
             .thrust = 300,
         });
-        e.addCompCmd(cmds, Health, .{
+        ship.addCompCmd(cb, Health, .{
             .hp = 300,
             .max_hp = 300,
         });
-        e.addCompCmd(cmds, Transform, .{
+        ship.addCompCmd(cb, Transform, .{
             .pos = pos,
             .angle = angle,
         });
-        e.addCompCmd(cmds, RigidBody, .{
+        ship.addCompCmd(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .radius = radius,
             .rotation_vel = 0.0,
             .density = 0.02,
         });
-        e.addCompCmd(cmds, Collider, .{
+        ship.addCompCmd(cb, Collider, .{
             .collision_damping = 0.4,
             .layer = .vehicle,
         });
-        e.addCompCmd(cmds, Animation.Playback, .{
+        ship.addCompCmd(cb, Animation.Playback, .{
             .index = self.kevin_animations.still,
         });
-        e.addCompCmd(cmds, PlayerIndex, player_index);
-        e.addCompCmd(cmds, TeamIndex, team_index);
-        // XXX: make child
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .turret = .{
-        //         .radius = 32,
-        //         .angle = math.pi * 0.1,
-        //         .cooldown = .{ .time = .{ .max_s = 0.2 } },
-        //         .projectile_speed = 500,
-        //         .projectile_lifetime = 1.0,
-        //         .projectile_damage = 18,
-        //         .projectile_radius = 18,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        //     .rb = .{
-        //         .radius = radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .transform = .{},
-        // },
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .turret = .{
-        //         .radius = radius,
-        //         .angle = math.pi * -0.1,
-        //         .cooldown = .{ .time = .{ .max_s = 0.2 } },
-        //         .projectile_speed = 500,
-        //         .projectile_lifetime = 1.0,
-        //         .projectile_damage = 18,
-        //         .projectile_radius = 18,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        //     .rb = .{
-        //         .radius = radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .transform = .{},
-        // },
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.kevin_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_forward,
-        //         .direction = .positive,
-        //         .activated = self.kevin_animations.accel,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        // },
+        ship.addCompCmd(cb, PlayerIndex, player_index);
+        ship.addCompCmd(cb, TeamIndex, team_index);
+
+        const turret = Entity.popReserved(cb);
+        turret.extCmd(cb, Node.SetParent, .{ship.toOptional()});
+        turret.addCompCmd(cb, Turret, .{
+            .radius = 32,
+            .angle = math.pi * 0.1,
+            .cooldown = .{ .time = .{ .max_s = 0.2 } },
+            .projectile_speed = 500,
+            .projectile_lifetime = 1.0,
+            .projectile_damage = 18,
+            .projectile_radius = 18,
+        });
+        turret.addCompCmd(cb, PlayerIndex, player_index);
+        turret.addCompCmd(cb, TeamIndex, team_index);
+        turret.addCompCmd(cb, RigidBody, .{
+            .radius = radius,
+            .density = std.math.inf(f32),
+        });
+        turret.addCompCmd(cb, Transform, .{});
+
+        const thruster = Entity.popReserved(cb);
+        thruster.extCmd(cb, Node.SetParent, .{ship.toOptional()});
+        thruster.addCompCmd(cb, Transform, .{});
+        thruster.addCompCmd(cb, RigidBody, .{
+            .radius = self.kevin_radius,
+            .density = std.math.inf(f32),
+        });
+        thruster.addCompCmd(cb, AnimateOnInput, .{
+            .action = .thrust_forward,
+            .direction = .positive,
+            .activated = self.kevin_animations.accel,
+            .deactivated = .none,
+        });
+        thruster.addCompCmd(cb, Animation.Playback, .{ .index = .none });
+        thruster.addCompCmd(cb, PlayerIndex, player_index);
+        thruster.addCompCmd(cb, TeamIndex, team_index);
     }
 
     fn createWendy(
         self: *const @This(),
-        cmds: *CmdBuf,
+        cb: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
         _: f32,
     ) void {
-        // XXX: ...
-        // const ship_handle = PrefabHandle.init(0);
-        const e = Entity.popReserved(cmds);
-        e.addCompCmd(cmds, Ship, .{
+        const ship = Entity.popReserved(cb);
+        ship.addCompCmd(cb, Ship, .{
             .class = .wendy,
             .turn_speed = math.pi * 1.0,
             .thrust = 200,
             .omnithrusters = true,
         });
-        e.addCompCmd(cmds, Health, .{
+        ship.addCompCmd(cb, Health, .{
             .hp = 400,
             .max_hp = 400,
         });
-        e.addCompCmd(cmds, Transform, .{
+        ship.addCompCmd(cb, Transform, .{
             .pos = pos,
         });
-        e.addCompCmd(cmds, RigidBody, .{
+        ship.addCompCmd(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .radius = self.wendy_radius,
             .rotation_vel = 0.0,
             .density = 0.02,
         });
-        e.addCompCmd(cmds, Collider, .{
+        ship.addCompCmd(cb, Collider, .{
             .collision_damping = 0.4,
             .layer = .vehicle,
         });
-        e.addCompCmd(cmds, Animation.Playback, .{
+        ship.addCompCmd(cb, Animation.Playback, .{
             .index = self.wendy_animations.still,
         });
-        e.addCompCmd(cmds, Turret, .{
+        ship.addCompCmd(cb, Turret, .{
             .radius = self.wendy_radius,
             .angle = 0,
             .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
@@ -1805,85 +1771,84 @@ const Game = struct {
             .projectile_density = std.math.inf(f32),
             .aim_opposite_movement = true,
         });
-        e.addCompCmd(cmds, PlayerIndex, player_index);
-        e.addCompCmd(cmds, TeamIndex, team_index);
-        // XXX: make children
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.wendy_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_y,
-        //         .direction = .positive,
-        //         .activated = self.wendy_animations.thrusters_left.?,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        // },
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.wendy_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_y,
-        //         .direction = .negative,
-        //         .activated = self.wendy_animations.thrusters_right.?,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        // },
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.wendy_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_x,
-        //         .direction = .negative,
-        //         .activated = self.wendy_animations.thrusters_top.?,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        // },
-        // .{
-        //     .parent = ship_handle.relative,
-        //     .transform = .{},
-        //     .rb = .{
-        //         .radius = self.wendy_radius,
-        //         .density = std.math.inf(f32),
-        //     },
-        //     .animate_on_input = .{
-        //         .action = .thrust_x,
-        //         .direction = .positive,
-        //         .activated = self.wendy_animations.thrusters_bottom.?,
-        //         .deactivated = .none,
-        //     },
-        //     .animation = .{
-        //         .index = .none,
-        //     },
-        //     .player_index = player_index,
-        //     .team_index = team_index,
-        // },
+        ship.addCompCmd(cb, PlayerIndex, player_index);
+        ship.addCompCmd(cb, TeamIndex, team_index);
+
+        {
+            const thruster = Entity.popReserved(cb);
+            thruster.extCmd(cb, Node.SetParent, .{ship.toOptional()});
+            thruster.addCompCmd(cb, Transform, .{});
+            thruster.addCompCmd(cb, RigidBody, .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            });
+            thruster.addCompCmd(cb, AnimateOnInput, .{
+                .action = .thrust_y,
+                .direction = .positive,
+                .activated = self.wendy_animations.thrusters_left.?,
+                .deactivated = .none,
+            });
+            thruster.addCompCmd(cb, Animation.Playback, .{ .index = .none });
+            thruster.addCompCmd(cb, PlayerIndex, player_index);
+            thruster.addCompCmd(cb, TeamIndex, team_index);
+        }
+
+        {
+            const thruster = Entity.popReserved(cb);
+            thruster.extCmd(cb, Node.SetParent, .{ship.toOptional()});
+            thruster.addCompCmd(cb, Transform, .{});
+            thruster.addCompCmd(cb, RigidBody, .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            });
+            thruster.addCompCmd(cb, AnimateOnInput, .{
+                .action = .thrust_y,
+                .direction = .negative,
+                .activated = self.wendy_animations.thrusters_right.?,
+                .deactivated = .none,
+            });
+            thruster.addCompCmd(cb, Animation.Playback, .{ .index = .none });
+            thruster.addCompCmd(cb, PlayerIndex, player_index);
+            thruster.addCompCmd(cb, TeamIndex, team_index);
+        }
+
+        {
+            const thruster = Entity.popReserved(cb);
+            thruster.extCmd(cb, Node.SetParent, .{ship.toOptional()});
+            thruster.addCompCmd(cb, Transform, .{});
+            thruster.addCompCmd(cb, RigidBody, .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            });
+            thruster.addCompCmd(cb, AnimateOnInput, .{
+                .action = .thrust_x,
+                .direction = .negative,
+                .activated = self.wendy_animations.thrusters_top.?,
+                .deactivated = .none,
+            });
+            thruster.addCompCmd(cb, Animation.Playback, .{ .index = .none });
+            thruster.addCompCmd(cb, PlayerIndex, player_index);
+            thruster.addCompCmd(cb, TeamIndex, team_index);
+        }
+
+        {
+            const thruster = Entity.popReserved(cb);
+            thruster.extCmd(cb, Node.SetParent, .{ship.toOptional()});
+            thruster.addCompCmd(cb, Transform, .{});
+            thruster.addCompCmd(cb, RigidBody, .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            });
+            thruster.addCompCmd(cb, AnimateOnInput, .{
+                .action = .thrust_x,
+                .direction = .positive,
+                .activated = self.wendy_animations.thrusters_bottom.?,
+                .deactivated = .none,
+            });
+            thruster.addCompCmd(cb, Animation.Playback, .{ .index = .none });
+            thruster.addCompCmd(cb, PlayerIndex, player_index);
+            thruster.addCompCmd(cb, TeamIndex, team_index);
+        }
     }
 
     fn init(allocator: Allocator, assets: *Assets) !Game {
@@ -2247,7 +2212,7 @@ const Game = struct {
 
     fn createShip(
         game: *Game,
-        cmds: *CmdBuf,
+        cb: *CmdBuf,
         player_index: PlayerIndex,
         team_index: TeamIndex,
         pos: V,
@@ -2257,11 +2222,11 @@ const Game = struct {
         const progression_index = team.ship_progression_index;
         team.ship_progression_index += 1;
         switch (team.ship_progression[progression_index]) {
-            .ranger => game.createRanger(cmds, player_index, team_index, pos, angle),
-            .militia => game.createMilitia(cmds, player_index, team_index, pos, angle),
-            .triangle => game.createTriangle(cmds, player_index, team_index, pos, angle),
-            .kevin => game.createKevin(cmds, player_index, team_index, pos, angle),
-            .wendy => game.createWendy(cmds, player_index, team_index, pos, angle),
+            .ranger => game.createRanger(cb, player_index, team_index, pos, angle),
+            .militia => game.createMilitia(cb, player_index, team_index, pos, angle),
+            .triangle => game.createTriangle(cb, player_index, team_index, pos, angle),
+            .kevin => game.createKevin(cb, player_index, team_index, pos, angle),
+            .wendy => game.createWendy(cb, player_index, team_index, pos, angle),
         }
     }
 
@@ -2295,9 +2260,9 @@ const Game = struct {
         royale_4p,
     };
 
-    fn setupScenario(game: *Game, es: *Entities, cmds: *CmdBuf, scenario: Scenario) void {
+    fn setupScenario(game: *Game, es: *Entities, cb: *CmdBuf, scenario: Scenario) void {
         const rng = game.rng.random();
-        cmds.clear(es); // XXX: if we didn't clear here es could be const
+        cb.clear(es); // XXX: if we didn't clear here es could be const
 
         var player_teams: []const u2 = undefined;
 
@@ -2394,7 +2359,7 @@ const Game = struct {
                 const angle = math.pi / 2.0 * @as(f32, @floatFromInt(i));
                 const pos = display_center.plus(V.unit(angle).scaled(50));
                 const player_index: PlayerIndex = @enumFromInt(i);
-                game.createShip(cmds, player_index, @enumFromInt(team_index), pos, angle);
+                game.createShip(cb, player_index, @enumFromInt(team_index), pos, angle);
             }
         }
 
@@ -2415,18 +2380,18 @@ const Game = struct {
                 .scaled(lerp(display_radius, display_radius * 1.1, rng.float(f32)))
                 .plus(display_center);
 
-            const e = Entity.popReserved(cmds);
-            e.addCompCmd(cmds, Sprite.Index, sprite);
-            e.addCompCmd(cmds, Transform, .{
+            const e = Entity.popReserved(cb);
+            e.addCompCmd(cb, Sprite.Index, sprite);
+            e.addCompCmd(cb, Transform, .{
                 .pos = pos,
             });
-            e.addCompCmd(cmds, RigidBody, .{
+            e.addCompCmd(cb, RigidBody, .{
                 .vel = V.unit(rng.float(f32) * math.pi * 2).scaled(speed),
                 .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
                 .radius = radius,
                 .density = 0.10,
             });
-            e.addCompCmd(cmds, Collider, .{
+            e.addCompCmd(cb, Collider, .{
                 .collision_damping = 1,
                 .layer = .hazard,
             });
@@ -2436,26 +2401,26 @@ const Game = struct {
         generateStars(&game.stars, rng);
     }
 
-    fn spawnTeamVictory(game: *Game, cmds: *CmdBuf, pos: V, team_index: TeamIndex) void {
+    fn spawnTeamVictory(game: *Game, cb: *CmdBuf, pos: V, team_index: TeamIndex) void {
         const rng = game.rng.random();
         for (0..500) |_| {
             const random_vel = V.unit(rng.float(f32) * math.pi * 2).scaled(300);
-            const e = Entity.popReserved(cmds);
-            e.addCompCmd(cmds, Lifetime, .{
+            const e = Entity.popReserved(cb);
+            e.addCompCmd(cb, Lifetime, .{
                 .seconds = 1000,
             });
-            e.addCompCmd(cmds, Transform, .{
+            e.addCompCmd(cb, Transform, .{
                 .pos = pos,
                 .angle = 2 * math.pi * rng.float(f32),
             });
-            e.addCompCmd(cmds, RigidBody, .{
+            e.addCompCmd(cb, RigidBody, .{
                 .vel = random_vel,
                 .rotation_vel = 2 * math.pi * rng.float(f32),
                 .radius = 16,
                 .density = 0.001,
             });
-            e.addCompCmd(cmds, Sprite.Index, game.particle);
-            e.addCompCmd(cmds, TeamIndex, team_index);
+            e.addCompCmd(cb, Sprite.Index, game.particle);
+            e.addCompCmd(cb, TeamIndex, team_index);
         }
     }
 
