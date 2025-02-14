@@ -784,28 +784,30 @@ fn update(
         var it = es.viewIterator(struct {
             entity: Entity,
             transform: *Transform,
+            node: ?*const Node,
+            const getParent = Node.View.Mixins(@This()).getParent;
         });
         while (it.next()) |vw| {
-            // XXX: full update every time, this is slow just doing it to get the basics working first
-            vw.transform.pos_world_cached = vw.transform.pos;
-            vw.transform.angle_world_cached = vw.transform.angle;
+            if (vw.getParent(es) == null) {
+                vw.transform.pos_world_cached = vw.transform.pos;
+                vw.transform.angle_world_cached = vw.transform.angle;
 
-            const View = struct {
-                entity: Entity,
-                node: *const Node,
-                transform: ?*Transform,
-
-                const getParent = Node.View.Mixins(@This()).getParent;
-            };
-            var curr = vw.entity.view(es, View);
-            if (curr) |unwrapped| curr = unwrapped.getParent(es);
-            while (curr) |unwrapped| {
-                if (unwrapped.transform) |transform| {
-                    vw.transform.pos_world_cached.add(transform.pos);
-                    vw.transform.angle_world_cached += transform.angle;
+                const View = struct {
+                    entity: Entity,
+                    node: *const Node,
+                    transform: *Transform,
+                    const getParent = Node.View.Mixins(@This()).getParent;
+                };
+                var children = Node.preOrderIterator(es, vw.entity);
+                while (children.next(es)) |child_entity| {
+                    if (child_entity.view(es, View)) |child| {
+                        if (child.getParent(es)) |parent| {
+                            child.transform.pos_world_cached = child.transform.pos;
+                            child.transform.pos_world_cached.add(parent.transform.pos_world_cached);
+                            child.transform.angle_world_cached = child.transform.angle + parent.transform.angle_world_cached;
+                        }
+                    }
                 }
-
-                curr = unwrapped.getParent(es);
             }
         }
     }
