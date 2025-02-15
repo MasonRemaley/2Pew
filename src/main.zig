@@ -794,9 +794,9 @@ fn update(
 
                     var children = node.preOrderIterator(es);
                     while (children.next(es)) |child| {
-                        if (Entity.from(es, child).get(es, Transform)) |child_transform| {
+                        if (child.get(es, Transform)) |child_transform| {
                             const parent = child.getParent(es).?;
-                            if (Entity.from(es, parent).get(es, Transform)) |parent_transform| {
+                            if (parent.get(es, Transform)) |parent_transform| {
                                 child_transform.pos_world_cached = child_transform.pos;
                                 child_transform.pos_world_cached.add(parent_transform.pos_world_cached);
                                 child_transform.angle_world_cached = child_transform.angle + parent_transform.angle_world_cached;
