@@ -124,7 +124,7 @@ pub fn main() !void {
     while (true) {
         if (poll(&es, &cb, &game)) return;
         update(&es, &cb, &game, delta_s);
-        Transform.update(&es);
+        Transform.syncAll(&es);
         render(assets, &es, game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
@@ -1235,10 +1235,85 @@ const GrappleGun = struct {
 };
 
 const Transform = struct {
+    pub const Mat2x3 = extern struct {
+        // zig fmt: off
+        xx: f32, xy: f32, xw: f32,
+        yx: f32, yy: f32, yw: f32,
+        // zig fmt: on
+
+        pub const identity: @This() = .{
+            // zig fmt: off
+            .xx = 1, .xy = 0, .xw = 0,
+            .yx = 0, .yy = 1, .yw = 0,
+            // zig fmt: on
+        };
+
+        pub fn rotation(angle: f32) @This() {
+            const sin = std.math.sin(angle);
+            const cos = std.math.cos(angle);
+            return .{
+                // zig fmt: off
+                .xx = cos, .xy = -sin, .xw = 0,
+                .yx = sin, .yy =  cos, .yw = 0,
+                // zig fmt: on
+            };
+        }
+
+        pub fn translation(delta: V) @This() {
+            return .{
+                // zig fmt: off
+                .xx = 1, .xy = 0, .xw = delta.x,
+                .yx = 0, .yy = 1, .yw = delta.y,
+                // zig fmt: on
+            };
+        }
+
+        pub fn rotationTranslation(angle: f32, delta: V) @This() {
+            const sin = std.math.sin(angle);
+            const cos = std.math.cos(angle);
+            return .{
+                // zig fmt: off
+                .xx = cos, .xy = -sin, .xw = delta.x,
+                .yx = sin, .yy =  cos, .yw = delta.y,
+                // zig fmt: on
+            };
+        }
+
+        pub fn times(lhs: @This(), rhs: @This()) @This() {
+            const xx = lhs.xx * rhs.xx + lhs.xy * rhs.yx;
+            const xy = lhs.xx * rhs.xy + lhs.xy * rhs.yy;
+            const xw = lhs.xx * rhs.xw + lhs.xy * rhs.yw + lhs.xw;
+
+            const yx = lhs.yx * rhs.xx + lhs.yy * rhs.yx;
+            const yy = lhs.yx * rhs.xy + lhs.yy * rhs.yy;
+            const yw = lhs.yx * rhs.xw + lhs.yy * rhs.yw + lhs.yw;
+
+            return .{
+                // zig fmt: off
+                .xx = xx, .xy = xy, .xw = xw,
+                .yx = yx, .yy = yy, .yw = yw,
+                // zig fmt: on
+            };
+        }
+
+        pub fn mul(self: *@This(), other: @This()) @This() {
+            self.* = self.times(other);
+        }
+
+        pub fn getTranslation(self: @This()) V {
+            return .{ .x = self.xw, .y = self.yw };
+        }
+
+        pub fn getRotation(self: @This()) f32 {
+            const cos = self.xx;
+            const sin = self.yx;
+            return std.math.atan2(sin, cos);
+        }
+    };
+
     cached_local_pos: V,
     cached_local_angle: f32,
-    cached_world_pos: V,
-    cached_world_angle: f32,
+    cached_world_from_local: Mat2x3,
     dirty: bool,
 
     pub const InitOptions = struct {
@@ -1250,8 +1325,7 @@ const Transform = struct {
         return .{
             .cached_local_pos = options.local_pos,
             .cached_local_angle = options.local_angle,
-            .cached_world_pos = undefined,
-            .cached_world_angle = undefined,
+            .cached_world_from_local = undefined,
             .dirty = true,
         };
     }
@@ -1272,7 +1346,7 @@ const Transform = struct {
 
     /// Returns the position in world coordinates the last time `Transform.update` was called.
     pub inline fn getPos(self: @This()) V {
-        return self.cached_world_pos;
+        return self.cached_world_from_local.getTranslation();
     }
 
     pub fn rotate(self: *@This(), es: *const Entities, cb: *CmdBuf, delta: f32) void {
@@ -1291,7 +1365,7 @@ const Transform = struct {
 
     /// Returns the angle in world coordinates the last time `Transform.update` was called.
     pub inline fn getAngle(self: @This()) f32 {
-        return self.cached_world_angle;
+        return self.cached_world_from_local.getRotation();
     }
 
     pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
@@ -1315,7 +1389,16 @@ const Transform = struct {
         entity: Entity,
     };
 
-    pub fn update(es: *Entities) void {
+    inline fn sync(self: *@This(), world_from_local: Mat2x3) void {
+        const local_from_model: Mat2x3 = .rotationTranslation(
+            self.cached_local_angle,
+            self.cached_local_pos,
+        );
+        self.cached_world_from_local = world_from_local.times(local_from_model);
+        self.dirty = false;
+    }
+
+    pub fn syncAll(es: *Entities) void {
         var it = es.viewIterator(struct { dirty: *const Dirty });
         var total: usize = 0;
         var updated: usize = 0;
@@ -1336,31 +1419,25 @@ const Transform = struct {
 
                     // Update the transform and all its children
                     if (node.parent.unwrap() == null) {
-                        vw.transform.cached_world_pos = vw.transform.cached_local_pos;
-                        vw.transform.cached_world_angle = vw.transform.cached_local_angle;
-                        vw.transform.dirty = false;
+                        vw.transform.sync(.identity);
                         updated += 1;
 
                         var children = node.preOrderIterator(es);
                         while (children.next(es)) |child| {
                             if (child.get(es, Transform)) |child_transform| {
-                                child_transform.cached_world_pos = child_transform.cached_local_pos;
-                                child_transform.cached_world_angle = child_transform.cached_local_angle;
                                 const parent = child.getParent(es).?;
                                 if (parent.get(es, Transform)) |parent_transform| {
-                                    child_transform.cached_world_pos = child_transform.cached_world_pos.plus(parent_transform.cached_world_pos);
-                                    child_transform.cached_world_angle = child_transform.cached_world_angle + parent_transform.cached_world_angle;
+                                    child_transform.sync(parent_transform.cached_world_from_local);
+                                } else {
+                                    child_transform.sync(.identity);
                                 }
-                                child_transform.dirty = false;
                                 updated += 1;
                             }
                         }
                     }
                 } else {
                     // Transforms with no parents are updated directly
-                    vw.transform.cached_world_pos = vw.transform.cached_local_pos;
-                    vw.transform.cached_world_angle = vw.transform.cached_local_angle;
-                    vw.transform.dirty = false;
+                    vw.transform.sync(.identity);
                     updated += 1;
                 }
             }
