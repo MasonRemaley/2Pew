@@ -9,6 +9,7 @@ const math = std.math;
 const assert = std.debug.assert;
 const V = @import("Vec2d.zig");
 const zcs = @import("zcs");
+const typeId = zcs.typeId;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const Component = zcs.Component;
@@ -99,7 +100,6 @@ pub fn main() !void {
     defer es.deinit(allocator);
 
     // XXX: remember to check usage
-    // XXX: use shorthands where reasonable once it works
     var cb = try CmdBuf.init(
         allocator,
         &es,
@@ -124,6 +124,7 @@ pub fn main() !void {
     while (true) {
         if (poll(&es, &cb, &game)) return;
         update(&es, &cb, &game, delta_s);
+        Transform.update(&es);
         render(assets, &es, game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
@@ -212,7 +213,7 @@ fn update(
         }
     }
 
-    // Prevent invulnerable es from firing
+    // Prevent invulnerable entities from firing
     {
         var it = es.viewIterator(struct {
             player_index: *const PlayerIndex,
@@ -243,10 +244,10 @@ fn update(
                 if (!Collider.interacts.get(vw.collider.layer, other.collider.layer)) continue;
 
                 const added_radii = vw.rb.radius + other.rb.radius;
-                if (vw.transform.pos.distanceSqrd(other.transform.pos) > added_radii * added_radii) continue;
+                if (vw.transform.getLocalPos().distanceSqrd(other.transform.getLocalPos()) > added_radii * added_radii) continue;
 
                 // calculate normal
-                const normal = other.transform.pos.minus(vw.transform.pos).normalized();
+                const normal = other.transform.getLocalPos().minus(vw.transform.getLocalPos()).normalized();
                 // calculate relative velocity
                 const rv = other.rb.vel.minus(vw.rb.vel);
                 // calculate relative velocity in terms of the normal direction
@@ -277,7 +278,7 @@ fn update(
                     if (other.health == null or other.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (vw.front_shield != null) {
-                            const dot = V.unit(vw.transform.angle).dot(normal);
+                            const dot = V.unit(vw.transform.getLocalAngle()).dot(normal);
                             shield_scale = @max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
@@ -290,7 +291,7 @@ fn update(
                     if (vw.health == null or vw.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (other.front_shield != null) {
-                            const dot = V.unit(other.transform.angle).dot(normal);
+                            const dot = V.unit(other.transform.getLocalAngle()).dot(normal);
                             shield_scale = @max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
@@ -303,7 +304,7 @@ fn update(
                 const shrapnel_amt: u32 = @intFromFloat(
                     @floor(remap_clamped(0, 100, 0, 30, total_damage)),
                 );
-                const shrapnel_center = vw.transform.pos.plus(other.transform.pos).scaled(0.5);
+                const shrapnel_center = vw.transform.getLocalPos().plus(other.transform.getLocalPos()).scaled(0.5);
                 const avg_vel = vw.rb.vel.plus(other.rb.vel).scaled(0.5);
                 for (0..shrapnel_amt) |_| {
                     const shrapnel_animation = game.shrapnel_animations[
@@ -320,10 +321,10 @@ fn update(
                     piece.add(cb, Lifetime, .{
                         .seconds = 1.5 + rng.float(f32) * 1.0,
                     });
-                    piece.add(cb, Transform, .{
-                        .pos = shrapnel_center.plus(random_offset),
-                        .angle = 2 * math.pi * rng.float(f32),
-                    });
+                    piece.add(cb, Transform, .init(.{
+                        .local_pos = shrapnel_center.plus(random_offset),
+                        .local_angle = 2 * math.pi * rng.float(f32),
+                    }));
                     piece.add(cb, RigidBody, .{
                         .vel = avg_vel.plus(random_vel),
                         .rotation_vel = 2 * math.pi * rng.float(f32),
@@ -349,7 +350,7 @@ fn update(
                             .start = vw.entity,
                             .end = other.entity,
                             .k = hook.k,
-                            .length = vw.transform.pos.distance(other.transform.pos),
+                            .length = vw.transform.getLocalPos().distance(other.transform.getLocalPos()),
                             .damping = hook.damping,
                         });
                         hooked = true;
@@ -360,7 +361,7 @@ fn update(
                             .start = vw.entity,
                             .end = other.entity,
                             .k = hook.k,
-                            .length = vw.transform.pos.distance(other.transform.pos),
+                            .length = vw.transform.getLocalPos().distance(other.transform.getLocalPos()),
                             .damping = hook.damping,
                         });
                         hooked = true;
@@ -382,12 +383,12 @@ fn update(
             health: ?*Health,
         });
         while (it.next()) |vw| {
-            vw.transform.pos.add(vw.rb.vel.scaled(delta_s));
+            vw.transform.move(es, cb, vw.rb.vel.scaled(delta_s));
 
             // gravity if the rb is outside the ring
-            if (vw.transform.pos.distanceSqrd(display_center) > display_radius * display_radius and vw.rb.density < std.math.inf(f32)) {
+            if (vw.transform.getLocalPos().distanceSqrd(display_center) > display_radius * display_radius and vw.rb.density < std.math.inf(f32)) {
                 const gravity = 500;
-                const gravity_v = display_center.minus(vw.transform.pos).normalized().scaled(gravity * delta_s);
+                const gravity_v = display_center.minus(vw.transform.getLocalPos()).normalized().scaled(gravity * delta_s);
                 vw.rb.vel.add(gravity_v);
                 if (vw.health) |health| {
                     // punishment for leaving the circle
@@ -395,10 +396,7 @@ fn update(
                 }
             }
 
-            vw.transform.angle = @mod(
-                vw.transform.angle + vw.rb.rotation_vel * delta_s,
-                2 * math.pi,
-            );
+            vw.transform.rotate(es, cb, vw.rb.rotation_vel * delta_s);
         }
     }
 
@@ -469,7 +467,7 @@ fn update(
                 transform: *const Transform,
             });
             while (health_it.next()) |health_vw| {
-                if (health_vw.transform.pos.distanceSqrd(damage_vw.transform.pos) <
+                if (health_vw.transform.getLocalPos().distanceSqrd(damage_vw.transform.getLocalPos()) <
                     health_vw.rb.radius * health_vw.rb.radius + damage_vw.rb.radius * damage_vw.rb.radius)
                 {
                     if (health_vw.health.damage(damage_vw.damage.hp) > 0.0) {
@@ -483,10 +481,10 @@ fn update(
                         e.add(cb, Lifetime, .{
                             .seconds = 1.5 + rng.float(f32) * 1.0,
                         });
-                        e.add(cb, Transform, .{
-                            .pos = health_vw.transform.pos,
-                            .angle = 2 * math.pi * rng.float(f32),
-                        });
+                        e.add(cb, Transform, .init(.{
+                            .local_pos = health_vw.transform.getLocalPos(),
+                            .local_angle = 2 * math.pi * rng.float(f32),
+                        }));
                         e.add(cb, RigidBody, .{
                             .vel = health_vw.rb.vel.plus(damage_vw.rb.vel.scaled(0.2)).plus(random_vector),
                             .rotation_vel = 2 * math.pi * rng.float(f32),
@@ -503,7 +501,7 @@ fn update(
                 }
             }
 
-            damage_vw.transform.angle = damage_vw.rb.vel.angle() + math.pi / 2.0;
+            damage_vw.transform.setLocalAngle(es, cb, damage_vw.rb.vel.angle() + math.pi / 2.0);
         }
     }
 
@@ -526,9 +524,9 @@ fn update(
                     e.add(cb, Lifetime, .{
                         .seconds = 100,
                     });
-                    e.add(cb, Transform, .{
-                        .pos = trans.pos,
-                    });
+                    e.add(cb, Transform, .init(.{
+                        .local_pos = trans.getLocalPos(),
+                    }));
                     e.add(cb, RigidBody, .{
                         .vel = if (vw.rb) |rb| rb.vel else V{ .x = 0, .y = 0 },
                         .rotation_vel = 0,
@@ -598,13 +596,14 @@ fn update(
                 });
             } else {
                 // convert to 1.0 or 0.0
-                vw.transform.angle = @mod(
-                    vw.transform.angle + input_state.getAxis(.turn) * vw.ship.turn_speed * delta_s,
-                    2 * math.pi,
+                vw.transform.rotate(
+                    es,
+                    cb,
+                    input_state.getAxis(.turn) * vw.ship.turn_speed * delta_s,
                 );
 
                 const thrust_input: f32 = @floatFromInt(@intFromBool(input_state.isAction(.thrust_forward, .positive, .active)));
-                const thrust = V.unit(vw.transform.angle);
+                const thrust = V.unit(vw.transform.getLocalAngle());
                 vw.rb.vel.add(thrust.scaled(thrust_input * vw.ship.thrust * delta_s));
             }
         }
@@ -681,15 +680,15 @@ fn update(
                     };
 
                     // TODO: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
-                    var dir = V.unit(vw.transform.angle + gg.angle);
+                    var dir = V.unit(vw.transform.getLocalAngle() + gg.angle);
                     const vel = rb.vel;
                     const segment_len = 50.0;
-                    var pos = vw.transform.pos.plus(dir.scaled(segment_len));
+                    var pos = vw.transform.getLocalPos().plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
                         const joint = Entity.reserve(cb);
-                        joint.add(cb, Transform, .{
-                            .pos = pos,
-                        });
+                        joint.add(cb, Transform, .init(.{
+                            .local_pos = pos,
+                        }));
                         joint.add(cb, RigidBody, .{
                             .vel = vel,
                             .radius = 2,
@@ -704,16 +703,15 @@ fn update(
                     // it explodes--even over damping shouldn't do that it should slow things down
                     // extra!
                     // TODO: ah yeah, damping prevents len from going to low for some reason??
-                    // XXX: also creating while iterating
                     const hook = Hook{
                         .damping = 0.0,
                         .k = 100.0,
                     };
                     const hook_entity = Entity.reserve(cb);
-                    hook_entity.add(cb, Transform, .{
-                        .pos = pos,
-                        .angle = 0,
-                    });
+                    hook_entity.add(cb, Transform, .init(.{
+                        .local_pos = pos,
+                        .local_angle = 0,
+                    }));
                     hook_entity.add(cb, RigidBody, .{
                         .vel = vel,
                         .rotation_vel = 0,
@@ -779,38 +777,6 @@ fn update(
         }
     }
 
-    // Update cached world positions and angles
-    {
-        var it = es.viewIterator(struct {
-            entity: Entity,
-            transform: *Transform,
-            node: ?*const Node,
-        });
-        while (it.next()) |vw| {
-            if (vw.node) |node| {
-                if (node.parent.unwrap() == null) {
-                    vw.transform.pos_world_cached = vw.transform.pos;
-                    vw.transform.angle_world_cached = vw.transform.angle;
-
-                    var children = node.preOrderIterator(es);
-                    while (children.next(es)) |child| {
-                        if (child.get(es, Transform)) |child_transform| {
-                            const parent = child.getParent(es).?;
-                            if (parent.get(es, Transform)) |parent_transform| {
-                                child_transform.pos_world_cached = child_transform.pos;
-                                child_transform.pos_world_cached.add(parent_transform.pos_world_cached);
-                                child_transform.angle_world_cached = child_transform.angle + parent_transform.angle_world_cached;
-                            }
-                        }
-                    }
-                }
-            } else {
-                vw.transform.pos_world_cached = vw.transform.pos;
-                vw.transform.angle_world_cached = vw.transform.angle;
-            }
-        }
-    }
-
     // Update turrets
     {
         var it = es.viewIterator(struct {
@@ -850,10 +816,10 @@ fn update(
                 e.add(cb, Damage, .{
                     .hp = vw.turret.projectile_damage,
                 });
-                e.add(cb, Transform, .{
-                    .pos = fire_pos,
-                    .angle = vel.angle() + math.pi / 2.0,
-                });
+                e.add(cb, Transform, .init(.{
+                    .local_pos = fire_pos,
+                    .local_angle = vel.angle() + math.pi / 2.0,
+                }));
                 e.add(cb, RigidBody, .{
                     .vel = vel,
                     .rotation_vel = 0,
@@ -874,8 +840,35 @@ fn update(
         }
     }
 
-    // Apply queued deletions
-    Node.Exec(null).allImmediate(es, &.{cb.*});
+    // Apply command buffer
+    exec(es, cb);
+}
+
+pub fn exec(es: *Entities, cb: *CmdBuf) void {
+    var batches = cb.iterator();
+    while (batches.next()) |batch| {
+        var node_exec: Node.Exec = .{};
+
+        var arch_change = batch.getArchChangeImmediate(es);
+        {
+            var iter = batch.iterator();
+            while (iter.next()) |cmd| {
+                node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
+            }
+        }
+
+        _ = batch.execImmediate(es, arch_change);
+
+        {
+            var iter = batch.iterator();
+            while (iter.next()) |cmd| {
+                node_exec.afterCmdImmediate(es, batch, arch_change, cmd) catch |err|
+                    @panic(@errorName(err));
+                Transform.afterCmdImmediate(es, batch, cmd);
+            }
+        }
+    }
+
     cb.clear(es);
 }
 
@@ -989,7 +982,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
         while (it.next()) |vw| {
             if (vw.health.hp < vw.health.max_hp) {
                 const health_bar_size: V = .{ .x = 32, .y = 4 };
-                var start = vw.transform.pos.minus(health_bar_size.scaled(0.5)).floored();
+                var start = vw.transform.getLocalPos().minus(health_bar_size.scaled(0.5)).floored();
                 start.y -= vw.rb.radius + health_bar_size.y;
                 sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
                 sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
@@ -1027,13 +1020,13 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = vw.rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            const dest_rect = sdlRect(vw.transform.pos.minus(sprite_size.scaled(0.5)), sprite_size);
+            const dest_rect = sdlRect(vw.transform.getLocalPos().minus(sprite_size.scaled(0.5)), sprite_size);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.getTint(if (vw.team_index) |ti| ti.* else null),
                 null, // source rectangle
                 &dest_rect,
-                toDegrees(vw.transform.angle),
+                toDegrees(vw.transform.getLocalAngle()),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -1047,8 +1040,8 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
     {
         var it = es.viewIterator(struct { spring: *const Spring });
         while (it.next()) |vw| {
-            const start = (vw.spring.start.get(es, Transform) orelse continue).pos;
-            const end = (vw.spring.end.get(es, Transform) orelse continue).pos;
+            const start = (vw.spring.start.get(es, Transform) orelse continue).getLocalPos();
+            const end = (vw.spring.end.get(es, Transform) orelse continue).getLocalPos();
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,
@@ -1242,15 +1235,155 @@ const GrappleGun = struct {
     } = null,
 };
 
-// XXX: maybe move into zcs if involved enough!
 const Transform = struct {
-    // parent: ?EntityHandle = null,
     /// pixels, relative to parent
-    pos: V = V.zero,
+    cached_local_pos: V,
     /// radians
-    angle: f32 = 0.0,
-    pos_world_cached: V = undefined,
-    angle_world_cached: f32 = undefined,
+    cached_local_angle: f32,
+    pos_world_cached: V,
+    angle_world_cached: f32,
+    dirty: bool,
+
+    pub const InitOptions = struct {
+        local_pos: V = .zero,
+        local_angle: f32 = 0.0,
+    };
+
+    pub fn init(options: InitOptions) @This() {
+        return .{
+            .cached_local_pos = options.local_pos,
+            .cached_local_angle = options.local_angle,
+            .pos_world_cached = undefined,
+            .angle_world_cached = undefined,
+            .dirty = true,
+        };
+    }
+
+    pub fn move(self: *@This(), es: *const Entities, cb: *CmdBuf, delta: V) void {
+        self.cached_local_pos.add(delta);
+        self.markDirty(es, cb);
+    }
+
+    pub fn setLocalPos(self: *@This(), es: *const Entities, cb: *CmdBuf, pos: V) void {
+        self.cached_local_pos = pos;
+        self.markDirty(es, cb);
+    }
+
+    pub inline fn getLocalPos(self: @This()) V {
+        return self.cached_local_pos;
+    }
+
+    pub fn rotate(self: *@This(), es: *const Entities, cb: *CmdBuf, delta: f32) void {
+        self.cached_local_angle = @mod(self.cached_local_angle + delta, 2 * math.pi);
+        self.markDirty(es, cb);
+    }
+
+    pub fn setLocalAngle(self: *@This(), es: *const Entities, cb: *CmdBuf, angle: f32) void {
+        self.cached_local_angle = @mod(angle, 2 * math.pi);
+        self.markDirty(es, cb);
+    }
+
+    pub inline fn getLocalAngle(self: @This()) f32 {
+        return self.cached_local_angle;
+    }
+
+    pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
+        if (!self.dirty) {
+            self.dirty = true;
+            const e: Entity = .reserve(cb);
+            e.add(cb, Dirty, .{ .entity = .from(es, self) });
+        }
+    }
+
+    pub fn markDirtyImmediate(self: *@This(), es: *Entities) void {
+        if (!self.dirty) {
+            self.dirty = true;
+            const e: Entity = .reserveImmediate(es);
+            const dirty: Dirty = .{ .entity = .from(es, self) };
+            assert(e.changeArchImmediate(es, .{ .add = &.{.init(Dirty, &dirty)} }));
+        }
+    }
+
+    pub const Dirty = struct {
+        entity: Entity,
+    };
+
+    pub fn update(es: *Entities) void {
+        var it = es.viewIterator(struct { dirty: *const Dirty });
+        var total: usize = 0;
+        var updated: usize = 0;
+        while (it.next()) |event| {
+            if (event.dirty.entity.view(es, struct {
+                transform: *Transform,
+                node: ?*const Node,
+            })) |vw| {
+                total += 1;
+                if (vw.node) |node| {
+                    // If this node has a parent, and its parent is dirty, skip it--we'll update it
+                    // as part of the parent update
+                    if (node.parent.unwrap()) |parent| {
+                        if (parent.get(es, Transform)) |parent_transform| {
+                            if (parent_transform.dirty) continue;
+                        }
+                    }
+
+                    // Update the transform and all its children
+                    if (node.parent.unwrap() == null) {
+                        vw.transform.pos_world_cached = vw.transform.cached_local_pos;
+                        vw.transform.angle_world_cached = vw.transform.cached_local_angle;
+                        vw.transform.dirty = false;
+                        updated += 1;
+
+                        var children = node.preOrderIterator(es);
+                        while (children.next(es)) |child| {
+                            if (child.get(es, Transform)) |child_transform| {
+                                child_transform.pos_world_cached = child_transform.cached_local_pos;
+                                child_transform.angle_world_cached = child_transform.cached_local_angle;
+                                const parent = child.getParent(es).?;
+                                if (parent.get(es, Transform)) |parent_transform| {
+                                    child_transform.pos_world_cached = child_transform.pos_world_cached.plus(parent_transform.pos_world_cached);
+                                    child_transform.angle_world_cached = child_transform.angle_world_cached + parent_transform.angle_world_cached;
+                                }
+                                child_transform.dirty = false;
+                                updated += 1;
+                            }
+                        }
+                    }
+                } else {
+                    // Transforms with no parents are updated directly
+                    vw.transform.pos_world_cached = vw.transform.cached_local_pos;
+                    vw.transform.angle_world_cached = vw.transform.cached_local_angle;
+                    vw.transform.dirty = false;
+                    updated += 1;
+                }
+            }
+        }
+        assert(total == updated);
+
+        es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Dirty))));
+    }
+
+    pub fn afterCmdImmediate(es: *Entities, batch: CmdBuf.Batch, cmd: CmdBuf.Batch.Item) void {
+        switch (cmd) {
+            .ext => |ext| if (ext.id == typeId(Node.SetParent)) {
+                if (batch.entity.get(es, Transform)) |transform| {
+                    transform.markDirtyImmediate(es);
+                }
+            },
+            .add => |comp| if (comp.id == typeId(Transform)) {
+                if (batch.entity.get(es, Transform)) |transform| {
+                    transform.dirty = false;
+                    transform.markDirtyImmediate(es);
+                }
+            },
+            .remove => |id| if (id == typeId(Node)) {
+                if (batch.entity.get(es, Transform)) |transform| {
+                    transform.markDirtyImmediate(es);
+                }
+            },
+            else => {},
+        }
+    }
 };
 
 const AnimateOnInput = struct {
@@ -1468,10 +1601,10 @@ const Game = struct {
             .hp = 80,
             .max_hp = 80,
         });
-        ship.add(cb, Transform, .{
-            .pos = pos,
-            .angle = angle,
-        });
+        ship.add(cb, Transform, .init(.{
+            .local_pos = pos,
+            .local_angle = angle,
+        }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .radius = self.ranger_radius,
@@ -1498,7 +1631,7 @@ const Game = struct {
         ship.add(cb, TeamIndex, team_index);
 
         const thruster = Entity.reserve(cb);
-        thruster.add(cb, Transform, .{});
+        thruster.add(cb, Transform, .init(.{}));
         thruster.add(cb, RigidBody, .{
             .radius = self.ranger_radius,
             .density = std.math.inf(f32),
@@ -1535,10 +1668,10 @@ const Game = struct {
             .max_hp = 100,
             .regen_ratio = 0.5,
         });
-        ship.add(cb, Transform, .{
-            .pos = pos,
-            .angle = angle,
-        });
+        ship.add(cb, Transform, .init(.{
+            .local_pos = pos,
+            .local_angle = angle,
+        }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .radius = 26,
@@ -1565,7 +1698,7 @@ const Game = struct {
         ship.add(cb, TeamIndex, team_index);
 
         const thruster = Entity.reserve(cb);
-        thruster.add(cb, Transform, .{});
+        thruster.add(cb, Transform, .init(.{}));
         thruster.add(cb, RigidBody, .{
             .radius = self.militia_radius,
             .density = std.math.inf(f32),
@@ -1601,10 +1734,10 @@ const Game = struct {
             .hp = 80,
             .max_hp = 80,
         });
-        ship.add(cb, Transform, .{
-            .pos = pos,
-            .angle = angle,
-        });
+        ship.add(cb, Transform, .init(.{
+            .local_pos = pos,
+            .local_angle = angle,
+        }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .rotation_vel = 0.0,
@@ -1632,7 +1765,7 @@ const Game = struct {
         ship.add(cb, FrontShield, .{});
 
         const thruster = Entity.reserve(cb);
-        thruster.add(cb, Transform, .{});
+        thruster.add(cb, Transform, .init(.{}));
         thruster.add(cb, RigidBody, .{
             .radius = self.militia_radius,
             .density = std.math.inf(f32),
@@ -1669,10 +1802,10 @@ const Game = struct {
             .hp = 300,
             .max_hp = 300,
         });
-        ship.add(cb, Transform, .{
-            .pos = pos,
-            .angle = angle,
-        });
+        ship.add(cb, Transform, .init(.{
+            .local_pos = pos,
+            .local_angle = angle,
+        }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .radius = radius,
@@ -1706,11 +1839,11 @@ const Game = struct {
             .radius = radius,
             .density = std.math.inf(f32),
         });
-        turret.add(cb, Transform, .{});
+        turret.add(cb, Transform, .init(.{}));
 
         const thruster = Entity.reserve(cb);
         thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
-        thruster.add(cb, Transform, .{});
+        thruster.add(cb, Transform, .init(.{}));
         thruster.add(cb, RigidBody, .{
             .radius = self.kevin_radius,
             .density = std.math.inf(f32),
@@ -1745,9 +1878,9 @@ const Game = struct {
             .hp = 400,
             .max_hp = 400,
         });
-        ship.add(cb, Transform, .{
-            .pos = pos,
-        });
+        ship.add(cb, Transform, .init(.{
+            .local_pos = pos,
+        }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
             .radius = self.wendy_radius,
@@ -1778,7 +1911,7 @@ const Game = struct {
         {
             const thruster = Entity.reserve(cb);
             thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
-            thruster.add(cb, Transform, .{});
+            thruster.add(cb, Transform, .init(.{}));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
@@ -1797,7 +1930,7 @@ const Game = struct {
         {
             const thruster = Entity.reserve(cb);
             thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
-            thruster.add(cb, Transform, .{});
+            thruster.add(cb, Transform, .init(.{}));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
@@ -1816,7 +1949,7 @@ const Game = struct {
         {
             const thruster = Entity.reserve(cb);
             thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
-            thruster.add(cb, Transform, .{});
+            thruster.add(cb, Transform, .init(.{}));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
@@ -1835,7 +1968,7 @@ const Game = struct {
         {
             const thruster = Entity.reserve(cb);
             thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
-            thruster.add(cb, Transform, .{});
+            thruster.add(cb, Transform, .init(.{}));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
@@ -2383,9 +2516,9 @@ const Game = struct {
 
             const e = Entity.reserve(cb);
             e.add(cb, Sprite.Index, sprite);
-            e.add(cb, Transform, .{
-                .pos = pos,
-            });
+            e.add(cb, Transform, .init(.{
+                .local_pos = pos,
+            }));
             e.add(cb, RigidBody, .{
                 .vel = V.unit(rng.float(f32) * math.pi * 2).scaled(speed),
                 .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
@@ -2410,10 +2543,10 @@ const Game = struct {
             e.add(cb, Lifetime, .{
                 .seconds = 1000,
             });
-            e.add(cb, Transform, .{
-                .pos = pos,
-                .angle = 2 * math.pi * rng.float(f32),
-            });
+            e.add(cb, Transform, .init(.{
+                .local_pos = pos,
+                .local_angle = 2 * math.pi * rng.float(f32),
+            }));
             e.add(cb, RigidBody, .{
                 .vel = random_vel,
                 .rotation_vel = 2 * math.pi * rng.float(f32),
