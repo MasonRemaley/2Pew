@@ -244,10 +244,10 @@ fn update(
                 if (!Collider.interacts.get(vw.collider.layer, other.collider.layer)) continue;
 
                 const added_radii = vw.rb.radius + other.rb.radius;
-                if (vw.transform.getLocalPos().distanceSqrd(other.transform.getLocalPos()) > added_radii * added_radii) continue;
+                if (vw.transform.getPos().distanceSqrd(other.transform.getPos()) > added_radii * added_radii) continue;
 
                 // calculate normal
-                const normal = other.transform.getLocalPos().minus(vw.transform.getLocalPos()).normalized();
+                const normal = other.transform.getPos().minus(vw.transform.getPos()).normalized();
                 // calculate relative velocity
                 const rv = other.rb.vel.minus(vw.rb.vel);
                 // calculate relative velocity in terms of the normal direction
@@ -278,7 +278,7 @@ fn update(
                     if (other.health == null or other.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (vw.front_shield != null) {
-                            const dot = V.unit(vw.transform.getLocalAngle()).dot(normal);
+                            const dot = V.unit(vw.transform.getAngle()).dot(normal);
                             shield_scale = @max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.length());
@@ -291,7 +291,7 @@ fn update(
                     if (vw.health == null or vw.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (other.front_shield != null) {
-                            const dot = V.unit(other.transform.getLocalAngle()).dot(normal);
+                            const dot = V.unit(other.transform.getAngle()).dot(normal);
                             shield_scale = @max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.length());
@@ -304,7 +304,7 @@ fn update(
                 const shrapnel_amt: u32 = @intFromFloat(
                     @floor(remap_clamped(0, 100, 0, 30, total_damage)),
                 );
-                const shrapnel_center = vw.transform.getLocalPos().plus(other.transform.getLocalPos()).scaled(0.5);
+                const shrapnel_center = vw.transform.getPos().plus(other.transform.getPos()).scaled(0.5);
                 const avg_vel = vw.rb.vel.plus(other.rb.vel).scaled(0.5);
                 for (0..shrapnel_amt) |_| {
                     const shrapnel_animation = game.shrapnel_animations[
@@ -350,7 +350,7 @@ fn update(
                             .start = vw.entity,
                             .end = other.entity,
                             .k = hook.k,
-                            .length = vw.transform.getLocalPos().distance(other.transform.getLocalPos()),
+                            .length = vw.transform.getPos().distance(other.transform.getPos()),
                             .damping = hook.damping,
                         });
                         hooked = true;
@@ -361,7 +361,7 @@ fn update(
                             .start = vw.entity,
                             .end = other.entity,
                             .k = hook.k,
-                            .length = vw.transform.getLocalPos().distance(other.transform.getLocalPos()),
+                            .length = vw.transform.getPos().distance(other.transform.getPos()),
                             .damping = hook.damping,
                         });
                         hooked = true;
@@ -383,12 +383,10 @@ fn update(
             health: ?*Health,
         });
         while (it.next()) |vw| {
-            vw.transform.move(es, cb, vw.rb.vel.scaled(delta_s));
-
             // gravity if the rb is outside the ring
-            if (vw.transform.getLocalPos().distanceSqrd(display_center) > display_radius * display_radius and vw.rb.density < std.math.inf(f32)) {
+            if (vw.transform.getPos().distanceSqrd(display_center) > display_radius * display_radius and vw.rb.density < std.math.inf(f32)) {
                 const gravity = 500;
-                const gravity_v = display_center.minus(vw.transform.getLocalPos()).normalized().scaled(gravity * delta_s);
+                const gravity_v = display_center.minus(vw.transform.getPos()).normalized().scaled(gravity * delta_s);
                 vw.rb.vel.add(gravity_v);
                 if (vw.health) |health| {
                     // punishment for leaving the circle
@@ -396,6 +394,7 @@ fn update(
                 }
             }
 
+            vw.transform.move(es, cb, vw.rb.vel.scaled(delta_s));
             vw.transform.rotate(es, cb, vw.rb.rotation_vel * delta_s);
         }
     }
@@ -467,7 +466,7 @@ fn update(
                 transform: *const Transform,
             });
             while (health_it.next()) |health_vw| {
-                if (health_vw.transform.getLocalPos().distanceSqrd(damage_vw.transform.getLocalPos()) <
+                if (health_vw.transform.getPos().distanceSqrd(damage_vw.transform.getPos()) <
                     health_vw.rb.radius * health_vw.rb.radius + damage_vw.rb.radius * damage_vw.rb.radius)
                 {
                     if (health_vw.health.damage(damage_vw.damage.hp) > 0.0) {
@@ -482,7 +481,7 @@ fn update(
                             .seconds = 1.5 + rng.float(f32) * 1.0,
                         });
                         e.add(cb, Transform, .init(.{
-                            .local_pos = health_vw.transform.getLocalPos(),
+                            .local_pos = health_vw.transform.getPos(),
                             .local_angle = 2 * math.pi * rng.float(f32),
                         }));
                         e.add(cb, RigidBody, .{
@@ -525,7 +524,7 @@ fn update(
                         .seconds = 100,
                     });
                     e.add(cb, Transform, .init(.{
-                        .local_pos = trans.getLocalPos(),
+                        .local_pos = trans.getPos(),
                     }));
                     e.add(cb, RigidBody, .{
                         .vel = if (vw.rb) |rb| rb.vel else V{ .x = 0, .y = 0 },
@@ -603,7 +602,7 @@ fn update(
                 );
 
                 const thrust_input: f32 = @floatFromInt(@intFromBool(input_state.isAction(.thrust_forward, .positive, .active)));
-                const thrust = V.unit(vw.transform.getLocalAngle());
+                const thrust = V.unit(vw.transform.getAngle());
                 vw.rb.vel.add(thrust.scaled(thrust_input * vw.ship.thrust * delta_s));
             }
         }
@@ -680,10 +679,10 @@ fn update(
                     };
 
                     // TODO: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
-                    var dir = V.unit(vw.transform.getLocalAngle() + gg.angle);
+                    var dir = V.unit(vw.transform.getAngle() + gg.angle);
                     const vel = rb.vel;
                     const segment_len = 50.0;
-                    var pos = vw.transform.getLocalPos().plus(dir.scaled(segment_len));
+                    var pos = vw.transform.getPos().plus(dir.scaled(segment_len));
                     for (0..gg.live.?.joints.len) |i| {
                         const joint = Entity.reserve(cb);
                         joint.add(cb, Transform, .init(.{
@@ -786,7 +785,7 @@ fn update(
             transform: *const Transform,
         });
         while (it.next()) |vw| {
-            var angle = vw.transform.angle_world_cached;
+            var angle = vw.transform.getAngle();
             var vel = V.unit(angle).scaled(vw.turret.projectile_speed).plus(vw.rb.vel);
             var sprite = game.bullet_small;
             if (vw.turret.aim_opposite_movement) {
@@ -794,7 +793,7 @@ fn update(
                 vel = V.zero;
                 sprite = game.bullet_shiny;
             }
-            const fire_pos = vw.transform.pos_world_cached.plus(V.unit(angle + vw.turret.angle).scaled(vw.turret.radius + vw.turret.projectile_radius));
+            const fire_pos = vw.transform.getPos().plus(V.unit(angle + vw.turret.angle).scaled(vw.turret.radius + vw.turret.projectile_radius));
             const ready = switch (vw.turret.cooldown) {
                 .time => |*time| r: {
                     time.current_s -= delta_s;
@@ -957,14 +956,14 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
                 const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
                 const size_coefficient = vw.rb.radius / sprite_radius;
                 const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-                var dest_rect = sdlRect(vw.transform.pos_world_cached.minus(sprite_size.scaled(0.5)), sprite_size);
+                var dest_rect = sdlRect(vw.transform.getPos().minus(sprite_size.scaled(0.5)), sprite_size);
 
                 sdlAssertZero(c.SDL_RenderCopyEx(
                     renderer,
                     frame.sprite.getTint(if (vw.team_index) |ti| ti.* else null),
                     null, // source rectangle
                     &dest_rect,
-                    toDegrees(vw.transform.angle_world_cached + frame.angle),
+                    toDegrees(vw.transform.getAngle() + frame.angle),
                     null, // center of angle
                     c.SDL_FLIP_NONE,
                 ));
@@ -982,7 +981,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
         while (it.next()) |vw| {
             if (vw.health.hp < vw.health.max_hp) {
                 const health_bar_size: V = .{ .x = 32, .y = 4 };
-                var start = vw.transform.getLocalPos().minus(health_bar_size.scaled(0.5)).floored();
+                var start = vw.transform.getPos().minus(health_bar_size.scaled(0.5)).floored();
                 start.y -= vw.rb.radius + health_bar_size.y;
                 sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
                 sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
@@ -1020,13 +1019,13 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = vw.rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            const dest_rect = sdlRect(vw.transform.getLocalPos().minus(sprite_size.scaled(0.5)), sprite_size);
+            const dest_rect = sdlRect(vw.transform.getPos().minus(sprite_size.scaled(0.5)), sprite_size);
             sdlAssertZero(c.SDL_RenderCopyEx(
                 renderer,
                 sprite.getTint(if (vw.team_index) |ti| ti.* else null),
                 null, // source rectangle
                 &dest_rect,
-                toDegrees(vw.transform.getLocalAngle()),
+                toDegrees(vw.transform.getAngle()),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -1040,8 +1039,8 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
     {
         var it = es.viewIterator(struct { spring: *const Spring });
         while (it.next()) |vw| {
-            const start = (vw.spring.start.get(es, Transform) orelse continue).getLocalPos();
-            const end = (vw.spring.end.get(es, Transform) orelse continue).getLocalPos();
+            const start = (vw.spring.start.get(es, Transform) orelse continue).getPos();
+            const end = (vw.spring.end.get(es, Transform) orelse continue).getPos();
             sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
             sdlAssertZero(c.SDL_RenderDrawLine(
                 renderer,
@@ -1236,12 +1235,10 @@ const GrappleGun = struct {
 };
 
 const Transform = struct {
-    /// pixels, relative to parent
     cached_local_pos: V,
-    /// radians
     cached_local_angle: f32,
-    pos_world_cached: V,
-    angle_world_cached: f32,
+    cached_world_pos: V,
+    cached_world_angle: f32,
     dirty: bool,
 
     pub const InitOptions = struct {
@@ -1253,8 +1250,8 @@ const Transform = struct {
         return .{
             .cached_local_pos = options.local_pos,
             .cached_local_angle = options.local_angle,
-            .pos_world_cached = undefined,
-            .angle_world_cached = undefined,
+            .cached_world_pos = undefined,
+            .cached_world_angle = undefined,
             .dirty = true,
         };
     }
@@ -1273,6 +1270,11 @@ const Transform = struct {
         return self.cached_local_pos;
     }
 
+    /// Returns the position in world coordinates the last time `Transform.update` was called.
+    pub inline fn getPos(self: @This()) V {
+        return self.cached_world_pos;
+    }
+
     pub fn rotate(self: *@This(), es: *const Entities, cb: *CmdBuf, delta: f32) void {
         self.cached_local_angle = @mod(self.cached_local_angle + delta, 2 * math.pi);
         self.markDirty(es, cb);
@@ -1285,6 +1287,11 @@ const Transform = struct {
 
     pub inline fn getLocalAngle(self: @This()) f32 {
         return self.cached_local_angle;
+    }
+
+    /// Returns the angle in world coordinates the last time `Transform.update` was called.
+    pub inline fn getAngle(self: @This()) f32 {
+        return self.cached_world_angle;
     }
 
     pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
@@ -1329,20 +1336,20 @@ const Transform = struct {
 
                     // Update the transform and all its children
                     if (node.parent.unwrap() == null) {
-                        vw.transform.pos_world_cached = vw.transform.cached_local_pos;
-                        vw.transform.angle_world_cached = vw.transform.cached_local_angle;
+                        vw.transform.cached_world_pos = vw.transform.cached_local_pos;
+                        vw.transform.cached_world_angle = vw.transform.cached_local_angle;
                         vw.transform.dirty = false;
                         updated += 1;
 
                         var children = node.preOrderIterator(es);
                         while (children.next(es)) |child| {
                             if (child.get(es, Transform)) |child_transform| {
-                                child_transform.pos_world_cached = child_transform.cached_local_pos;
-                                child_transform.angle_world_cached = child_transform.cached_local_angle;
+                                child_transform.cached_world_pos = child_transform.cached_local_pos;
+                                child_transform.cached_world_angle = child_transform.cached_local_angle;
                                 const parent = child.getParent(es).?;
                                 if (parent.get(es, Transform)) |parent_transform| {
-                                    child_transform.pos_world_cached = child_transform.pos_world_cached.plus(parent_transform.pos_world_cached);
-                                    child_transform.angle_world_cached = child_transform.angle_world_cached + parent_transform.angle_world_cached;
+                                    child_transform.cached_world_pos = child_transform.cached_world_pos.plus(parent_transform.cached_world_pos);
+                                    child_transform.cached_world_angle = child_transform.cached_world_angle + parent_transform.cached_world_angle;
                                 }
                                 child_transform.dirty = false;
                                 updated += 1;
@@ -1351,8 +1358,8 @@ const Transform = struct {
                     }
                 } else {
                     // Transforms with no parents are updated directly
-                    vw.transform.pos_world_cached = vw.transform.cached_local_pos;
-                    vw.transform.angle_world_cached = vw.transform.cached_local_angle;
+                    vw.transform.cached_world_pos = vw.transform.cached_local_pos;
+                    vw.transform.cached_world_angle = vw.transform.cached_local_angle;
                     vw.transform.dirty = false;
                     updated += 1;
                 }
