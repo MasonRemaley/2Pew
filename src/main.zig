@@ -15,7 +15,7 @@ const Component = zcs.Component;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const Vec2 = zcs.ext.math.Vec2;
-const Mat2x3 = zcs.ext.math.Mat2x3;
+const Transform = zcs.ext.Transform2;
 const FieldEnum = std.meta.FieldEnum;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
 
@@ -125,7 +125,7 @@ pub fn main() !void {
     while (true) {
         if (poll(&es, &cb, &game)) return;
         update(&es, &cb, &game, delta_s);
-        Transform.syncAll(&es);
+        Transform.syncAllImmediate(&es);
         render(assets, &es, game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
@@ -324,7 +324,7 @@ fn update(
                     });
                     piece.add(cb, Transform, .init(.{
                         .local_pos = shrapnel_center.plus(random_offset),
-                        .local_angle = 2 * math.pi * rng.float(f32),
+                        .local_orientation = 2 * math.pi * rng.float(f32),
                     }));
                     piece.add(cb, RigidBody, .{
                         .vel = avg_vel.plus(random_vel),
@@ -451,9 +451,8 @@ fn update(
     //     }
     // }
 
-    // Update es that do damage
+    // Update entities that do damage
     {
-        // TODO(mason): hard to keep the components straight, make shorter handles names and get rid of comps
         var damage_it = es.viewIterator(struct {
             damage: *const Damage,
             rb: *const RigidBody,
@@ -483,7 +482,7 @@ fn update(
                         });
                         e.add(cb, Transform, .init(.{
                             .local_pos = health_vw.transform.getPos(),
-                            .local_angle = 2 * math.pi * rng.float(f32),
+                            .local_orientation = 2 * math.pi * rng.float(f32),
                         }));
                         e.add(cb, RigidBody, .{
                             .vel = health_vw.rb.vel.plus(damage_vw.rb.vel.scaled(0.2)).plus(random_vector),
@@ -501,7 +500,11 @@ fn update(
                 }
             }
 
-            damage_vw.transform.setLocalAngle(es, cb, damage_vw.rb.vel.angle() + math.pi / 2.0);
+            damage_vw.transform.setLocalOrientation(
+                es,
+                cb,
+                damage_vw.rb.vel.angle() + math.pi / 2.0,
+            );
         }
     }
 
@@ -710,7 +713,7 @@ fn update(
                     const hook_entity = Entity.reserve(cb);
                     hook_entity.add(cb, Transform, .init(.{
                         .local_pos = pos,
-                        .local_angle = 0,
+                        .local_orientation = 0,
                     }));
                     hook_entity.add(cb, RigidBody, .{
                         .vel = vel,
@@ -818,7 +821,7 @@ fn update(
                 });
                 e.add(cb, Transform, .init(.{
                     .local_pos = fire_pos,
-                    .local_angle = vel.angle() + math.pi / 2.0,
+                    .local_orientation = vel.angle() + math.pi / 2.0,
                 }));
                 e.add(cb, RigidBody, .{
                     .vel = vel,
@@ -1235,166 +1238,6 @@ const GrappleGun = struct {
     } = null,
 };
 
-const Transform = struct {
-    cached_local_pos: Vec2,
-    cached_local_angle: f32,
-    cached_world_from_local: Mat2x3,
-    dirty: bool,
-
-    pub const InitOptions = struct {
-        local_pos: Vec2 = .zero,
-        local_angle: f32 = 0.0,
-    };
-
-    pub fn init(options: InitOptions) @This() {
-        return .{
-            .cached_local_pos = options.local_pos,
-            .cached_local_angle = options.local_angle,
-            .cached_world_from_local = undefined,
-            .dirty = true,
-        };
-    }
-
-    pub fn move(self: *@This(), es: *const Entities, cb: *CmdBuf, delta: Vec2) void {
-        self.cached_local_pos.add(delta);
-        self.markDirty(es, cb);
-    }
-
-    pub fn setLocalPos(self: *@This(), es: *const Entities, cb: *CmdBuf, pos: Vec2) void {
-        self.cached_local_pos = pos;
-        self.markDirty(es, cb);
-    }
-
-    pub inline fn getLocalPos(self: @This()) Vec2 {
-        return self.cached_local_pos;
-    }
-
-    /// Returns the position in world coordinates the last time `Transform.syncAll` was called.
-    pub inline fn getPos(self: @This()) Vec2 {
-        return self.cached_world_from_local.getTranslation();
-    }
-
-    pub fn rotate(self: *@This(), es: *const Entities, cb: *CmdBuf, delta: f32) void {
-        self.cached_local_angle = @mod(self.cached_local_angle + delta, 2 * math.pi);
-        self.markDirty(es, cb);
-    }
-
-    pub fn setLocalAngle(self: *@This(), es: *const Entities, cb: *CmdBuf, angle: f32) void {
-        self.cached_local_angle = @mod(angle, 2 * math.pi);
-        self.markDirty(es, cb);
-    }
-
-    pub inline fn getLocalAngle(self: @This()) f32 {
-        return self.cached_local_angle;
-    }
-
-    /// Returns the angle in world coordinates the last time `Transform.syncAll` was called.
-    pub inline fn getAngle(self: @This()) f32 {
-        return self.cached_world_from_local.getRotation();
-    }
-
-    pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
-        if (!self.dirty) {
-            self.dirty = true;
-            const e: Entity = .reserve(cb);
-            e.add(cb, Dirty, .{ .entity = .from(es, self) });
-        }
-    }
-
-    pub fn markDirtyImmediate(self: *@This(), es: *Entities) void {
-        if (!self.dirty) {
-            self.dirty = true;
-            const e: Entity = .reserveImmediate(es);
-            const dirty: Dirty = .{ .entity = .from(es, self) };
-            assert(e.changeArchImmediate(es, .{ .add = &.{.init(Dirty, &dirty)} }));
-        }
-    }
-
-    pub const Dirty = struct {
-        entity: Entity,
-    };
-
-    inline fn sync(self: *@This(), world_from_local: Mat2x3) void {
-        const local_from_model: Mat2x3 = .rotationTranslation(
-            self.cached_local_angle,
-            self.cached_local_pos,
-        );
-        self.cached_world_from_local = world_from_local.times(local_from_model);
-        self.dirty = false;
-    }
-
-    pub fn syncAll(es: *Entities) void {
-        var it = es.viewIterator(struct { dirty: *const Dirty });
-        var total: usize = 0;
-        var updated: usize = 0;
-        while (it.next()) |event| {
-            if (event.dirty.entity.view(es, struct {
-                transform: *Transform,
-                node: ?*const Node,
-            })) |vw| {
-                total += 1;
-                if (vw.node) |node| {
-                    // If this node has a parent, and its parent is dirty, skip it--we'll update it
-                    // as part of the parent update
-                    if (node.parent.unwrap()) |parent| {
-                        if (parent.get(es, Transform)) |parent_transform| {
-                            if (parent_transform.dirty) continue;
-                        }
-                    }
-
-                    // Update the transform and all its children
-                    if (node.parent.unwrap() == null) {
-                        vw.transform.sync(.identity);
-                        updated += 1;
-
-                        var children = node.preOrderIterator(es);
-                        while (children.next(es)) |child| {
-                            if (child.get(es, Transform)) |child_transform| {
-                                const parent = child.getParent(es).?;
-                                if (parent.get(es, Transform)) |parent_transform| {
-                                    child_transform.sync(parent_transform.cached_world_from_local);
-                                } else {
-                                    child_transform.sync(.identity);
-                                }
-                                updated += 1;
-                            }
-                        }
-                    }
-                } else {
-                    // Transforms with no parents are updated directly
-                    vw.transform.sync(.identity);
-                    updated += 1;
-                }
-            }
-        }
-        assert(total == updated);
-
-        es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Dirty))));
-    }
-
-    pub fn afterCmdImmediate(es: *Entities, batch: CmdBuf.Batch, cmd: CmdBuf.Batch.Item) void {
-        switch (cmd) {
-            .ext => |ext| if (ext.id == typeId(Node.SetParent)) {
-                if (batch.entity.get(es, Transform)) |transform| {
-                    transform.markDirtyImmediate(es);
-                }
-            },
-            .add => |comp| if (comp.id == typeId(Transform)) {
-                if (batch.entity.get(es, Transform)) |transform| {
-                    transform.dirty = false;
-                    transform.markDirtyImmediate(es);
-                }
-            },
-            .remove => |id| if (id == typeId(Node)) {
-                if (batch.entity.get(es, Transform)) |transform| {
-                    transform.markDirtyImmediate(es);
-                }
-            },
-            else => {},
-        }
-    }
-};
-
 const AnimateOnInput = struct {
     action: input_system.Action,
     direction: input_system.Direction,
@@ -1612,7 +1455,7 @@ const Game = struct {
         });
         ship.add(cb, Transform, .init(.{
             .local_pos = pos,
-            .local_angle = angle,
+            .local_orientation = angle,
         }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
@@ -1679,7 +1522,7 @@ const Game = struct {
         });
         ship.add(cb, Transform, .init(.{
             .local_pos = pos,
-            .local_angle = angle,
+            .local_orientation = angle,
         }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
@@ -1745,7 +1588,7 @@ const Game = struct {
         });
         ship.add(cb, Transform, .init(.{
             .local_pos = pos,
-            .local_angle = angle,
+            .local_orientation = angle,
         }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
@@ -1813,7 +1656,7 @@ const Game = struct {
         });
         ship.add(cb, Transform, .init(.{
             .local_pos = pos,
-            .local_angle = angle,
+            .local_orientation = angle,
         }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
@@ -2554,7 +2397,7 @@ const Game = struct {
             });
             e.add(cb, Transform, .init(.{
                 .local_pos = pos,
-                .local_angle = 2 * math.pi * rng.float(f32),
+                .local_orientation = 2 * math.pi * rng.float(f32),
             }));
             e.add(cb, RigidBody, .{
                 .vel = random_vel,
