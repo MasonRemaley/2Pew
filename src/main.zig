@@ -15,6 +15,7 @@ const Component = zcs.Component;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const Vec2 = zcs.ext.math.Vec2;
+const Mat2x3 = zcs.ext.math.Mat2x3;
 const Transform = zcs.ext.Transform2;
 const FieldEnum = std.meta.FieldEnum;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
@@ -252,7 +253,7 @@ fn update(
                 // calculate relative velocity
                 const rv = other.rb.vel.minus(vw.rb.vel);
                 // calculate relative velocity in terms of the normal direction
-                const vel_along_normal = rv.dot(normal);
+                const vel_along_normal = rv.innerProd(normal);
                 // do not resolve if velocities are separating
                 if (vel_along_normal > 0) continue;
                 // calculate restitution
@@ -279,7 +280,7 @@ fn update(
                     if (other.health == null or other.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (vw.front_shield != null) {
-                            const dot = Vec2.unit(vw.transform.getAngle()).dot(normal);
+                            const dot = Vec2.unit(vw.transform.getOrientation()).innerProd(normal);
                             shield_scale = @max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.mag());
@@ -292,7 +293,7 @@ fn update(
                     if (vw.health == null or vw.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (other.front_shield != null) {
-                            const dot = Vec2.unit(other.transform.getAngle()).dot(normal);
+                            const dot = Vec2.unit(other.transform.getOrientation()).innerProd(normal);
                             shield_scale = @max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.mag());
@@ -324,7 +325,7 @@ fn update(
                     });
                     piece.add(cb, Transform, .init(.{
                         .local_pos = shrapnel_center.plus(random_offset),
-                        .local_orientation = 2 * math.pi * rng.float(f32),
+                        .local_orientation = .fromAngle(2 * math.pi * rng.float(f32)),
                     }));
                     piece.add(cb, RigidBody, .{
                         .vel = avg_vel.plus(random_vel),
@@ -396,7 +397,7 @@ fn update(
             }
 
             vw.transform.move(es, cb, vw.rb.vel.scaled(delta_s));
-            vw.transform.rotate(es, cb, vw.rb.rotation_vel * delta_s);
+            vw.transform.rotate(es, cb, .fromAngle(vw.rb.rotation_vel * delta_s));
         }
     }
 
@@ -438,7 +439,7 @@ fn update(
     //         const x = @max(delta.length() - vw.spring.length, 0.0);
     //         const spring_force = vw.spring.k * x;
 
-    //         const relative_vel = end_rb.vel.dot(dir) - start_rb.vel.dot(dir);
+    //         const relative_vel = end_rb.vel.innerProd(dir) - start_rb.vel.innerProd(dir);
     //         const start_b = @sqrt(vw.spring.damping * 4.0 * start_rb.mass() * vw.spring.k);
     //         const start_damping_force = start_b * relative_vel;
     //         const end_b = @sqrt(vw.spring.damping * 4.0 * end_rb.mass() * vw.spring.k);
@@ -482,7 +483,7 @@ fn update(
                         });
                         e.add(cb, Transform, .init(.{
                             .local_pos = health_vw.transform.getPos(),
-                            .local_orientation = 2 * math.pi * rng.float(f32),
+                            .local_orientation = .fromAngle(2 * math.pi * rng.float(f32)),
                         }));
                         e.add(cb, RigidBody, .{
                             .vel = health_vw.rb.vel.plus(damage_vw.rb.vel.scaled(0.2)).plus(random_vector),
@@ -503,7 +504,7 @@ fn update(
             damage_vw.transform.setLocalOrientation(
                 es,
                 cb,
-                damage_vw.rb.vel.angle() + math.pi / 2.0,
+                .look(damage_vw.rb.vel.normalized()),
             );
         }
     }
@@ -602,11 +603,11 @@ fn update(
                 vw.transform.rotate(
                     es,
                     cb,
-                    input_state.getAxis(.turn) * vw.ship.turn_speed * delta_s,
+                    .fromAngle(input_state.getAxis(.turn) * vw.ship.turn_speed * delta_s),
                 );
 
                 const thrust_input: f32 = @floatFromInt(@intFromBool(input_state.isAction(.thrust_forward, .positive, .active)));
-                const thrust: Vec2 = .unit(vw.transform.getAngle());
+                const thrust: Vec2 = .unit(vw.transform.getOrientation());
                 vw.rb.vel.add(thrust.scaled(thrust_input * vw.ship.thrust * delta_s));
             }
         }
@@ -683,7 +684,7 @@ fn update(
                     };
 
                     // TODO: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
-                    var dir: Vec2 = .unit(vw.transform.getAngle() + gg.angle);
+                    var dir: Vec2 = .unit(vw.transform.getOrientation() + gg.angle);
                     const vel = rb.vel;
                     const segment_len = 50.0;
                     var pos = vw.transform.getPos().plus(dir.scaled(segment_len));
@@ -713,7 +714,6 @@ fn update(
                     const hook_entity = Entity.reserve(cb);
                     hook_entity.add(cb, Transform, .init(.{
                         .local_pos = pos,
-                        .local_orientation = 0,
                     }));
                     hook_entity.add(cb, RigidBody, .{
                         .vel = vel,
@@ -784,20 +784,30 @@ fn update(
     {
         var it = es.viewIterator(struct {
             turret: *Turret,
-            player_index: *const PlayerIndex,
-            rb: *const RigidBody,
             transform: *const Transform,
+            player_index: *const PlayerIndex,
+            rb: ?*const RigidBody,
         });
         while (it.next()) |vw| {
-            var angle = vw.transform.getAngle();
-            var vel = Vec2.unit(angle).scaled(vw.turret.projectile_speed).plus(vw.rb.vel);
+            const angle = vw.transform.getOrientation();
+            var vel = Vec2.unit(angle).scaled(vw.turret.projectile_speed);
+            if (vw.rb) |rb| vel.add(rb.vel);
             var sprite = game.bullet_small;
-            if (vw.turret.aim_opposite_movement) {
-                angle = vw.rb.vel.angle() + std.math.pi;
-                vel = .zero;
-                sprite = game.bullet_shiny;
+            const fire_pos_local: Vec2 = .{
+                .x = vw.turret.radius + vw.turret.projectile_radius,
+                .y = 0.0,
+            };
+            var rotation: Mat2x3 = .identity;
+            if (vw.rb) |rb| {
+                if (vw.turret.aim_opposite_movement) {
+                    vel = .zero;
+                    sprite = game.bullet_shiny;
+                    if (rb.vel != Vec2.zero) {
+                        rotation = .rotation(.look(rb.vel.normal().negated()));
+                    }
+                }
             }
-            const fire_pos = vw.transform.getPos().plus(Vec2.unit(angle + vw.turret.angle).scaled(vw.turret.radius + vw.turret.projectile_radius));
+            const fire_pos = vw.transform.getWorldFromLocal().times(rotation).timesPoint(fire_pos_local);
             const ready = switch (vw.turret.cooldown) {
                 .time => |*time| r: {
                     time.current_s -= delta_s;
@@ -821,7 +831,7 @@ fn update(
                 });
                 e.add(cb, Transform, .init(.{
                     .local_pos = fire_pos,
-                    .local_orientation = vel.angle() + math.pi / 2.0,
+                    .local_orientation = .look(vel.normalized()),
                 }));
                 e.add(cb, RigidBody, .{
                     .vel = vel,
@@ -976,7 +986,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
                     frame.sprite.getTint(if (vw.team_index) |ti| ti.* else null),
                     null, // source rectangle
                     &dest_rect,
-                    toDegrees(vw.transform.getAngle() + frame.angle),
+                    toDegrees(vw.transform.getOrientation() + frame.angle),
                     null, // center of angle
                     c.SDL_FLIP_NONE,
                 ));
@@ -1038,7 +1048,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
                 sprite.getTint(if (vw.team_index) |ti| ti.* else null),
                 null, // source rectangle
                 &dest_rect,
-                toDegrees(vw.transform.getAngle()),
+                toDegrees(vw.transform.getOrientation()),
                 null, // center of rotation
                 c.SDL_FLIP_NONE,
             ));
@@ -1194,12 +1204,7 @@ const Cooldown = union(enum) {
 };
 
 const Turret = struct {
-    /// Together with angle, this is the location of the turret from the center
-    /// of the containing object. Pixels.
     radius: f32,
-    /// Together with radius, this is the location of the turret from the
-    /// center of the containing object. Radians.
-    angle: f32,
     cooldown: Cooldown,
 
     aim_opposite_movement: bool = false,
@@ -1464,7 +1469,7 @@ const Game = struct {
         });
         ship.add(cb, Transform, .init(.{
             .local_pos = pos,
-            .local_orientation = angle,
+            .local_orientation = .fromAngle(angle),
         }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
@@ -1479,8 +1484,9 @@ const Game = struct {
         ship.add(cb, Animation.Playback, .{
             .index = self.ranger_animations.still,
         });
+        ship.add(cb, PlayerIndex, player_index);
+        ship.add(cb, TeamIndex, team_index);
         ship.add(cb, Turret, .{
-            .angle = 0,
             .radius = self.ranger_radius,
             .cooldown = .{ .time = .{ .max_s = 0.1 } },
             .projectile_speed = 550,
@@ -1488,8 +1494,6 @@ const Game = struct {
             .projectile_damage = 6,
             .projectile_radius = 8,
         });
-        ship.add(cb, PlayerIndex, player_index);
-        ship.add(cb, TeamIndex, team_index);
 
         const thruster = Entity.reserve(cb);
         thruster.add(cb, Transform, .init(.{}));
@@ -1531,7 +1535,7 @@ const Game = struct {
         });
         ship.add(cb, Transform, .init(.{
             .local_pos = pos,
-            .local_orientation = angle,
+            .local_orientation = .fromAngle(angle),
         }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
@@ -1546,8 +1550,9 @@ const Game = struct {
         ship.add(cb, Animation.Playback, .{
             .index = self.triangle_animations.still,
         });
+        ship.add(cb, PlayerIndex, player_index);
+        ship.add(cb, TeamIndex, team_index);
         ship.add(cb, Turret, .{
-            .angle = 0,
             .radius = radius,
             .cooldown = .{ .time = .{ .max_s = 0.2 } },
             .projectile_speed = 700,
@@ -1555,8 +1560,6 @@ const Game = struct {
             .projectile_damage = 12,
             .projectile_radius = 12,
         });
-        ship.add(cb, PlayerIndex, player_index);
-        ship.add(cb, TeamIndex, team_index);
 
         const thruster = Entity.reserve(cb);
         thruster.add(cb, Transform, .init(.{}));
@@ -1597,7 +1600,7 @@ const Game = struct {
         });
         ship.add(cb, Transform, .init(.{
             .local_pos = pos,
-            .local_orientation = angle,
+            .local_orientation = .fromAngle(angle),
         }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
@@ -1653,7 +1656,7 @@ const Game = struct {
     ) void {
         const radius = 32;
         const ship = Entity.reserve(cb);
-        // ship.add(cb, Node, .{});
+        ship.add(cb, Node, .{});
         ship.add(cb, Ship, .{
             .class = .kevin,
             .turn_speed = math.pi * 1.1,
@@ -1665,7 +1668,7 @@ const Game = struct {
         });
         ship.add(cb, Transform, .init(.{
             .local_pos = pos,
-            .local_orientation = angle,
+            .local_orientation = .fromAngle(angle),
         }));
         ship.add(cb, RigidBody, .{
             .vel = .{ .x = 0, .y = 0 },
@@ -1683,24 +1686,23 @@ const Game = struct {
         ship.add(cb, PlayerIndex, player_index);
         ship.add(cb, TeamIndex, team_index);
 
-        const turret = Entity.reserve(cb);
-        turret.cmd(cb, Node.SetParent, .{ship.toOptional()});
-        turret.add(cb, Turret, .{
-            .radius = 32,
-            .angle = math.pi * 0.1,
-            .cooldown = .{ .time = .{ .max_s = 0.2 } },
-            .projectile_speed = 500,
-            .projectile_lifetime = 1.0,
-            .projectile_damage = 18,
-            .projectile_radius = 18,
-        });
-        turret.add(cb, PlayerIndex, player_index);
-        turret.add(cb, TeamIndex, team_index);
-        turret.add(cb, RigidBody, .{
-            .radius = radius,
-            .density = std.math.inf(f32),
-        });
-        turret.add(cb, Transform, .init(.{}));
+        for ([2]f32{ -20.0, 20.0 }) |y| {
+            const turret = Entity.reserve(cb);
+            turret.add(cb, Turret, .{
+                .radius = 32,
+                .cooldown = .{ .time = .{ .max_s = 0.2 } },
+                .projectile_speed = 500,
+                .projectile_lifetime = 1.0,
+                .projectile_damage = 18,
+                .projectile_radius = 18,
+            });
+            turret.add(cb, PlayerIndex, player_index);
+            turret.add(cb, TeamIndex, team_index);
+            turret.add(cb, Transform, .init(.{
+                .local_pos = .{ .x = 0.0, .y = y },
+            }));
+            turret.cmd(cb, Node.SetParent, .{ship.toOptional()});
+        }
 
         const thruster = Entity.reserve(cb);
         thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
@@ -1755,9 +1757,10 @@ const Game = struct {
         ship.add(cb, Animation.Playback, .{
             .index = self.wendy_animations.still,
         });
+        ship.add(cb, PlayerIndex, player_index);
+        ship.add(cb, TeamIndex, team_index);
         ship.add(cb, Turret, .{
             .radius = self.wendy_radius,
-            .angle = 0,
             .cooldown = .{ .distance = .{ .min_sq = std.math.pow(f32, 10.0, 2.0) } },
             .projectile_speed = 0,
             .projectile_lifetime = 5.0,
@@ -1766,8 +1769,6 @@ const Game = struct {
             .projectile_density = std.math.inf(f32),
             .aim_opposite_movement = true,
         });
-        ship.add(cb, PlayerIndex, player_index);
-        ship.add(cb, TeamIndex, team_index);
 
         {
             const thruster = Entity.reserve(cb);
@@ -2406,7 +2407,7 @@ const Game = struct {
             });
             e.add(cb, Transform, .init(.{
                 .local_pos = pos,
-                .local_orientation = 2 * math.pi * rng.float(f32),
+                .local_orientation = .fromAngle(2 * math.pi * rng.float(f32)),
             }));
             e.add(cb, RigidBody, .{
                 .vel = random_vel,
