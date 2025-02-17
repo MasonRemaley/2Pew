@@ -923,6 +923,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
     // Draw animations
     {
         var it = es.viewIterator(struct {
+            entity: Entity,
             rb: *const RigidBody,
             transform: *const Transform,
             animation: *Animation.Playback,
@@ -930,29 +931,37 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             team_index: ?*const TeamIndex,
             // parent: ?*const Parent,
         });
-        // draw: // XXX: ...
-        while (it.next()) |vw| {
-            // XXX: ...
-            // // Skip rendering if flashing, or if any parent is flashing.
-            // //
-            // // We should probably make the sprites half opacity instead of turning them off when
-            // // flashing for a less jarring effect, but that is difficult right now.
-            // {
-            //     var parent_it = parenting.iterator(es, it.handle());
-            //     while (parent_it.next()) |current| {
-            //         if (es.get(current, .health)) |health| {
-            //             if (health.invulnerable_s > 0.0) {
-            //                 var flashes_ps: f32 = 2;
-            //                 if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
-            //                     flashes_ps = 4;
-            //                 }
-            //                 if (@sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
-            //                     continue :draw;
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
+        draw: while (it.next()) |vw| {
+            // Skip rendering if flashing, or if any parent is flashing.
+            //
+            // We should probably make the sprites half opacity instead of turning them off when
+            // flashing for a less jarring effect, but that is difficult right now w/ SDL as our
+            // renderer.
+            {
+                var curr = vw.entity;
+                while (true) {
+                    if (curr.get(es, Health)) |health| {
+                        if (health.invulnerable_s > 0.0) {
+                            var flashes_ps: f32 = 2;
+                            if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
+                                flashes_ps = 4;
+                            }
+                            if (@sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
+                                continue :draw;
+                            }
+                        }
+                    }
+
+                    if (curr.get(es, Node)) |node| {
+                        if (node.parent.unwrap()) |parent| {
+                            curr = parent;
+                            continue;
+                        }
+                    }
+
+                    break;
+                }
+            }
 
             if (vw.animation.index != .none) {
                 const frame = assets.animate(vw.animation, delta_s);
