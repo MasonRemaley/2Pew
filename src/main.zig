@@ -66,7 +66,7 @@ pub fn main() !void {
     defer c.SDL_Quit();
 
     const window_mode = switch (builtin.mode) {
-        .Debug => c.SDL_WINDOW_FULLSCREEN_DESKTOP,
+        .Debug => c.SDL_WINDOW_RESIZABLE,
         else => c.SDL_WINDOW_FULLSCREEN,
     };
 
@@ -101,7 +101,7 @@ pub fn main() !void {
     });
     defer es.deinit(allocator);
 
-    // XXX: remember to check usage
+    // TODO: remember to check usage
     var cb = try CmdBuf.init(
         allocator,
         &es,
@@ -141,12 +141,12 @@ pub fn main() !void {
         fx_loop_s = @mod(fx_loop_s + delta_s, max_fx_loop_s);
         if (profile) {
             std.debug.print("frame time: {d}ms ", .{last_delta_s * 1000.0});
-            // XXX: ...
+            // TODO: ...
             // std.debug.print("entity memory: {}/{}mb ", .{ fba.end_index / (1024 * 1024), fba.buffer.len / (1024 * 1024) });
             std.debug.print("\n", .{});
         }
 
-        // XXX: ...
+        // TODO: ...
         // if (fba.end_index >= fba.buffer.len / 4 and !warned_memory_usage) {
         //     std.log.warn(">= 25% of entity memory has been used, consider increasing the size of the fixed buffer allocator", .{});
         //     warned_memory_usage = true;
@@ -401,7 +401,7 @@ fn update(
         }
     }
 
-    // XXX: springs were already disabled
+    // TODO: springs were already disabled
     // Update springs
     // {
     //     var it = es.iterator(.{ .spring = .{} });
@@ -607,8 +607,9 @@ fn update(
                 );
 
                 const thrust_input: f32 = @floatFromInt(@intFromBool(input_state.isAction(.thrust_forward, .positive, .active)));
-                const thrust: Vec2 = .unit(vw.transform.getOrientation());
-                vw.rb.vel.add(thrust.scaled(thrust_input * vw.ship.thrust * delta_s));
+                const forward = vw.transform.getForward();
+                const thrust = forward.scaled(thrust_input * vw.ship.thrust * delta_s);
+                vw.rb.vel.add(thrust);
             }
         }
     }
@@ -728,10 +729,9 @@ fn update(
                     hook_entity.add(cb, Hook, hook);
                     // TODO: ...
                     // .sprite = game.bullet_small,
-                    // XXX: why nullable?
+                    // TODO: why nullable?
                     gg.live.?.hook = hook_entity;
                     for (0..(gg.live.?.springs.len)) |i| {
-                        // XXX: same deal here, creation while iterating
                         const spring = Entity.reserve(cb);
                         spring.add(cb, Spring, .{
                             .start = if (i == 0)
@@ -789,13 +789,12 @@ fn update(
             rb: ?*const RigidBody,
         });
         while (it.next()) |vw| {
-            const angle = vw.transform.getOrientation();
-            var vel = Vec2.unit(angle).scaled(vw.turret.projectile_speed);
+            var vel = vw.transform.getForward().scaled(vw.turret.projectile_speed);
             if (vw.rb) |rb| vel.add(rb.vel);
             var sprite = game.bullet_small;
             const fire_pos_local: Vec2 = .{
-                .x = vw.turret.radius + vw.turret.projectile_radius,
-                .y = 0.0,
+                .x = 0.0,
+                .y = vw.turret.radius + vw.turret.projectile_radius,
             };
             var rotation: Mat2x3 = .identity;
             if (vw.rb) |rb| {
@@ -807,7 +806,7 @@ fn update(
                     }
                 }
             }
-            const fire_pos = vw.transform.getWorldFromLocal().times(rotation).timesPoint(fire_pos_local);
+            const fire_pos = vw.transform.getWorldFromModel().times(rotation).timesPoint(fire_pos_local);
             const ready = switch (vw.turret.cooldown) {
                 .time => |*time| r: {
                     time.current_s -= delta_s;
@@ -905,29 +904,25 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             .large => game.star_large,
             .planet_red => game.planet_red,
         });
-        const dst_rect: c.SDL_Rect = .{
-            .x = star.x,
-            .y = star.y,
-            .w = sprite.rect.w,
-            .h = sprite.rect.h,
-        };
-        sdlAssertZero(c.SDL_RenderCopy(
-            renderer,
-            sprite.tints[0],
-            null,
-            &dst_rect,
-        ));
+        renderCopy(.{
+            .renderer = renderer,
+            .tex = sprite.tints[0],
+            .rad = 0.0,
+            .pos = .{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) },
+            .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
+        });
     }
 
     // Draw ring
     {
         const sprite = assets.sprite(game.ring_bg);
-        sdlAssertZero(c.SDL_RenderCopy(
-            renderer,
-            sprite.tints[0],
-            null,
-            &sprite.toSdlRect(display_center),
-        ));
+        renderCopy(.{
+            .renderer = renderer,
+            .tex = sprite.tints[0],
+            .rad = 0.0,
+            .pos = display_center,
+            .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
+        });
     }
 
     // Draw animations
@@ -979,17 +974,13 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
                 const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
                 const size_coefficient = vw.rb.radius / sprite_radius;
                 const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-                var dest_rect = sdlRect(vw.transform.getPos().minus(sprite_size.scaled(0.5)), sprite_size);
-
-                sdlAssertZero(c.SDL_RenderCopyEx(
-                    renderer,
-                    frame.sprite.getTint(if (vw.team_index) |ti| ti.* else null),
-                    null, // source rectangle
-                    &dest_rect,
-                    toDegrees(vw.transform.getOrientation() + frame.angle),
-                    null, // center of angle
-                    c.SDL_FLIP_NONE,
-                ));
+                renderCopy(.{
+                    .renderer = renderer,
+                    .tex = frame.sprite.getTint(if (vw.team_index) |ti| ti.* else null),
+                    .rad = vw.transform.getOrientation() + frame.angle,
+                    .pos = vw.transform.getPos(),
+                    .size = sprite_size,
+                });
             }
         }
     }
@@ -1005,6 +996,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             if (vw.health.hp < vw.health.max_hp) {
                 const health_bar_size: Vec2 = .{ .x = 32, .y = 4 };
                 var start = vw.transform.getPos().minus(health_bar_size.scaled(0.5)).floored();
+                start.y = display_height - start.y;
                 start.y -= vw.rb.radius + health_bar_size.y;
                 sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
                 sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
@@ -1042,16 +1034,13 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
             const size_coefficient = vw.rb.radius / sprite_radius;
             const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-            const dest_rect = sdlRect(vw.transform.getPos().minus(sprite_size.scaled(0.5)), sprite_size);
-            sdlAssertZero(c.SDL_RenderCopyEx(
-                renderer,
-                sprite.getTint(if (vw.team_index) |ti| ti.* else null),
-                null, // source rectangle
-                &dest_rect,
-                toDegrees(vw.transform.getOrientation()),
-                null, // center of rotation
-                c.SDL_FLIP_NONE,
-            ));
+            renderCopy(.{
+                .renderer = renderer,
+                .tex = sprite.getTint(if (vw.team_index) |ti| ti.* else null),
+                .rad = vw.transform.getOrientation(),
+                .pos = vw.transform.getPos(),
+                .size = sprite_size,
+            });
         }
     }
 
@@ -1088,12 +1077,12 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
                     .y = 0,
                 });
-                sdlAssertZero(c.SDL_RenderCopy(
-                    renderer,
-                    sprite.getTint(@enumFromInt(team_index)),
-                    null,
-                    &sprite.toSdlRect(pos),
-                ));
+                renderCopy(.{
+                    .renderer = renderer,
+                    .tex = sprite.getTint(@enumFromInt(team_index)),
+                    .pos = pos,
+                    .size = sprite.size(),
+                });
             }
             for (team.ship_progression, 0..) |class, display_prog_index| {
                 const dead = team.ship_progression_index > display_prog_index;
@@ -1102,16 +1091,14 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
                 const sprite = assets.sprite(game.shipLifeSprite(class));
                 const pos = top_left.plus(.{
                     .x = col_width * @as(f32, @floatFromInt(team_index)),
-                    .y = row_height * @as(f32, @floatFromInt(display_prog_index)),
+                    .y = display_height - row_height * @as(f32, @floatFromInt(display_prog_index)),
                 });
-                const sprite_size = sprite.size().scaled(0.5);
-                const dest_rect = sdlRect(pos.minus(sprite_size.scaled(0.5)), sprite_size);
-                sdlAssertZero(c.SDL_RenderCopy(
-                    renderer,
-                    sprite.getTint(@enumFromInt(team_index)),
-                    null,
-                    &dest_rect,
-                ));
+                renderCopy(.{
+                    .renderer = renderer,
+                    .tex = sprite.getTint(@enumFromInt(team_index)),
+                    .pos = pos,
+                    .size = sprite.size().scaled(0.5),
+                });
             }
         }
     }
@@ -1781,7 +1768,7 @@ const Game = struct {
             thruster.add(cb, AnimateOnInput, .{
                 .action = .thrust_y,
                 .direction = .positive,
-                .activated = self.wendy_animations.thrusters_left.?,
+                .activated = self.wendy_animations.thrusters_bottom.?,
                 .deactivated = .none,
             });
             thruster.add(cb, Animation.Playback, .{ .index = .none });
@@ -1799,25 +1786,6 @@ const Game = struct {
             });
             thruster.add(cb, AnimateOnInput, .{
                 .action = .thrust_y,
-                .direction = .negative,
-                .activated = self.wendy_animations.thrusters_right.?,
-                .deactivated = .none,
-            });
-            thruster.add(cb, Animation.Playback, .{ .index = .none });
-            thruster.add(cb, PlayerIndex, player_index);
-            thruster.add(cb, TeamIndex, team_index);
-        }
-
-        {
-            const thruster = Entity.reserve(cb);
-            thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
-            thruster.add(cb, Transform, .init(.{}));
-            thruster.add(cb, RigidBody, .{
-                .radius = self.wendy_radius,
-                .density = std.math.inf(f32),
-            });
-            thruster.add(cb, AnimateOnInput, .{
-                .action = .thrust_x,
                 .direction = .negative,
                 .activated = self.wendy_animations.thrusters_top.?,
                 .deactivated = .none,
@@ -1837,8 +1805,27 @@ const Game = struct {
             });
             thruster.add(cb, AnimateOnInput, .{
                 .action = .thrust_x,
+                .direction = .negative,
+                .activated = self.wendy_animations.thrusters_right.?,
+                .deactivated = .none,
+            });
+            thruster.add(cb, Animation.Playback, .{ .index = .none });
+            thruster.add(cb, PlayerIndex, player_index);
+            thruster.add(cb, TeamIndex, team_index);
+        }
+
+        {
+            const thruster = Entity.reserve(cb);
+            thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+            thruster.add(cb, Transform, .init(.{}));
+            thruster.add(cb, RigidBody, .{
+                .radius = self.wendy_radius,
+                .density = std.math.inf(f32),
+            });
+            thruster.add(cb, AnimateOnInput, .{
+                .action = .thrust_x,
                 .direction = .positive,
-                .activated = self.wendy_animations.thrusters_bottom.?,
+                .activated = self.wendy_animations.thrusters_left.?,
                 .deactivated = .none,
             });
             thruster.add(cb, Animation.Playback, .{ .index = .none });
@@ -1903,14 +1890,14 @@ const Game = struct {
         };
         const ranger_still = try assets.addAnimation(&.{
             ranger_sprites[0],
-        }, null, 30, math.pi / 2.0);
+        }, null, 30, 0.0);
         const ranger_steady_thrust = try assets.addAnimation(&.{
             ranger_sprites[2],
             ranger_sprites[3],
-        }, null, 10, math.pi / 2.0);
+        }, null, 10, 0.0);
         const ranger_accel = try assets.addAnimation(&.{
             ranger_sprites[1],
-        }, ranger_steady_thrust, 10, math.pi / 2.0);
+        }, ranger_steady_thrust, 10, 0.0);
 
         const militia_sprites = .{
             try assets.loadSprite(allocator, "img/ship/militia/diffuse.png", "img/ship/militia/recolor.png", team_tints),
@@ -1920,14 +1907,14 @@ const Game = struct {
         };
         const militia_still = try assets.addAnimation(&.{
             militia_sprites[0],
-        }, null, 30, math.pi / 2.0);
+        }, null, 30, 0.0);
         const militia_steady_thrust = try assets.addAnimation(&.{
             militia_sprites[2],
             militia_sprites[3],
-        }, null, 10, math.pi / 2.0);
+        }, null, 10, 0.0);
         const militia_accel = try assets.addAnimation(&.{
             militia_sprites[1],
-        }, militia_steady_thrust, 10, math.pi / 2.0);
+        }, militia_steady_thrust, 10, 0.0);
 
         const explosion_animation = try assets.addAnimation(&.{
             try assets.loadSprite(allocator, "img/explosion/01.png", null, no_tint),
@@ -1952,14 +1939,14 @@ const Game = struct {
         };
         const triangle_still = try assets.addAnimation(&.{
             triangle_sprites[0],
-        }, null, 30, math.pi / 2.0);
+        }, null, 30, 0.0);
         const triangle_steady_thrust = try assets.addAnimation(&.{
             triangle_sprites[2],
             triangle_sprites[3],
-        }, null, 10, math.pi / 2.0);
+        }, null, 10, 0.0);
         const triangle_accel = try assets.addAnimation(&.{
             triangle_sprites[1],
-        }, triangle_steady_thrust, 10, math.pi / 2.0);
+        }, triangle_steady_thrust, 10, 0.0);
 
         const kevin_sprites = .{
             try assets.loadSprite(allocator, "img/ship/kevin/diffuse.png", "img/ship/kevin/recolor.png", team_tints),
@@ -1969,14 +1956,14 @@ const Game = struct {
         };
         const kevin_still = try assets.addAnimation(&.{
             kevin_sprites[0],
-        }, null, 30, math.pi / 2.0);
+        }, null, 30, 0.0);
         const kevin_steady_thrust = try assets.addAnimation(&.{
             kevin_sprites[2],
             kevin_sprites[3],
-        }, null, 10, math.pi / 2.0);
+        }, null, 10, 0.0);
         const kevin_accel = try assets.addAnimation(&.{
             kevin_sprites[1],
-        }, kevin_steady_thrust, 10, math.pi / 2.0);
+        }, kevin_steady_thrust, 10, 0.0);
 
         const wendy_sprite = try assets.loadSprite(allocator, "img/ship/wendy/diffuse.png", "img/ship/wendy/recolor.png", team_tints);
         const wendy_thrusters_left = .{
@@ -2001,35 +1988,35 @@ const Game = struct {
         };
         const wendy_still = try assets.addAnimation(&.{
             wendy_sprite,
-        }, null, 30, math.pi / 2.0);
+        }, null, 30, 0.0);
         const wendy_thrusters_left_steady = try assets.addAnimation(&.{
             wendy_thrusters_left[1],
             wendy_thrusters_left[2],
-        }, null, 10, math.pi / 2.0);
+        }, null, 10, 0.0);
         const wendy_thrusters_left_accel = try assets.addAnimation(&.{
             wendy_thrusters_left[0],
-        }, wendy_thrusters_left_steady, 10, math.pi / 2.0);
+        }, wendy_thrusters_left_steady, 10, 0.0);
         const wendy_thrusters_right_steady = try assets.addAnimation(&.{
             wendy_thrusters_right[1],
             wendy_thrusters_right[2],
-        }, null, 10, math.pi / 2.0);
+        }, null, 10, 0.0);
         const wendy_thrusters_right_accel = try assets.addAnimation(&.{
             wendy_thrusters_right[0],
-        }, wendy_thrusters_right_steady, 10, math.pi / 2.0);
+        }, wendy_thrusters_right_steady, 10, 0.0);
         const wendy_thrusters_top_steady = try assets.addAnimation(&.{
             wendy_thrusters_top[1],
             wendy_thrusters_top[2],
-        }, null, 10, math.pi / 2.0);
+        }, null, 10, 0.0);
         const wendy_thrusters_top_accel = try assets.addAnimation(&.{
             wendy_thrusters_top[0],
-        }, wendy_thrusters_top_steady, 10, math.pi / 2.0);
+        }, wendy_thrusters_top_steady, 10, 0.0);
         const wendy_thrusters_bottom_steady = try assets.addAnimation(&.{
             wendy_thrusters_bottom[1],
             wendy_thrusters_bottom[2],
-        }, null, 10, math.pi / 2.0);
+        }, null, 10, 0.0);
         const wendy_thrusters_bottom_accel = try assets.addAnimation(&.{
             wendy_thrusters_bottom[0],
-        }, wendy_thrusters_bottom_steady, 10, math.pi / 2.0);
+        }, wendy_thrusters_bottom_steady, 10, 0.0);
 
         const ranger_radius = @as(f32, @floatFromInt(assets.sprite(ranger_sprites[0]).rect.w)) / 2.0;
         const militia_radius = @as(f32, @floatFromInt(assets.sprite(militia_sprites[0]).rect.w)) / 2.0;
@@ -2079,8 +2066,8 @@ const Game = struct {
                 .negative = c.SDL_SCANCODE_A,
             },
             .thrust_y = .{
-                .positive = c.SDL_SCANCODE_S,
-                .negative = c.SDL_SCANCODE_W,
+                .positive = c.SDL_SCANCODE_W,
+                .negative = c.SDL_SCANCODE_S,
             },
             .fire = .{
                 .positive = c.SDL_SCANCODE_LSHIFT,
@@ -2102,8 +2089,8 @@ const Game = struct {
                 .negative = c.SDL_SCANCODE_LEFT,
             },
             .thrust_y = .{
-                .positive = c.SDL_SCANCODE_DOWN,
-                .negative = c.SDL_SCANCODE_UP,
+                .positive = c.SDL_SCANCODE_UP,
+                .negative = c.SDL_SCANCODE_DOWN,
             },
             .fire = .{
                 .positive = c.SDL_SCANCODE_RSHIFT,
@@ -2258,7 +2245,7 @@ const Game = struct {
 
     fn setupScenario(game: *Game, es: *Entities, cb: *CmdBuf, scenario: Scenario) void {
         const rng = game.rng.random();
-        cb.clear(es); // XXX: if we didn't clear here es could be const
+        cb.clear(es); // TODO: if we didn't clear here es could be const
 
         var player_teams: []const u2 = undefined;
 
@@ -2355,7 +2342,7 @@ const Game = struct {
                 const angle = math.pi / 2.0 * @as(f32, @floatFromInt(i));
                 const pos = display_center.plus(Vec2.unit(angle).scaled(50));
                 const player_index: PlayerIndex = @enumFromInt(i);
-                game.createShip(cb, player_index, @enumFromInt(team_index), pos, angle);
+                game.createShip(cb, player_index, @enumFromInt(team_index), pos, math.pi / 2.0 - angle);
             }
         }
 
@@ -2726,6 +2713,30 @@ fn remap_clamped(
     value: f32,
 ) f32 {
     return lerp(start_out, end_out, ilerp_clamped(start_in, end_in, value));
+}
+
+const RenderCopyOptions = struct {
+    renderer: *c.SDL_Renderer,
+    tex: *c.SDL_Texture,
+    rad: f32 = 0.0,
+    pos: Vec2,
+    size: Vec2,
+};
+fn renderCopy(opt: RenderCopyOptions) void {
+    const pos: Vec2 = .{
+        .x = opt.pos.x,
+        .y = display_height - opt.pos.y,
+    };
+    var rect = sdlRect(pos.minus(opt.size.scaled(0.5)), opt.size);
+    sdlAssertZero(c.SDL_RenderCopyEx(
+        opt.renderer,
+        opt.tex,
+        null,
+        &rect,
+        toDegrees(opt.rad),
+        null,
+        c.SDL_FLIP_NONE,
+    ));
 }
 
 test {
