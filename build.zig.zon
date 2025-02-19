@@ -3,10 +3,6 @@
     .version = "0.0.0",
     .minimum_zig_version = "0.14.0-dev.2544+94df665fe",
     .dependencies = .{
-        .zig_sdl = .{
-            .url = "https://github.com/andrewrk/SDL/archive/a13d7e80e8d847db2b2ff8f334d57eb5bbb489dd.tar.gz",
-            .hash = "12200aa79b05aaeefff144b9e376371e2e7ddc982b9207d146163baf56361331a834",
-        },
         .zcs = .{
             .url = "https://github.com/Games-by-Mason/ZCS/archive/300b346b1390adc0c3f453176b2ad001cd4f52d4.tar.gz",
             .hash = "1220a8d28642e9270f03be88bc084d47687747595c57ab91c84d4dd1875871f7785b",

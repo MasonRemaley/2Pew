@@ -37,17 +37,13 @@ pub fn build(b: *std.Build) void {
     // https://github.com/MasonRemaley/2Pew/issues/2
     exe.want_lto = false;
 
-    if (target.query.isNativeOs() and target.result.os.tag == .linux) {
+    if (target.query.isNativeOs()) {
         // The SDL package doesn't work for Linux yet, so we rely on system
         // packages for now.
         exe.linkSystemLibrary("SDL2");
         exe.linkLibC();
     } else {
-        const zig_sdl = b.dependency("zig_sdl", .{
-            .target = target,
-            .optimize = .ReleaseFast,
-        });
-        exe.linkLibrary(zig_sdl.artifact("SDL2"));
+        @panic("unimplemented");
     }
 
     // TODO extract this into a proper zig package
