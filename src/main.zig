@@ -14,8 +14,9 @@ const Entity = zcs.Entity;
 const Component = zcs.Component;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
-const Vec2 = zcs.ext.math.Vec2;
-const Mat2x3 = zcs.ext.math.Mat2x3;
+const Vec2 = zcs.ext.geom.Vec2;
+const Rotor2 = zcs.ext.geom.Rotor2;
+const Mat2x3 = zcs.ext.geom.Mat2x3;
 const Transform = zcs.ext.Transform2;
 const FieldEnum = std.meta.FieldEnum;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
@@ -194,6 +195,14 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
     return false;
 }
 
+fn randomOnCircle(rng: std.Random, radius: f32) Vec2 {
+    return Vec2.unit(rng.float(f32) * math.tau).scaled(radius);
+}
+
+fn randomInCircleBiased(rng: std.Random, radius: f32) Vec2 {
+    return randomOnCircle(rng, radius * rng.float(f32));
+}
+
 fn update(
     es: *Entities,
     cb: *CmdBuf,
@@ -280,7 +289,7 @@ fn update(
                     if (other.health == null or other.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (vw.front_shield != null) {
-                            const dot = Vec2.unit(vw.transform.getOrientation()).innerProd(normal);
+                            const dot = vw.transform.getForward().innerProd(normal);
                             shield_scale = @max(dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.mag());
@@ -293,7 +302,7 @@ fn update(
                     if (vw.health == null or vw.health.?.invulnerable_s <= 0.0) {
                         var shield_scale: f32 = 0.0;
                         if (other.front_shield != null) {
-                            const dot = Vec2.unit(other.transform.getOrientation()).innerProd(normal);
+                            const dot = other.transform.getForward().innerProd(normal);
                             shield_scale = @max(-dot, 0.0);
                         }
                         const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.mag());
@@ -313,23 +322,21 @@ fn update(
                         rng.uintLessThanBiased(usize, game.shrapnel_animations.len)
                     ];
                     // Spawn slightly off center from collision point.
-                    const random_offset = Vec2.unit(rng.float(f32) * math.pi * 2)
-                        .scaled(rng.float(f32) * 10);
+                    const random_offset = randomInCircleBiased(rng, 10.0);
                     // Give them random velocities.
                     const base_vel = if (rng.boolean()) vw.rb.vel else other.rb.vel;
-                    const random_vel = Vec2.unit(rng.float(f32) * math.pi * 2)
-                        .scaled(rng.float(f32) * base_vel.mag() * 2);
+                    const random_vel = randomInCircleBiased(rng, base_vel.mag() * 2);
                     const piece = Entity.reserve(cb);
                     piece.add(cb, Lifetime, .{
                         .seconds = 1.5 + rng.float(f32) * 1.0,
                     });
                     piece.add(cb, Transform, .init(.{
                         .local_pos = shrapnel_center.plus(random_offset),
-                        .local_orientation = .fromAngle(2 * math.pi * rng.float(f32)),
+                        .local_orientation = .fromAngle(math.tau * rng.float(f32)),
                     }));
                     piece.add(cb, RigidBody, .{
                         .vel = avg_vel.plus(random_vel),
-                        .rotation_vel = 2 * math.pi * rng.float(f32),
+                        .rotation_vel = math.tau * rng.float(f32),
                         .radius = game.animationRadius(shrapnel_animation),
                         .density = 0.001,
                     });
@@ -475,19 +482,18 @@ fn update(
                         const shrapnel_animation = game.shrapnel_animations[
                             rng.uintLessThanBiased(usize, game.shrapnel_animations.len)
                         ];
-                        const random_vector = Vec2.unit(rng.float(f32) * math.pi * 2)
-                            .scaled(damage_vw.rb.vel.mag() * 0.2);
+                        const random_vector = randomOnCircle(rng, damage_vw.rb.vel.mag() * 0.2);
                         const e = Entity.reserve(cb);
                         e.add(cb, Lifetime, .{
                             .seconds = 1.5 + rng.float(f32) * 1.0,
                         });
                         e.add(cb, Transform, .init(.{
                             .local_pos = health_vw.transform.getPos(),
-                            .local_orientation = .fromAngle(2 * math.pi * rng.float(f32)),
+                            .local_orientation = .fromAngle(math.tau * rng.float(f32)),
                         }));
                         e.add(cb, RigidBody, .{
                             .vel = health_vw.rb.vel.plus(damage_vw.rb.vel.scaled(0.2)).plus(random_vector),
-                            .rotation_vel = 2 * math.pi * rng.float(f32),
+                            .rotation_vel = math.tau * rng.float(f32),
                             .radius = game.animationRadius(shrapnel_animation),
                             .density = 0.001,
                         });
@@ -557,7 +563,7 @@ fn update(
                                 game.spawnTeamVictory(cb, display_center, happy_team);
                             }
                         } else {
-                            const new_angle = math.pi * 2 * rng.float(f32);
+                            const new_angle = math.tau * rng.float(f32);
                             const new_pos = display_center.plus(Vec2.unit(new_angle).scaled(display_radius));
                             const facing_angle = new_angle + math.pi;
                             game.createShip(cb, player_index.*, team_index.*, new_pos, facing_angle);
@@ -685,7 +691,7 @@ fn update(
                     };
 
                     // TODO: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
-                    var dir: Vec2 = .unit(vw.transform.getOrientation() + gg.angle);
+                    var dir = Rotor2.fromAngle(gg.angle).timesPoint(vw.transform.getForward());
                     const vel = rb.vel;
                     const segment_len = 50.0;
                     var pos = vw.transform.getPos().plus(dir.scaled(segment_len));
@@ -977,7 +983,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
                 renderCopy(.{
                     .renderer = renderer,
                     .tex = frame.sprite.getTint(if (vw.team_index) |ti| ti.* else null),
-                    .rad = vw.transform.getOrientation() + frame.angle,
+                    .rad = vw.transform.getWorldFromModel().getAngle() + frame.angle,
                     .pos = vw.transform.getPos(),
                     .size = sprite_size,
                 });
@@ -1037,7 +1043,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             renderCopy(.{
                 .renderer = renderer,
                 .tex = sprite.getTint(if (vw.team_index) |ti| ti.* else null),
-                .rad = vw.transform.getOrientation(),
+                .rad = vw.transform.getWorldFromModel().getAngle(),
                 .pos = vw.transform.getPos(),
                 .size = sprite_size,
             });
@@ -2359,8 +2365,7 @@ const Game = struct {
             const speed = 20 + rng.float(f32) * 300;
             const radius = 25 + rng.float(f32) * 110;
             const sprite = game.rock_sprites[rng.uintLessThanBiased(usize, game.rock_sprites.len)];
-            const pos = Vec2.unit(rng.float(f32) * math.pi * 2)
-                .scaled(lerp(display_radius, display_radius * 1.1, rng.float(f32)))
+            const pos = randomInCircleBiased(rng, lerp(display_radius, display_radius * 1.1, rng.float(f32)))
                 .plus(display_center);
 
             const e = Entity.reserve(cb);
@@ -2369,7 +2374,7 @@ const Game = struct {
                 .local_pos = pos,
             }));
             e.add(cb, RigidBody, .{
-                .vel = Vec2.unit(rng.float(f32) * math.pi * 2).scaled(speed),
+                .vel = randomOnCircle(rng, speed),
                 .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
                 .radius = radius,
                 .density = 0.10,
@@ -2387,18 +2392,18 @@ const Game = struct {
     fn spawnTeamVictory(game: *Game, cb: *CmdBuf, pos: Vec2, team_index: TeamIndex) void {
         const rng = game.rng.random();
         for (0..500) |_| {
-            const random_vel = Vec2.unit(rng.float(f32) * math.pi * 2).scaled(300);
+            const random_vel = randomOnCircle(rng, 300);
             const e = Entity.reserve(cb);
             e.add(cb, Lifetime, .{
                 .seconds = 1000,
             });
             e.add(cb, Transform, .init(.{
                 .local_pos = pos,
-                .local_orientation = .fromAngle(2 * math.pi * rng.float(f32)),
+                .local_orientation = .fromAngle(math.tau * rng.float(f32)),
             }));
             e.add(cb, RigidBody, .{
                 .vel = random_vel,
-                .rotation_vel = 2 * math.pi * rng.float(f32),
+                .rotation_vel = math.tau * rng.float(f32),
                 .radius = 16,
                 .density = 0.001,
             });
@@ -2664,7 +2669,7 @@ fn generateStars(stars: []Star, rng: std.Random) void {
 /// (PI / 2) radians means (0, 1), or pointing directly down to the bottom of the screen.
 /// SDL uses degrees (🤮), but at least it also uses clockwise rotation.
 fn toDegrees(radians: f32) f32 {
-    return 360.0 * (radians / (2 * math.pi));
+    return 360.0 * (radians / (math.tau));
 }
 
 fn sdlRect(top_left_pos: Vec2, size: Vec2) c.SDL_Rect {
