@@ -691,7 +691,7 @@ fn update(
                     };
 
                     // TODO: we COULD add colliders to joints and if it was dense enough you could wrap the rope around things...
-                    var dir = Rotor2.fromAngle(gg.angle).timesPoint(vw.transform.getForward());
+                    var dir = Rotor2.fromAngle(gg.angle).timesVec2(vw.transform.getForward());
                     const vel = rb.vel;
                     const segment_len = 50.0;
                     var pos = vw.transform.getPos().plus(dir.scaled(segment_len));
@@ -807,9 +807,7 @@ fn update(
                 if (vw.turret.aim_opposite_movement) {
                     vel = .zero;
                     sprite = game.bullet_shiny;
-                    if (rb.vel != Vec2.zero) {
-                        rotation = .rotation(.look(rb.vel.normal().negated()));
-                    }
+                    rotation = .rotation(.look(rb.vel.normalized().normal().negated()));
                 }
             }
             const fire_pos = vw.transform.getWorldFromModel().times(rotation).timesPoint(fire_pos_local);
@@ -983,7 +981,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
                 renderCopy(.{
                     .renderer = renderer,
                     .tex = frame.sprite.getTint(if (vw.team_index) |ti| ti.* else null),
-                    .rad = vw.transform.getWorldFromModel().getAngle() + frame.angle,
+                    .rad = vw.transform.getWorldFromModel().getRotation() + frame.angle,
                     .pos = vw.transform.getPos(),
                     .size = sprite_size,
                 });
@@ -1043,7 +1041,7 @@ fn render(assets: Assets, es: *Entities, game: Game, delta_s: f32, fx_loop_s: f3
             renderCopy(.{
                 .renderer = renderer,
                 .tex = sprite.getTint(if (vw.team_index) |ti| ti.* else null),
-                .rad = vw.transform.getWorldFromModel().getAngle(),
+                .rad = vw.transform.getWorldFromModel().getRotation(),
                 .pos = vw.transform.getPos(),
                 .size = sprite_size,
             });
@@ -1766,7 +1764,7 @@ const Game = struct {
         {
             const thruster = Entity.reserve(cb);
             thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
-            thruster.add(cb, Transform, .init(.{}));
+            thruster.add(cb, Transform, .init(.{ .local_pos = .{ .x = 100, .y = 0 } }));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
                 .density = std.math.inf(f32),
