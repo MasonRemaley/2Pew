@@ -69,7 +69,7 @@ pub fn init(comptime ActionT: type) type {
                             if (controller_action.axis) |axis_control| {
                                 var value = c.SDL_GameControllerGetAxis(controllers[controller_index], axis_control.axis);
                                 if (axis_control.axis == c.SDL_CONTROLLER_AXIS_LEFTY or axis_control.axis == c.SDL_CONTROLLER_AXIS_RIGHTY) {
-                                    value *= -1.0;
+                                    value *|= -1;
                                 }
                                 switch (direction) {
                                     .positive => axis = value > axis_control.dead_zone,
