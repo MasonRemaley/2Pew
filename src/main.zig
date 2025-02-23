@@ -17,7 +17,7 @@ const Node = zcs.ext.Node;
 const Vec2 = zcs.ext.geom.Vec2;
 const Rotor2 = zcs.ext.geom.Rotor2;
 const Mat2x3 = zcs.ext.geom.Mat2x3;
-const Transform = zcs.ext.Transform2;
+const Transform = zcs.ext.Transform2D;
 const FieldEnum = std.meta.FieldEnum;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
 
