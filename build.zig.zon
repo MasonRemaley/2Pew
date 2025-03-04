@@ -4,8 +4,8 @@
     .minimum_zig_version = "0.14.0-dev.2544+94df665fe",
     .dependencies = .{
         .zcs = .{
-            .url = "https://github.com/Games-by-Mason/ZCS/archive/1db04e39617d841438d7ae721940cded7df39b11.tar.gz",
-            .hash = "12202f64e065b90a72ae47149a98f68ea354db5e4ef70249150a1a95aba3382ffc80",
+            .url = "https://github.com/Games-by-Mason/ZCS/archive/08a4ee0170f9092c1241fb5ab46836280d9806a8.tar.gz",
+            .hash = "12201595ef67febc299d8ceeca705a0d37673dd70f50db3eec67ef1f4a0e970ebbb5",
         },
     },
     .paths = .{
