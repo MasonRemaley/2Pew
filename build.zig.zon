@@ -1,11 +1,12 @@
 .{
-    .name = "2Pew",
+    .name = .pewpew,
+    .fingerprint = 0x9fc0df57546e5151,
     .version = "0.0.0",
     .minimum_zig_version = "0.14.0-dev.2544+94df665fe",
     .dependencies = .{
         .zcs = .{
-            .url = "https://github.com/Games-by-Mason/ZCS/archive/08a4ee0170f9092c1241fb5ab46836280d9806a8.tar.gz",
-            .hash = "12201595ef67febc299d8ceeca705a0d37673dd70f50db3eec67ef1f4a0e970ebbb5",
+            .url = "https://github.com/Games-by-Mason/ZCS/archive/ce01441da7ad9d7be3126cfb3ebf3d82dc411145.tar.gz",
+            .hash = "zcs-0.0.0-WhLQ_A1oAQCGvptqh54BGr3cxtvtPCIqlgDamT3ZCoZb",
         },
     },
     .paths = .{
