@@ -23,6 +23,10 @@ const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
 
 const tween = zcs.ext.geom.tween;
 
+const lerp = tween.interp.lerp;
+const remap = tween.interp.remap;
+const remapClamped = tween.interp.remapClamped;
+
 const input_system = @import("input_system.zig").init(enum {
     turn,
     thrust_forward,
@@ -315,7 +319,7 @@ fn update(
                 }
 
                 const shrapnel_amt: u32 = @intFromFloat(
-                    @floor(remap_clamped(0, 100, 0, 30, total_damage)),
+                    @floor(remapClamped(0, 100, 0, 30, total_damage)),
                 );
                 const shrapnel_center = vw.transform.getPos().plus(other.transform.getPos()).scaled(0.5);
                 const avg_vel = vw.rb.vel.plus(other.rb.vel).scaled(0.5);
@@ -2684,44 +2688,6 @@ fn sdlRect(top_left_pos: Vec2, size: Vec2) c.SDL_Rect {
         .w = @intFromFloat(size_floored.x),
         .h = @intFromFloat(size_floored.y),
     };
-}
-
-// XXX: remove, use tween, improve api if needed
-/// Linearly interpolates between `start` and `end` by `t`.
-fn lerp(start: f32, end: f32, t: f32) f32 {
-    return (1.0 - t) * start + t * end;
-}
-
-fn lerp_clamped(start: f32, end: f32, t: f32) f32 {
-    return lerp(start, end, math.clamp(t, 0.0, 1.0));
-}
-
-fn ilerp(start: f32, end: f32, value: f32) f32 {
-    return (value - start) / (end - start);
-}
-
-fn ilerp_clamped(start: f32, end: f32, value: f32) f32 {
-    return math.clamp(ilerp(start, end, value), 0.0, 1.0);
-}
-
-fn remap(
-    start_in: f32,
-    end_in: f32,
-    start_out: f32,
-    end_out: f32,
-    value: f32,
-) f32 {
-    return lerp(start_out, end_out, ilerp(start_in, end_in, value));
-}
-
-fn remap_clamped(
-    start_in: f32,
-    end_in: f32,
-    start_out: f32,
-    end_out: f32,
-    value: f32,
-) f32 {
-    return lerp(start_out, end_out, ilerp_clamped(start_in, end_in, value));
 }
 
 const RenderCopyOptions = struct {
