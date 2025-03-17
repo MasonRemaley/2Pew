@@ -105,6 +105,8 @@ pub fn main() !void {
     var es = try Entities.init(allocator, .{
         .max_entities = 100000,
         .comp_bytes = 1000000,
+        .max_archetypes = 64,
+        .max_chunks = 1024,
     });
     defer es.deinit(allocator);
 
@@ -867,30 +869,7 @@ fn update(
 }
 
 pub fn exec(es: *Entities, cb: *CmdBuf) void {
-    var batches = cb.iterator();
-    while (batches.next()) |batch| {
-        var node_exec: Node.Exec = .{};
-
-        var arch_change = batch.getArchChangeImmediate(es);
-        {
-            var iter = batch.iterator();
-            while (iter.next()) |cmd| {
-                node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
-            }
-        }
-
-        _ = batch.execImmediate(es, arch_change);
-
-        {
-            var iter = batch.iterator();
-            while (iter.next()) |cmd| {
-                node_exec.afterCmdImmediate(es, batch, arch_change, cmd) catch |err|
-                    @panic(@errorName(err));
-                Transform.Exec.afterCmdImmediate(es, batch, cmd);
-            }
-        }
-    }
-
+    Transform.exec.immediate(es, cb.*);
     cb.clear(es);
 }
 
@@ -1509,7 +1488,7 @@ const Game = struct {
         thruster.add(cb, Animation.Playback, .{ .index = .none });
         thruster.add(cb, PlayerIndex, player_index);
         thruster.add(cb, TeamIndex, team_index);
-        thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+        cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
     }
 
     fn createTriangle(
@@ -1575,7 +1554,7 @@ const Game = struct {
         thruster.add(cb, Animation.Playback, .{ .index = .none });
         thruster.add(cb, PlayerIndex, player_index);
         thruster.add(cb, TeamIndex, team_index);
-        thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+        cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
     }
 
     fn createMilitia(
@@ -1642,7 +1621,7 @@ const Game = struct {
         thruster.add(cb, Animation.Playback, .{ .index = .none });
         thruster.add(cb, PlayerIndex, player_index);
         thruster.add(cb, TeamIndex, team_index);
-        thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+        cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
     }
 
     fn createKevin(
@@ -1700,11 +1679,11 @@ const Game = struct {
             turret.add(cb, Transform, .initLocal(.{
                 .pos = .{ .x = 0.0, .y = y },
             }));
-            turret.cmd(cb, Node.SetParent, .{ship.toOptional()});
+            cb.ext(Node.SetParent, .{ .child = turret, .parent = ship.toOptional() });
         }
 
         const thruster = Entity.reserve(cb);
-        thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+        cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
         thruster.add(cb, Transform, .initLocal(.{}));
         thruster.add(cb, RigidBody, .{
             .radius = self.kevin_radius,
@@ -1771,7 +1750,7 @@ const Game = struct {
 
         {
             const thruster = Entity.reserve(cb);
-            thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+            cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
             thruster.add(cb, Transform, .initLocal(.{ .pos = .{ .x = 100, .y = 0 } }));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
@@ -1790,7 +1769,7 @@ const Game = struct {
 
         {
             const thruster = Entity.reserve(cb);
-            thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+            cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
             thruster.add(cb, Transform, .initLocal(.{}));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
@@ -1809,7 +1788,7 @@ const Game = struct {
 
         {
             const thruster = Entity.reserve(cb);
-            thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+            cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
             thruster.add(cb, Transform, .initLocal(.{}));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
@@ -1828,7 +1807,7 @@ const Game = struct {
 
         {
             const thruster = Entity.reserve(cb);
-            thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+            cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
             thruster.add(cb, Transform, .initLocal(.{}));
             thruster.add(cb, RigidBody, .{
                 .radius = self.wendy_radius,
