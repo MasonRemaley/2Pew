@@ -62,7 +62,11 @@ const profile = false;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
-    const allocator = gpa.allocator();
+    var tracy_allocator: tracy.Allocator = .{
+        .pool_name = "gpa",
+        .parent = gpa.allocator(),
+    };
+    const allocator = tracy_allocator.allocator();
 
     // Init SDL
     if (!(c.SDL_SetHintWithPriority(
@@ -107,7 +111,7 @@ pub fn main() !void {
     var game = try Game.init(allocator, &assets);
 
     // Create initial entities
-    var es = try Entities.init(.{ .gpa = allocator });
+    var es: Entities = try .init(.{ .gpa = allocator });
     defer es.deinit(allocator);
 
     // TODO: remember to check usage
