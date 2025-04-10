@@ -107,22 +107,11 @@ pub fn main() !void {
     var game = try Game.init(allocator, &assets);
 
     // Create initial entities
-    var es = try Entities.init(allocator, .{
-        .max_entities = 100000,
-        .max_archetypes = 64,
-        .max_chunks = 1024,
-    });
+    var es = try Entities.init(.{ .gpa = allocator });
     defer es.deinit(allocator);
 
     // TODO: remember to check usage
-    var cb = try CmdBuf.init(
-        allocator,
-        &es,
-        .{
-            .cmds = 8192,
-            .data = .{ .bytes_per_cmd = @sizeOf(f32) * 16 },
-        },
-    );
+    var cb = try CmdBuf.init(.{ .name = "cb", .gpa = allocator, .es = &es });
     defer cb.deinit(allocator, &es);
 
     game.setupScenario(&es, &cb, .deathmatch_2v2);
@@ -284,7 +273,7 @@ fn update(
 
     exec(es, cb);
 
-    es.updateStats(.{});
+    es.updateStats();
 }
 
 fn updateGravity(
@@ -296,7 +285,6 @@ fn updateGravity(
     rb: *RigidBody,
     transform: *Transform,
     health_opt: ?*Health,
-    entity: Entity,
 ) void {
     // gravity if the rb is outside the ring
     if (transform.getWorldPos().distSq(display_center) > display_radius * display_radius and rb.density < std.math.inf(f32)) {
@@ -307,9 +295,8 @@ fn updateGravity(
         if (health_opt) |health| _ = health.damage(ctx.delta_s * 4);
     }
 
-    // XXX: using entity.get just to make sure entity is right for now
     // transform.move(ctx.es, ctx.cb, rb.vel.scaled(ctx.delta_s));
-    entity.get(ctx.es, Transform).?.move(ctx.es, rb.vel.scaled(ctx.delta_s));
+    transform.move(ctx.es, rb.vel.scaled(ctx.delta_s));
     transform.rotate(ctx.es, .fromAngle(rb.rotation_vel * ctx.delta_s));
 }
 
@@ -949,8 +936,7 @@ fn updateTurret(
 }
 
 pub fn exec(es: *Entities, cb: *CmdBuf) void {
-    Transform.Exec.immediate(es, cb, "exec");
-    cb.clear(es);
+    Transform.Exec.immediate(es, cb);
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
