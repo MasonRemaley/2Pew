@@ -2,11 +2,11 @@
     .name = .pewpew,
     .fingerprint = 0x9fc0df57546e5151,
     .version = "0.0.0",
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.0-dev.388+05e217607",
     .dependencies = .{
         .zcs = .{
-            .url = "git+https://github.com/Games-By-Mason/ZCS#9e6f5ebce2e69ab5c84e10b71012f9c8c1d9f5c4",
-            .hash = "zcs-0.0.0-WhLQ_HDFAgAALMxH9RuOCmRviFDrWAAPvdgGlTFJxna4",
+            .url = "git+https://github.com/Games-By-Mason/zcs#5ba4d0ed716096e673cc3bd2c4413f30ca322dc1",
+            .hash = "zcs-0.1.0-WhLQ_GvmAgAWhjzpoZggZQ_iYc-BzEA_m6JlzxrCRM49",
         },
         .tracy = .{
             .url = "git+https://github.com/Games-By-Mason/tracy_zig#0cad4646be2791982f692a7a47716ec92b62eb2e",
