@@ -20,6 +20,10 @@
             .url = "git+https://github.com/Games-By-Mason/gpu#6bb35463bb6b045082c63d1ed2cec7ba89fa4471",
             .hash = "gpu-0.0.0-Wb6aFhQzAwAEPA0H0vTiswnlFQJAGy-xbRD2GDL4fWo3",
         },
+        .structopt = .{
+            .url = "git+https://github.com/Games-by-Mason/structopt#d25aa44c2de2a035d2d17b9b0ebd2df4304642a7",
+            .hash = "structopt-1.0.0-OgtKAmU3AQDps_oC4lcxt8kUDaHQlkj9vR-510Q0JojF",
+        },
     },
     .paths = .{
         "assets",

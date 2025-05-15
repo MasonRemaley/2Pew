@@ -51,6 +51,12 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("logger", logger.module("logger"));
 
+    const structopt = b.dependency("structopt", .{
+        .optimize = optimize,
+        .target = target,
+    });
+    exe.root_module.addImport("structopt", structopt.module("structopt"));
+
     // Get the Tracy dependency
     const tracy = b.dependency("tracy", .{
         .target = target,

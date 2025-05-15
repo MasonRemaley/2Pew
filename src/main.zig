@@ -26,6 +26,9 @@ const Gx = gpu.Gx;
 const build = @import("build.zig.zon");
 const logger = @import("logger");
 const Logger = logger.Logger(.{ .history = .none });
+const structopt = @import("structopt");
+const Command = structopt.Command;
+const NamedArg = structopt.NamedArg;
 
 const tracy = @import("tracy");
 const Zone = tracy.Zone;
@@ -35,6 +38,20 @@ pub const tracy_impl = @import("tracy_impl");
 pub const std_options: std.Options = .{
     .logFn = Logger.logFn,
     .log_level = .info,
+};
+
+const command: Command = .{
+    .name = @tagName(build.name),
+    .named_args = &.{
+        NamedArg.init(Gx.Options.DebugMode, .{
+            .long = "gpu-debug",
+            .default = .{ .value = if (builtin.mode == .Debug) .validate else .none },
+        }),
+        NamedArg.init(bool, .{
+            .long = "gx",
+            .default = .{ .value = false },
+        }),
+    },
 };
 
 const tween = zcs.ext.geom.tween;
@@ -75,6 +92,11 @@ pub const gpu_options: gpu.Options = .{
     .Backend = VkBackend,
 };
 
+const Renderer = union(enum) {
+    sdl: *c.SDL_Renderer,
+    gx: Gx,
+};
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
     var tracy_allocator: tracy.Allocator = .{
@@ -82,6 +104,16 @@ pub fn main() !void {
         .parent = gpa.allocator(),
     };
     const allocator = tracy_allocator.allocator();
+
+    const args = b: {
+        var arg_iter = std.process.argsWithAllocator(allocator) catch @panic("OOM");
+        defer arg_iter.deinit();
+        break :b command.parse(allocator, &arg_iter) catch {
+            if (!tracy.enabled) std.process.cleanExit();
+            return;
+        };
+    };
+    defer command.parseFree(args);
 
     // Init SDL
     if (!(c.SDL_SetHintWithPriority(
@@ -113,8 +145,8 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyWindow(screen);
 
-    const app_version = comptime std.SemanticVersion.parse(build.version) catch unreachable;
-    var gx: Gx = b: {
+    var renderer: Renderer = if (args.named.gx) b: {
+        const app_version = comptime std.SemanticVersion.parse(build.version) catch unreachable;
         var instance_ext_count: u32 = 0;
         if (c.SDL_Vulkan_GetInstanceExtensions(screen, &instance_ext_count, null) != c.SDL_TRUE) {
             return error.SdlVkGetInstanceExtensionsError;
@@ -125,7 +157,7 @@ pub fn main() !void {
             return error.SdlVkGetInstanceExtensionsError;
         }
 
-        break :b .init(allocator, .{
+        break :b .{ .gx = .init(allocator, .{
             .app_name = @tagName(build.name),
             .app_version = .{
                 .major = app_version.major,
@@ -146,21 +178,26 @@ pub fn main() !void {
                 .surface_context = screen,
                 .createSurface = &createVulkanSurface,
             },
-        });
+            .debug = args.named.@"gpu-debug",
+        }) };
+    } else b: {
+        const renderer_flags: u32 = if (profile) 0 else c.SDL_RENDERER_PRESENTVSYNC;
+        break :b .{ .sdl = c.SDL_CreateRenderer(screen, -1, renderer_flags) orelse {
+            panic("SDL_CreateRenderer failed: {s}\n", .{c.SDL_GetError()});
+        } };
     };
-    defer {
-        gx.waitIdle();
-        gx.deinit(allocator);
-    }
-
-    const renderer_flags: u32 = if (profile) 0 else c.SDL_RENDERER_PRESENTVSYNC;
-    const renderer: *c.SDL_Renderer = c.SDL_CreateRenderer(screen, -1, renderer_flags) orelse {
-        panic("SDL_CreateRenderer failed: {s}\n", .{c.SDL_GetError()});
+    defer switch (renderer) {
+        .sdl => |sr| {
+            c.SDL_DestroyRenderer(sr);
+        },
+        .gx => |*gx| {
+            gx.waitIdle();
+            gx.deinit(allocator);
+        },
     };
-    defer c.SDL_DestroyRenderer(renderer);
 
     // Load assets
-    var assets = try Assets.init(allocator, renderer);
+    var assets = try Assets.init(allocator, &renderer);
     defer assets.deinit();
 
     var game = try Game.init(allocator, &assets);
@@ -194,12 +231,6 @@ pub fn main() !void {
         }
         update(&es, &cb, &game, delta_s);
         render(&es, &game, delta_s, fx_loop_s);
-
-        {
-            const present_zone = Zone.begin(.{ .src = @src(), .name = "present" });
-            defer present_zone.end();
-            c.SDL_RenderPresent(renderer);
-        }
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
         // results if it's too close to zero!
@@ -1006,116 +1037,163 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
-    const assets = game.assets;
-    const renderer = assets.renderer;
+    switch (game.assets.renderer.*) {
+        .sdl => |sdl| {
+            // This was added for the flash effect and then not used since it already requires a timer
+            // state. We'll be wanting it later and I don't feel like deleting and retyping the explanation
+            // for it.
+            _ = fx_loop_s;
 
-    // This was added for the flash effect and then not used since it already requires a timer
-    // state. We'll be wanting it later and I don't feel like deleting and retyping the explanation
-    // for it.
-    _ = fx_loop_s;
-
-    // Clear screen
-    {
-        const clear_zone = Zone.begin(.{ .src = @src(), .name = "clear" });
-        defer clear_zone.end();
-        sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff));
-        sdlAssertZero(c.SDL_RenderClear(renderer));
-    }
-
-    // Draw stars
-    {
-        const stars_zone = Zone.begin(.{ .src = @src(), .name = "stars" });
-        defer stars_zone.end();
-
-        for (game.stars) |star| {
-            const sprite = assets.sprite(switch (star.kind) {
-                .small => game.star_small,
-                .large => game.star_large,
-                .planet_red => game.planet_red,
-            });
-            renderCopy(.{
-                .renderer = renderer,
-                .tex = sprite.tints[0],
-                .rad = 0.0,
-                .pos = .{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) },
-                .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
-            });
-        }
-    }
-
-    // Draw ring
-    {
-        const ring_zone = Zone.begin(.{ .src = @src(), .name = "ring" });
-        defer ring_zone.end();
-
-        const sprite = assets.sprite(game.ring_bg);
-        renderCopy(.{
-            .renderer = renderer,
-            .tex = sprite.tints[0],
-            .rad = 0.0,
-            .pos = display_center,
-            .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
-        });
-    }
-
-    es.forEach("renderAnimations", renderAnimations, .{
-        .assets = assets,
-        .es = es,
-        .delta_s = delta_s,
-        .renderer = renderer,
-    });
-    es.forEach("renderHealthBar", renderHealthBar, .{
-        .renderer = renderer,
-    });
-    es.forEach("renderSprite", renderSprite, .{
-        .game = game,
-        .renderer = renderer,
-    });
-    es.forEach("renderSpring", renderSpring, .{
-        .es = es,
-        .renderer = renderer,
-    });
-
-    // Draw the ships in the bank.
-    {
-        const bank_zone = Zone.begin(.{ .src = @src(), .name = "bank" });
-        defer bank_zone.end();
-
-        const row_height = 64;
-        const col_width = 64;
-        const top_left: Vec2 = .{ .x = 20, .y = 20 };
-
-        for (game.teams, 0..) |team, team_index| {
+            // Clear screen
             {
-                const sprite = assets.sprite(game.particle);
-                const pos = top_left.plus(.{
-                    .x = col_width * @as(f32, @floatFromInt(team_index)),
-                    .y = 0,
-                });
-                renderCopy(.{
-                    .renderer = renderer,
-                    .tex = sprite.getTint(@enumFromInt(team_index)),
-                    .pos = pos,
-                    .size = sprite.size(),
-                });
+                const clear_zone = Zone.begin(.{ .src = @src(), .name = "clear" });
+                defer clear_zone.end();
+                sdlAssertZero(c.SDL_SetRenderDrawColor(sdl, 0x00, 0x00, 0x00, 0xff));
+                sdlAssertZero(c.SDL_RenderClear(sdl));
             }
-            for (team.ship_progression, 0..) |class, display_prog_index| {
-                const dead = team.ship_progression_index > display_prog_index;
-                if (dead) continue;
 
-                const sprite = assets.sprite(game.shipLifeSprite(class));
-                const pos = top_left.plus(.{
-                    .x = col_width * @as(f32, @floatFromInt(team_index)),
-                    .y = display_height - row_height * @as(f32, @floatFromInt(display_prog_index)),
-                });
+            // Draw stars
+            {
+                const stars_zone = Zone.begin(.{ .src = @src(), .name = "stars" });
+                defer stars_zone.end();
+
+                for (game.stars) |star| {
+                    const sprite = game.assets.sprite(switch (star.kind) {
+                        .small => game.star_small,
+                        .large => game.star_large,
+                        .planet_red => game.planet_red,
+                    });
+                    renderCopy(.{
+                        .renderer = sdl,
+                        .tex = sprite.tints[0],
+                        .rad = 0.0,
+                        .pos = .{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) },
+                        .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
+                    });
+                }
+            }
+
+            // Draw ring
+            {
+                const ring_zone = Zone.begin(.{ .src = @src(), .name = "ring" });
+                defer ring_zone.end();
+
+                const sprite = game.assets.sprite(game.ring_bg);
                 renderCopy(.{
-                    .renderer = renderer,
-                    .tex = sprite.getTint(@enumFromInt(team_index)),
-                    .pos = pos,
-                    .size = sprite.size().scaled(0.5),
+                    .renderer = sdl,
+                    .tex = sprite.tints[0],
+                    .rad = 0.0,
+                    .pos = display_center,
+                    .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
                 });
             }
-        }
+
+            es.forEach("renderAnimations", renderAnimations, .{
+                .assets = game.assets,
+                .es = es,
+                .delta_s = delta_s,
+                .renderer = sdl,
+            });
+            es.forEach("renderHealthBar", renderHealthBar, .{
+                .renderer = sdl,
+            });
+            es.forEach("renderSprite", renderSprite, .{
+                .game = game,
+                .renderer = sdl,
+            });
+            es.forEach("renderSpring", renderSpring, .{
+                .es = es,
+                .renderer = sdl,
+            });
+
+            // Draw the ships in the bank.
+            {
+                const bank_zone = Zone.begin(.{ .src = @src(), .name = "bank" });
+                defer bank_zone.end();
+
+                const row_height = 64;
+                const col_width = 64;
+                const top_left: Vec2 = .{ .x = 20, .y = 20 };
+
+                for (game.teams, 0..) |team, team_index| {
+                    {
+                        const sprite = game.assets.sprite(game.particle);
+                        const pos = top_left.plus(.{
+                            .x = col_width * @as(f32, @floatFromInt(team_index)),
+                            .y = 0,
+                        });
+                        renderCopy(.{
+                            .renderer = sdl,
+                            .tex = sprite.getTint(@enumFromInt(team_index)),
+                            .pos = pos,
+                            .size = sprite.size(),
+                        });
+                    }
+                    for (team.ship_progression, 0..) |class, display_prog_index| {
+                        const dead = team.ship_progression_index > display_prog_index;
+                        if (dead) continue;
+
+                        const sprite = game.assets.sprite(game.shipLifeSprite(class));
+                        const pos = top_left.plus(.{
+                            .x = col_width * @as(f32, @floatFromInt(team_index)),
+                            .y = display_height - row_height * @as(f32, @floatFromInt(display_prog_index)),
+                        });
+                        renderCopy(.{
+                            .renderer = sdl,
+                            .tex = sprite.getTint(@enumFromInt(team_index)),
+                            .pos = pos,
+                            .size = sprite.size().scaled(0.5),
+                        });
+                    }
+                }
+            }
+
+            {
+                const present_zone = Zone.begin(.{ .src = @src(), .name = "present" });
+                defer present_zone.end();
+                c.SDL_RenderPresent(sdl);
+            }
+        },
+        .gx => |*gx| {
+            gx.beginFrame();
+            const framebuf = gx.acquireNextImage(.{
+                .width = display_width,
+                .height = display_height,
+            });
+            const render_game: gpu.CmdBuf = .init(gx, .{
+                .name = "Render Game",
+                .src = @src(),
+            });
+            render_game.beginRendering(gx, .{
+                .color_attachments = &.{
+                    .init(.{
+                        .load_op = .{ .clear_color = .{ 0.5, 0.0, 0.0, 1.0 } },
+                        .view = framebuf.view,
+                    }),
+                },
+                // XXX: can probably configure these to make coords line up with 1920x1080? or can
+                // not do that. idk
+                .viewport = .{
+                    .x = 0,
+                    .y = 0,
+                    .width = @floatFromInt(framebuf.extent.width),
+                    .height = @floatFromInt(framebuf.extent.height),
+                    .min_depth = 0.0,
+                    .max_depth = 1.0,
+                },
+                .scissor = .{
+                    .offset = .{ .x = 0, .y = 0 },
+                    .extent = framebuf.extent,
+                },
+                .area = .{
+                    .offset = .{ .x = 0, .y = 0 },
+                    .extent = framebuf.extent,
+                },
+            });
+            render_game.endRendering(gx);
+            render_game.submit(gx);
+            gx.endFrame(.{});
+        },
     }
 }
 
@@ -2585,7 +2663,7 @@ const Game = struct {
 
 const Assets = struct {
     gpa: Allocator,
-    renderer: *c.SDL_Renderer,
+    renderer: *Renderer,
     dir: std.fs.Dir,
     sprites: std.ArrayListUnmanaged(Sprite),
     frames: std.ArrayListUnmanaged(Sprite.Index),
@@ -2596,7 +2674,7 @@ const Assets = struct {
         angle: f32,
     };
 
-    fn init(gpa: Allocator, renderer: *c.SDL_Renderer) !Assets {
+    fn init(gpa: Allocator, renderer: *Renderer) !Assets {
         const self_exe_dir_path = try std.fs.selfExeDirPathAlloc(gpa);
         defer gpa.free(self_exe_dir_path);
         const assets_dir_path = try std.fs.path.join(gpa, &.{ self_exe_dir_path, "data" });
@@ -2668,12 +2746,24 @@ const Assets = struct {
     }
 
     fn loadSprite(a: *Assets, allocator: Allocator, diffuse_name: []const u8, recolor_name: ?[]const u8, tints: []const [3]u8) !Sprite.Index {
-        const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
-        defer a.gpa.free(diffuse_png);
-        const recolor = if (recolor_name != null) try a.dir.readFileAlloc(a.gpa, recolor_name.?, 50 * 1024 * 1024) else null;
-        defer if (recolor != null) a.gpa.free(recolor.?);
-        try a.sprites.append(a.gpa, try spriteFromBytes(allocator, diffuse_png, recolor, a.renderer, tints));
-        return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
+        switch (a.renderer.*) {
+            .sdl => |sdl| {
+                const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
+                defer a.gpa.free(diffuse_png);
+                const recolor = if (recolor_name != null) try a.dir.readFileAlloc(a.gpa, recolor_name.?, 50 * 1024 * 1024) else null;
+                defer if (recolor != null) a.gpa.free(recolor.?);
+                try a.sprites.append(a.gpa, try spriteFromBytes(allocator, diffuse_png, recolor, sdl, tints));
+                return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
+            },
+            .gx => {
+                // XXX: ...
+                try a.sprites.append(a.gpa, .{
+                    .tints = &.{},
+                    .rect = .{ .x = 0, .y = 0, .w = 32, .h = 32 },
+                });
+                return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
+            },
+        }
     }
 
     fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, renderer: *c.SDL_Renderer, tints: []const [3]u8) !Sprite {
