@@ -31,6 +31,26 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("zcs", zcs.module("zcs"));
 
+    const build_zig_zon = b.createModule(.{
+        .root_source_file = b.path("build.zig.zon"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("build.zig.zon", build_zig_zon);
+
+    const gpu = b.dependency("gpu", .{
+        .optimize = optimize,
+        .target = target,
+    });
+    exe.root_module.addImport("gpu", gpu.module("gpu"));
+    exe.root_module.addImport("VkBackend", gpu.module("VkBackend"));
+
+    const logger = b.dependency("logger", .{
+        .optimize = optimize,
+        .target = target,
+    });
+    exe.root_module.addImport("logger", logger.module("logger"));
+
     // Get the Tracy dependency
     const tracy = b.dependency("tracy", .{
         .target = target,

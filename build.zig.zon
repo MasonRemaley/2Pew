@@ -12,6 +12,14 @@
             .url = "git+https://github.com/Games-By-Mason/tracy_zig#0cad4646be2791982f692a7a47716ec92b62eb2e",
             .hash = "tracy-0.0.0-R7l8BdlCAQBFp6uysnan3Alaxap65HBF1mzGdabdKe8z",
         },
+        .logger = .{
+            .url = "git+https://github.com/Games-By-Mason/logger#58e43c6b2014fbc4d4bbb820783ab8d61e1ab6e7",
+            .hash = "logger-0.0.0-mvc9nt5MAAAT3NYZWc9-HAEnV_re-k5PslWvPb6yjoCv",
+        },
+        .gpu = .{
+            .url = "git+https://github.com/Games-By-Mason/gpu#6bb35463bb6b045082c63d1ed2cec7ba89fa4471",
+            .hash = "gpu-0.0.0-Wb6aFhQzAwAEPA0H0vTiswnlFQJAGy-xbRD2GDL4fWo3",
+        },
     },
     .paths = .{
         "assets",

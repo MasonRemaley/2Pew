@@ -20,11 +20,22 @@ const Mat2x3 = zcs.ext.geom.Mat2x3;
 const Transform = zcs.ext.Transform2D;
 const FieldEnum = std.meta.FieldEnum;
 const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
+const gpu = @import("gpu");
+const VkBackend = @import("VkBackend");
+const Gx = gpu.Gx;
+const build = @import("build.zig.zon");
+const logger = @import("logger");
+const Logger = logger.Logger(.{ .history = .none });
 
 const tracy = @import("tracy");
 const Zone = tracy.Zone;
 
 pub const tracy_impl = @import("tracy_impl");
+
+pub const std_options: std.Options = .{
+    .logFn = Logger.logFn,
+    .log_level = .info,
+};
 
 const tween = zcs.ext.geom.tween;
 
@@ -60,6 +71,10 @@ const dead_zone = 10000;
 // to a file.)
 const profile = false;
 
+pub const gpu_options: gpu.Options = .{
+    .Backend = VkBackend,
+};
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
     var tracy_allocator: tracy.Allocator = .{
@@ -87,16 +102,56 @@ pub fn main() !void {
     };
 
     const screen = c.SDL_CreateWindow(
-        "2Pew",
+        @tagName(build.name),
         c.SDL_WINDOWPOS_UNDEFINED,
         c.SDL_WINDOWPOS_UNDEFINED,
         display_width,
         display_height,
-        window_mode,
+        window_mode | c.SDL_WINDOW_VULKAN,
     ) orelse {
         panic("SDL_CreateWindow failed: {s}\n", .{c.SDL_GetError()});
     };
     defer c.SDL_DestroyWindow(screen);
+
+    const app_version = comptime std.SemanticVersion.parse(build.version) catch unreachable;
+    var gx: Gx = b: {
+        var instance_ext_count: u32 = 0;
+        if (c.SDL_Vulkan_GetInstanceExtensions(screen, &instance_ext_count, null) != c.SDL_TRUE) {
+            return error.SdlVkGetInstanceExtensionsError;
+        }
+        const instance_ext_names: [][*:0]const u8 = try allocator.alloc([*:0]const u8, instance_ext_count);
+        defer allocator.free(instance_ext_names);
+        if (c.SDL_Vulkan_GetInstanceExtensions(screen, &instance_ext_count, @ptrCast(instance_ext_names)) != c.SDL_TRUE) {
+            return error.SdlVkGetInstanceExtensionsError;
+        }
+
+        break :b .init(allocator, .{
+            .app_name = @tagName(build.name),
+            .app_version = .{
+                .major = app_version.major,
+                .minor = app_version.minor,
+                .patch = app_version.patch,
+            },
+            .engine_name = @tagName(build.name),
+            .engine_version = .{
+                .major = app_version.major,
+                .minor = app_version.minor,
+                .patch = app_version.patch,
+            },
+            .frames_in_flight = 2,
+            .timestamp_queries = tracy.enabled,
+            .backend = .{
+                .instance_extensions = instance_ext_names,
+                .getInstanceProcAddress = @ptrCast(c.SDL_Vulkan_GetVkGetInstanceProcAddr()),
+                .surface_context = screen,
+                .createSurface = &createVulkanSurface,
+            },
+        });
+    };
+    defer {
+        gx.waitIdle();
+        gx.deinit(allocator);
+    }
 
     const renderer_flags: u32 = if (profile) 0 else c.SDL_RENDERER_PRESENTVSYNC;
     const renderer: *c.SDL_Renderer = c.SDL_CreateRenderer(screen, -1, renderer_flags) orelse {
@@ -133,7 +188,10 @@ pub fn main() !void {
     // var warned_memory_usage = false;
 
     while (true) {
-        if (poll(&es, &cb, &game)) return;
+        if (poll(&es, &cb, &game)) {
+            std.process.cleanExit();
+            return;
+        }
         update(&es, &cb, &game, delta_s);
         render(&es, &game, delta_s, fx_loop_s);
 
@@ -2799,6 +2857,24 @@ fn renderCopy(opt: RenderCopyOptions) void {
         null,
         c.SDL_FLIP_NONE,
     ));
+}
+
+fn createVulkanSurface(
+    instance: VkBackend.vk.Instance,
+    context: ?*anyopaque,
+    allocation_callbacks: ?*const VkBackend.vk.AllocationCallbacks,
+) VkBackend.vk.SurfaceKHR {
+    assert(allocation_callbacks == null);
+    const screen: *c.SDL_Window = @ptrCast(@alignCast(context));
+    var surface: c.VkSurfaceKHR = undefined;
+    if (c.SDL_Vulkan_CreateSurface(
+        screen,
+        @ptrFromInt(@intFromEnum(instance)),
+        &surface,
+    ) != c.SDL_TRUE) {
+        return .null_handle;
+    }
+    return @enumFromInt(@intFromPtr(surface));
 }
 
 test {
