@@ -29,6 +29,7 @@ const Logger = logger.Logger(.{ .history = .none });
 const structopt = @import("structopt");
 const Command = structopt.Command;
 const NamedArg = structopt.NamedArg;
+const log = std.log.scoped(build.name);
 
 const tracy = @import("tracy");
 const Zone = tracy.Zone;
@@ -105,14 +106,7 @@ pub fn main() !void {
     };
     const allocator = tracy_allocator.allocator();
 
-    const args = b: {
-        var arg_iter = std.process.argsWithAllocator(allocator) catch @panic("OOM");
-        defer arg_iter.deinit();
-        break :b command.parse(allocator, &arg_iter) catch {
-            if (!tracy.enabled) std.process.cleanExit();
-            return;
-        };
-    };
+    const args = try command.parse(allocator);
     defer command.parseFree(args);
 
     // Init SDL
