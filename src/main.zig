@@ -95,14 +95,11 @@ pub const gpu_options: gpu.Options = .{
 
 pub const VkRenderer = struct {
     gx: Gx,
+    upload: gpu.CmdBuf,
     staging: gpu.UploadBuf(.{ .transfer_src = true }),
     staging_writer: gpu.VolatileWriter,
-    pre_upload_barriers: BoundedArray(gpu.ImageBarrier, 64) = .{},
-    post_upload_barriers: BoundedArray(gpu.ImageBarrier, 64) = .{},
-    image_uploads: BoundedArray(gpu.ImageUpload, 64) = .{},
-    image_upload_regions: BoundedArray(gpu.ImageUpload.Region, 64) = .{},
-    image_memory: gpu.Memory(.color_image),
     image_memory_offset: u64 = 0,
+    image_memory: gpu.Memory(.color_image),
 
     fn deinit(self: *@This(), gpa: Allocator) void {
         self.gx.waitIdle();
@@ -206,12 +203,19 @@ pub fn main() !void {
             .size = 16 * mb,
         });
 
+        gx.beginFrame();
+        const upload: gpu.CmdBuf = .init(&gx, .{
+            .name = "Upload Images",
+            .src = @src(),
+        });
+
         break :b .{
             .vk = .{
                 .gx = gx,
                 .staging = staging,
                 .staging_writer = staging.writer(.{}),
                 .image_memory = image_memory,
+                .upload = upload,
             },
         };
     } else b: {
@@ -2384,24 +2388,9 @@ const Game = struct {
 
         switch (assets.renderer.*) {
             .vk => |*vk| {
-                vk.gx.beginFrame();
-
-                const upload: gpu.CmdBuf = .init(&vk.gx, .{
-                    .name = "Upload Images",
-                    .src = @src(),
-                });
-                upload.barriers(&vk.gx, .{ .image = vk.pre_upload_barriers.constSlice() });
-                for (vk.image_uploads.constSlice()) |image_upload| {
-                    upload.uploadImage(&vk.gx, image_upload);
-                }
-                upload.barriers(&vk.gx, .{ .image = vk.post_upload_barriers.constSlice() });
-                upload.submit(&vk.gx);
-
-                vk.pre_upload_barriers.clear();
-                vk.post_upload_barriers.clear();
-                vk.image_upload_regions.clear();
-                vk.image_uploads.clear();
-
+                const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
+                defer zone.end();
+                vk.upload.submit(&vk.gx);
                 vk.gx.endFrame(.{ .present = false });
             },
             else => {},
@@ -2854,37 +2843,37 @@ const Assets = struct {
                     },
                 });
 
-                const region = vk.image_upload_regions.addOne() catch |err| @panic(@errorName(err));
-                region.* = .init(.{
-                    .aspect = .{ .color = true },
-                    .image_extent = .{
-                        .width = @intCast(width),
-                        .height = @intCast(height),
-                        .depth = 1,
-                    },
-                    .buffer_offset = vk.staging_writer.pos,
-                });
-                vk.pre_upload_barriers.append(.undefinedToTransferDst(.{
-                    .handle = image.handle,
-                    .range = .first,
-                    .aspect = .{ .color = true },
-                })) catch |err| @panic(@errorName(err));
-                vk.image_uploads.append(.{
+                vk.upload.barriers(&vk.gx, .{ .image = &.{
+                    .undefinedToTransferDst(.{
+                        .handle = image.handle,
+                        .range = .first,
+                        .aspect = .{ .color = true },
+                    }),
+                } });
+                vk.upload.uploadImage(&vk.gx, .{
                     .dst = image.handle,
                     .src = vk.staging.handle,
                     .base_mip_level = 0,
                     .mip_levels = 1,
-                    .regions = region[0..1],
-                }) catch |err| @panic(@errorName(err));
-                vk.post_upload_barriers.append(.transferDstToReadOnly(.{
+                    .regions = &.{
+                        .init(.{
+                            .aspect = .{ .color = true },
+                            .image_extent = .{
+                                .width = @intCast(width),
+                                .height = @intCast(height),
+                                .depth = 1,
+                            },
+                            .buffer_offset = vk.staging_writer.pos,
+                        }),
+                    },
+                });
+                vk.upload.barriers(&vk.gx, .{ .image = &.{.transferDstToReadOnly(.{
                     .handle = image.handle,
                     .range = .first,
                     .dst_stage = .{ .fragment_shader = true },
                     .aspect = .{ .color = true },
-                })) catch |err| @panic(@errorName(err));
+                })} });
 
-                // XXX: do we need to align these? i think at least to texel size, but that's automatic
-                // for this type of image MAYBE maybe not?
                 vk.staging_writer.writeAll(pixels) catch |err| @panic(@errorName(err));
 
                 try a.sprites.append(a.gpa, .{
