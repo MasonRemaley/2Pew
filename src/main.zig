@@ -93,9 +93,26 @@ pub const gpu_options: gpu.Options = .{
     .Backend = VkBackend,
 };
 
+pub const VkRenderer = struct {
+    gx: Gx,
+    staging: gpu.UploadBuf(.{ .transfer_src = true }),
+    staging_writer: gpu.VolatileWriter,
+    pre_upload_barriers: BoundedArray(gpu.ImageBarrier, 64) = .{},
+    post_upload_barriers: BoundedArray(gpu.ImageBarrier, 64) = .{},
+    image_uploads: BoundedArray(gpu.ImageUpload, 64) = .{},
+    image_upload_regions: BoundedArray(gpu.ImageUpload.Region, 64) = .{},
+
+    fn deinit(self: *@This(), gpa: Allocator) void {
+        self.gx.waitIdle();
+        self.staging.deinit(&self.gx);
+        self.gx.deinit(gpa);
+        self.* = undefined;
+    }
+};
+
 const Renderer = union(enum) {
     sdl: *c.SDL_Renderer,
-    gx: Gx,
+    vk: VkRenderer,
 };
 
 pub fn main() !void {
@@ -151,7 +168,7 @@ pub fn main() !void {
             return error.SdlVkGetInstanceExtensionsError;
         }
 
-        break :b .{ .gx = .init(allocator, .{
+        var gx: Gx = .init(allocator, .{
             .app_name = @tagName(build.name),
             .app_version = .{
                 .major = app_version.major,
@@ -173,7 +190,22 @@ pub fn main() !void {
                 .createSurface = &createVulkanSurface,
             },
             .debug = args.named.@"gpu-debug",
-        }) };
+        });
+
+        const mb = std.math.pow(u64, 2, 20);
+        const staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(&gx, .{
+            .name = .{ .str = "Staging" },
+            .size = 16 * mb,
+            .prefer_device_local = false,
+        });
+
+        break :b .{
+            .vk = .{
+                .gx = gx,
+                .staging = staging,
+                .staging_writer = staging.writer(.{}),
+            },
+        };
     } else b: {
         const renderer_flags: u32 = if (profile) 0 else c.SDL_RENDERER_PRESENTVSYNC;
         break :b .{ .sdl = c.SDL_CreateRenderer(screen, -1, renderer_flags) orelse {
@@ -181,13 +213,8 @@ pub fn main() !void {
         } };
     };
     defer switch (renderer) {
-        .sdl => |sr| {
-            c.SDL_DestroyRenderer(sr);
-        },
-        .gx => |*gx| {
-            gx.waitIdle();
-            gx.deinit(allocator);
-        },
+        .sdl => |sr| c.SDL_DestroyRenderer(sr),
+        .vk => |*vk| vk.deinit(allocator),
     };
 
     // Load assets
@@ -1148,17 +1175,17 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
                 c.SDL_RenderPresent(sdl);
             }
         },
-        .gx => |*gx| {
-            gx.beginFrame();
-            const framebuf = gx.acquireNextImage(.{
+        .vk => |*vk| {
+            vk.gx.beginFrame();
+            const framebuf = vk.gx.acquireNextImage(.{
                 .width = display_width,
                 .height = display_height,
             });
-            const render_game: gpu.CmdBuf = .init(gx, .{
+            const render_game: gpu.CmdBuf = .init(&vk.gx, .{
                 .name = "Render Game",
                 .src = @src(),
             });
-            render_game.beginRendering(gx, .{
+            render_game.beginRendering(&vk.gx, .{
                 .color_attachments = &.{
                     .init(.{
                         .load_op = .{ .clear_color = .{ 0.5, 0.0, 0.0, 1.0 } },
@@ -1184,9 +1211,9 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
                     .extent = framebuf.extent,
                 },
             });
-            render_game.endRendering(gx);
-            render_game.submit(gx);
-            gx.endFrame(.{});
+            render_game.endRendering(&vk.gx);
+            render_game.submit(&vk.gx);
+            vk.gx.endFrame(.{});
         },
     }
 }
@@ -1551,6 +1578,7 @@ const Ship = struct {
 const Sprite = struct {
     tints: []*c.SDL_Texture,
     rect: c.SDL_Rect,
+    image: ?gpu.Image(.color),
 
     // If this sprite supports tinting, returns the tint. Otherwise returns the default tint.
     fn getTint(self: *const @This(), index: ?TeamIndex) *c.SDL_Texture {
@@ -1565,8 +1593,11 @@ const Sprite = struct {
         _,
     };
 
-    fn deinit(self: *@This(), allocator: Allocator) void {
-        allocator.free(self.tints);
+    fn deinit(self: *@This(), allocator: Allocator, renderer: *Renderer) void {
+        switch (renderer.*) {
+            .vk => |*vk| self.image.?.deinit(&vk.gx),
+            .sdl => allocator.free(self.tints),
+        }
         self.* = undefined;
     }
 
@@ -1652,13 +1683,13 @@ const Game = struct {
         thrusters_bottom: ?Animation.Index = null,
     };
 
-    const shrapnel_sprite_names = [_][]const u8{
+    const shrapnel_sprite_names = [_][:0]const u8{
         "img/shrapnel/01.png",
         "img/shrapnel/02.png",
         "img/shrapnel/03.png",
     };
 
-    const rock_sprite_names = [_][]const u8{
+    const rock_sprite_names = [_][:0]const u8{
         "img/rock-a.png",
         "img/rock-b.png",
         "img/rock-c.png",
@@ -2343,6 +2374,31 @@ const Game = struct {
             break :s @bitCast(buf);
         };
 
+        switch (assets.renderer.*) {
+            .vk => |*vk| {
+                vk.gx.beginFrame();
+
+                const upload: gpu.CmdBuf = .init(&vk.gx, .{
+                    .name = "Upload Images",
+                    .src = @src(),
+                });
+                upload.barriers(&vk.gx, .{ .image = vk.pre_upload_barriers.constSlice() });
+                for (vk.image_uploads.constSlice()) |image_upload| {
+                    upload.uploadImage(&vk.gx, image_upload);
+                }
+                upload.barriers(&vk.gx, .{ .image = vk.post_upload_barriers.constSlice() });
+                upload.submit(&vk.gx);
+
+                vk.pre_upload_barriers.clear();
+                vk.post_upload_barriers.clear();
+                vk.image_upload_regions.clear();
+                vk.image_uploads.clear();
+
+                vk.gx.endFrame(.{ .present = false });
+            },
+            else => {},
+        }
+
         return .{
             .rng = std.Random.DefaultPrng.init(random_seed),
             .assets = assets,
@@ -2691,6 +2747,9 @@ const Assets = struct {
 
     fn deinit(a: *Assets) void {
         a.dir.close();
+        for (a.sprites.items) |*s| {
+            s.deinit(a.gpa, a.renderer);
+        }
         a.sprites.deinit(a.gpa);
         a.frames.deinit(a.gpa);
         a.animations.deinit(a.gpa);
@@ -2739,7 +2798,7 @@ const Assets = struct {
         return a.sprites.items[@intFromEnum(index)];
     }
 
-    fn loadSprite(a: *Assets, allocator: Allocator, diffuse_name: []const u8, recolor_name: ?[]const u8, tints: []const [3]u8) !Sprite.Index {
+    fn loadSprite(a: *Assets, allocator: Allocator, diffuse_name: [:0]const u8, recolor_name: ?[:0]const u8, tints: []const [3]u8) !Sprite.Index {
         switch (a.renderer.*) {
             .sdl => |sdl| {
                 const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
@@ -2749,18 +2808,91 @@ const Assets = struct {
                 try a.sprites.append(a.gpa, try spriteFromBytes(allocator, diffuse_png, recolor, sdl, tints));
                 return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
             },
-            .gx => {
-                // XXX: ...
+            .vk => |*vk| {
+                const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
+                defer a.gpa.free(diffuse_png);
+
+                var width: c_int = undefined;
+                var height: c_int = undefined;
+                const channel_count = 4;
+                const c_pixels = c.stbi_load_from_memory(
+                    diffuse_png.ptr,
+                    @intCast(diffuse_png.len),
+                    &width,
+                    &height,
+                    null,
+                    channel_count,
+                );
+                defer c.stbi_image_free(c_pixels);
+                const pixels = c_pixels[0..@intCast(width * height * channel_count)];
+
+                const image: gpu.Image(.color) = .init(&vk.gx, .{
+                    .name = .{ .str = diffuse_name },
+                    .alloc = .dedicated,
+                    .image = .{
+                        .format = .r8g8b8a8_srgb,
+                        .extent = .{
+                            .width = @intCast(width),
+                            .height = @intCast(height),
+                            .depth = 1,
+                        },
+                        .usage = .{
+                            .transfer_dst = true,
+                            .sampled = true,
+                        },
+                    },
+                });
+
+                const region = vk.image_upload_regions.addOne() catch |err| @panic(@errorName(err));
+                region.* = .init(.{
+                    .aspect = .{ .color = true },
+                    .image_extent = .{
+                        .width = @intCast(width),
+                        .height = @intCast(height),
+                        .depth = 1,
+                    },
+                    .buffer_offset = vk.staging_writer.pos,
+                });
+                vk.pre_upload_barriers.append(.undefinedToTransferDst(.{
+                    .handle = image.handle,
+                    .range = .first,
+                    .aspect = .{ .color = true },
+                })) catch |err| @panic(@errorName(err));
+                vk.image_uploads.append(.{
+                    .dst = image.handle,
+                    .src = vk.staging.handle,
+                    .base_mip_level = 0,
+                    .mip_levels = 1,
+                    .regions = region[0..1],
+                }) catch |err| @panic(@errorName(err));
+                vk.post_upload_barriers.append(.transferDstToReadOnly(.{
+                    .handle = image.handle,
+                    .range = .first,
+                    .dst_stage = .{ .fragment_shader = true },
+                    .aspect = .{ .color = true },
+                })) catch |err| @panic(@errorName(err));
+
+                // XXX: do we need to align these? i think at least to texel size, but that's automatic
+                // for this type of image MAYBE maybe not?
+                vk.staging_writer.writeAll(pixels) catch |err| @panic(@errorName(err));
+
                 try a.sprites.append(a.gpa, .{
                     .tints = &.{},
-                    .rect = .{ .x = 0, .y = 0, .w = 32, .h = 32 },
+                    .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
+                    .image = image,
                 });
                 return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
             },
         }
     }
 
-    fn spriteFromBytes(allocator: Allocator, png_diffuse: []const u8, png_recolor: ?[]const u8, renderer: *c.SDL_Renderer, tints: []const [3]u8) !Sprite {
+    fn spriteFromBytesVk(
+        allocator: Allocator,
+        png_diffuse: []const u8,
+        png_recolor: ?[]const u8,
+        renderer: *c.SDL_Renderer,
+        tints: []const [3]u8,
+    ) !Sprite {
         var width: c_int = undefined;
         var height: c_int = undefined;
         const channel_count = 4;
@@ -2807,7 +2939,7 @@ const Assets = struct {
                     @as(f32, @floatFromInt(b.*)) / 255.0,
                 };
 
-                // Change gama
+                // Change gamma
                 const gamma = 2.2;
                 for (&color) |*color_channel| {
                     color_channel.* = math.pow(f32, color_channel.*, 1.0 / gamma);
@@ -2876,6 +3008,132 @@ const Assets = struct {
         return .{
             .tints = try textures.toOwnedSlice(allocator),
             .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
+        };
+    }
+
+    fn spriteFromBytes(
+        allocator: Allocator,
+        png_diffuse: []const u8,
+        png_recolor: ?[]const u8,
+        renderer: *c.SDL_Renderer,
+        tints: []const [3]u8,
+    ) !Sprite {
+        var width: c_int = undefined;
+        var height: c_int = undefined;
+        const channel_count = 4;
+        const bits_per_channel = 8;
+        const diffuse_data = c.stbi_load_from_memory(
+            png_diffuse.ptr,
+            @intCast(png_diffuse.len),
+            &width,
+            &height,
+            null,
+            channel_count,
+        );
+        defer c.stbi_image_free(diffuse_data);
+        var recolor_width: c_int = undefined;
+        var recolor_height: c_int = undefined;
+        const recolor_data = if (png_recolor != null) c.stbi_load_from_memory(
+            png_recolor.?.ptr,
+            @intCast(png_recolor.?.len),
+            &recolor_width,
+            &recolor_height,
+            null,
+            1,
+        ) else null;
+        defer if (recolor_data != null) c.stbi_image_free(recolor_data.?);
+        if (recolor_data != null) {
+            assert(width == recolor_width and height == recolor_height);
+        }
+
+        var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(allocator, tints.len);
+        defer textures.deinit(allocator);
+        for (tints) |tint| {
+            const diffuse_copy = try allocator.alloc(u8, @intCast(width * height * channel_count));
+            defer allocator.free(diffuse_copy);
+            @memcpy(diffuse_copy, diffuse_data[0..diffuse_copy.len]);
+
+            for (0..diffuse_copy.len / channel_count) |pixel| {
+                const r = &diffuse_copy[pixel * channel_count];
+                const g = &diffuse_copy[pixel * channel_count + 1];
+                const b = &diffuse_copy[pixel * channel_count + 2];
+
+                var color: [3]f32 = .{
+                    @as(f32, @floatFromInt(r.*)) / 255.0,
+                    @as(f32, @floatFromInt(g.*)) / 255.0,
+                    @as(f32, @floatFromInt(b.*)) / 255.0,
+                };
+
+                // Change gamma
+                const gamma = 2.2;
+                for (&color) |*color_channel| {
+                    color_channel.* = math.pow(f32, color_channel.*, 1.0 / gamma);
+                }
+
+                // Convert to grayscale or determine recolor amount
+                var amount: f32 = 1.0;
+                if (recolor_data) |recolor| {
+                    amount = @as(f32, @floatFromInt(recolor[pixel])) / 255.0;
+                } else {
+                    var luminosity = 0.299 * color[0] + 0.587 * color[1] + 0.0722 * color[2] / 255.0;
+                    luminosity = math.pow(f32, luminosity, 1.0 / gamma);
+                    for (&color) |*color_channel| {
+                        color_channel.* = luminosity;
+                    }
+                }
+
+                // Apply tint
+                for (&color, tint) |*color_channel, tint_channel| {
+                    const recolored = math.pow(f32, @as(f32, @floatFromInt(tint_channel)) / 255.0, 1.0 / gamma);
+                    color_channel.* = lerp(color_channel.*, color_channel.* * recolored, amount);
+                }
+
+                // Change gamma back
+                for (&color) |*color_channel| {
+                    color_channel.* = math.pow(f32, color_channel.*, gamma);
+                }
+
+                // Apply changes
+                r.* = @intFromFloat(color[0] * 255.0);
+                g.* = @intFromFloat(color[1] * 255.0);
+                b.* = @intFromFloat(color[2] * 255.0);
+            }
+            const pitch = width * channel_count;
+            const surface = c.SDL_CreateRGBSurfaceFrom(
+                diffuse_copy.ptr,
+                width,
+                height,
+                channel_count * bits_per_channel,
+                pitch,
+                0x000000ff,
+                0x0000ff00,
+                0x00ff0000,
+                0xff000000,
+            );
+            defer c.SDL_FreeSurface(surface);
+            textures.appendAssumeCapacity(c.SDL_CreateTextureFromSurface(renderer, surface) orelse
+                panic("unable to convert surface to texture", .{}));
+        } else {
+            const pitch = width * channel_count;
+            const surface = c.SDL_CreateRGBSurfaceFrom(
+                diffuse_data,
+                width,
+                height,
+                channel_count * bits_per_channel,
+                pitch,
+                0x000000ff,
+                0x0000ff00,
+                0x00ff0000,
+                0xff000000,
+            );
+            defer c.SDL_FreeSurface(surface);
+            try textures.append(allocator, c.SDL_CreateTextureFromSurface(renderer, surface) orelse
+                panic("unable to convert surface to texture", .{}));
+        }
+        return .{
+            .tints = try textures.toOwnedSlice(allocator),
+            .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
+            .image = null,
         };
     }
 };
