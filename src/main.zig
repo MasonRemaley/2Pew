@@ -101,10 +101,13 @@ pub const VkRenderer = struct {
     post_upload_barriers: BoundedArray(gpu.ImageBarrier, 64) = .{},
     image_uploads: BoundedArray(gpu.ImageUpload, 64) = .{},
     image_upload_regions: BoundedArray(gpu.ImageUpload.Region, 64) = .{},
+    image_memory: gpu.Memory(.color_image),
+    image_memory_offset: u64 = 0,
 
     fn deinit(self: *@This(), gpa: Allocator) void {
         self.gx.waitIdle();
         self.staging.deinit(&self.gx);
+        self.image_memory.deinit(&self.gx);
         self.gx.deinit(gpa);
         self.* = undefined;
     }
@@ -198,12 +201,17 @@ pub fn main() !void {
             .size = 16 * mb,
             .prefer_device_local = false,
         });
+        const image_memory: gpu.Memory(.color_image) = .init(&gx, .{
+            .name = .{ .str = "Images" },
+            .size = 16 * mb,
+        });
 
         break :b .{
             .vk = .{
                 .gx = gx,
                 .staging = staging,
                 .staging_writer = staging.writer(.{}),
+                .image_memory = image_memory,
             },
         };
     } else b: {
@@ -2828,7 +2836,10 @@ const Assets = struct {
 
                 const image: gpu.Image(.color) = .init(&vk.gx, .{
                     .name = .{ .str = diffuse_name },
-                    .alloc = .dedicated,
+                    .alloc = .{ .auto = .{
+                        .memory = vk.image_memory,
+                        .offset = &vk.image_memory_offset,
+                    } },
                     .image = .{
                         .format = .r8g8b8a8_srgb,
                         .extent = .{
