@@ -4,6 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const build_step_target = b.resolveTargetQuery(.{});
+    const build_step_optimize = switch (optimize) {
+        .ReleaseFast, .ReleaseSmall => .ReleaseSafe,
+        else => optimize,
+    };
+
     const no_llvm = b.option(
         bool,
         "no-llvm",
@@ -57,22 +63,14 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("structopt", structopt.module("structopt"));
 
-    // Get the Tracy dependency
     const tracy = b.dependency("tracy", .{
         .target = target,
         .optimize = optimize,
     });
-
-    // Make Tracy available as an import
     exe.root_module.addImport("tracy", tracy.module("tracy"));
-
-    // Pick an implementation based on the build flags.
-    // Don't build both, we don't want to link with Tracy at all unless we intend to enable it.
     if (tracy_enabled) {
-        // The user asked to enable Tracy, use the real implementation
         exe.root_module.addImport("tracy_impl", tracy.module("tracy_impl_enabled"));
     } else {
-        // The user asked to disable Tracy, use the dummy implementation
         exe.root_module.addImport("tracy_impl", tracy.module("tracy_impl_disabled"));
     }
 
@@ -109,6 +107,15 @@ pub fn build(b: *std.Build) void {
         .dest_dir = .{ .override = .prefix },
     }).step);
 
+    const shader_compiler = b.dependency("shader_compiler", .{
+        .target = build_step_target,
+        .optimize = build_step_optimize,
+    });
+    const shader_compiler_exe = shader_compiler.artifact("shader_compiler");
+
+    installShader(b, shader_compiler_exe, "sprite.vert", optimize);
+    installShader(b, shader_compiler_exe, "sprite.frag", optimize);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
@@ -141,4 +148,47 @@ pub fn build(b: *std.Build) void {
     const check_step = b.step("check", "Check the build");
     check_step.dependOn(&exe_tests.step);
     check_step.dependOn(&exe.step);
+}
+
+fn installShader(
+    b: *std.Build,
+    exe: *std.Build.Step.Compile,
+    path: []const u8,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const compile_shader = b.addRunArtifact(exe);
+
+    // We just always include debug info for now, it's useful to have when something goes wrong and
+    // I don't expect the shaders to be particularly large. I also don't mind sharing the source to
+    // them etc.
+    compile_shader.addArg("--debug");
+
+    compile_shader.addArgs(&.{ "--target", "Vulkan-1.3" });
+
+    compile_shader.addArg("--include-path");
+    compile_shader.addDirectoryArg(b.path("src/shaders"));
+
+    compile_shader.addArg("--write-deps");
+    _ = compile_shader.addDepFileOutputArg("deps.d");
+
+    switch (optimize) {
+        .Debug => {},
+        .ReleaseSafe, .ReleaseFast => compile_shader.addArgs(&.{
+            "--optimize-perf",
+        }),
+        .ReleaseSmall => compile_shader.addArgs(&.{
+            "--optimize-perf",
+            "--optimize-small",
+        }),
+    }
+    compile_shader.addFileArg(b.path(b.pathJoin(&.{ "src", "shaders", path })));
+
+    const spv = compile_shader.addOutputFileArg("compiled.spv");
+
+    const install_spv = b.addInstallFile(spv, b.pathJoin(&.{
+        "data",
+        "shaders",
+        b.fmt("{s}.spv", .{path}),
+    }));
+    b.getInstallStep().dependOn(&install_spv.step);
 }

@@ -24,6 +24,10 @@
             .url = "git+https://github.com/Games-By-Mason/structopt#7d8efcaadfb7493406ca37ac58e3534d9c927486",
             .hash = "structopt-1.0.0-OgtKAss3AQAsaPkiT0gp9TW1wumR5j9PGrLeBWFB7Ke0",
         },
+        .shader_compiler = .{
+            .url = "git+https://github.com/Games-By-Mason/shader_compiler#23b2cb62f04e6ebad4a72feef95b655c24d2308b",
+            .hash = "shader_compiler-1.0.0-bOVsas6JAAAR5_ybr4qgQiWBVlFFhtYCNNpln2MaQpfJ",
+        },
     },
     .paths = .{
         "assets",
