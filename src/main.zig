@@ -2118,6 +2118,8 @@ const Game = struct {
     }
 
     fn init(allocator: Allocator, assets: *Assets) !Game {
+        const image_zone = Zone.begin(.{ .src = @src() });
+
         var cb: gpu.CmdBuf = undefined;
         switch (assets.renderer.*) {
             .vk => |*vk| {
@@ -2419,6 +2421,7 @@ const Game = struct {
             },
             else => {},
         }
+        image_zone.end();
 
         return .{
             .rng = std.Random.DefaultPrng.init(random_seed),
@@ -2739,6 +2742,8 @@ const Assets = struct {
     sprites: std.ArrayListUnmanaged(Sprite),
     frames: std.ArrayListUnmanaged(Sprite.Index),
     animations: std.ArrayListUnmanaged(Animation),
+    sprite_pipeline: gpu.Pipeline,
+    sprite_pipeline_layout: gpu.Pipeline.Layout,
 
     const Frame = struct {
         sprite: Sprite,
@@ -2756,6 +2761,55 @@ const Assets = struct {
             });
         };
 
+        var sprite_pipeline: gpu.Pipeline = undefined;
+        var sprite_pipeline_layout: gpu.Pipeline.Layout = undefined;
+        switch (renderer.*) {
+            .vk => |*vk| {
+                const zone = Zone.begin(.{ .name = "create pipelines", .src = @src() });
+                defer zone.end();
+
+                const sprite_vert_spv = initSpv(gpa, "data/shaders/sprite.vert.spv");
+                defer gpa.free(sprite_vert_spv);
+                const sprite_vert_module: gpu.ShaderModule = .init(&vk.gx, .{
+                    .name = .{ .str = "sprite.vert.spv" },
+                    .ir = sprite_vert_spv,
+                });
+                defer sprite_vert_module.deinit(&vk.gx);
+
+                const sprite_frag_spv = initSpv(gpa, "data/shaders/sprite.frag.spv");
+                defer gpa.free(sprite_frag_spv);
+                const sprite_frag_module: gpu.ShaderModule = .init(&vk.gx, .{
+                    .name = .{ .str = "sprite.frag.spv" },
+                    .ir = sprite_frag_spv,
+                });
+                defer sprite_frag_module.deinit(&vk.gx);
+
+                sprite_pipeline_layout = .init(&vk.gx, .{
+                    .name = .{ .str = "Pixelate Pipeline" },
+                    .descs = &.{},
+                });
+
+                gpu.Pipeline.initGraphics(&vk.gx, &.{
+                    .{
+                        .name = .{ .str = "Sprites" },
+                        .stages = .{
+                            .vertex = sprite_vert_module,
+                            .fragment = sprite_frag_module,
+                        },
+                        .result = &sprite_pipeline,
+                        .input_assembly = .{ .triangle_strip = .{} },
+                        .layout = sprite_pipeline_layout,
+                        .color_attachment_formats = &.{
+                            .r8g8b8a8_unorm,
+                        },
+                        .depth_attachment_format = .undefined,
+                        .stencil_attachment_format = .undefined,
+                    },
+                });
+            },
+            .sdl => {},
+        }
+
         return .{
             .gpa = gpa,
             .renderer = renderer,
@@ -2763,7 +2817,25 @@ const Assets = struct {
             .sprites = .{},
             .frames = .{},
             .animations = .{},
+            .sprite_pipeline = sprite_pipeline,
+            .sprite_pipeline_layout = sprite_pipeline_layout,
         };
+    }
+    fn initSpv(gpa: Allocator, path: []const u8) []const u32 {
+        const max_bytes = 80192;
+        const size_hint = 4096;
+        const spv = std.fs.cwd().readFileAllocOptions(
+            gpa,
+            path,
+            max_bytes,
+            size_hint,
+            .of(u32),
+            null,
+        ) catch |err| std.debug.panic("{s}: {}", .{ path, err });
+        var u32s: []const u32 = undefined;
+        u32s.ptr = @ptrCast(spv.ptr);
+        u32s.len = spv.len / 4;
+        return u32s;
     }
 
     fn deinit(a: *Assets) void {
@@ -2774,6 +2846,13 @@ const Assets = struct {
         a.sprites.deinit(a.gpa);
         a.frames.deinit(a.gpa);
         a.animations.deinit(a.gpa);
+        switch (a.renderer.*) {
+            .vk => |*vk| {
+                a.sprite_pipeline_layout.deinit(&vk.gx);
+                a.sprite_pipeline.deinit(&vk.gx);
+            },
+            .sdl => {},
+        }
         a.* = undefined;
     }
 

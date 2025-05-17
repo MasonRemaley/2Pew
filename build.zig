@@ -103,9 +103,10 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "data",
     });
 
-    b.getInstallStep().dependOn(&b.addInstallArtifact(exe, .{
+    const install_exe = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .prefix },
-    }).step);
+    });
+    b.getInstallStep().dependOn(&install_exe.step);
 
     const shader_compiler = b.dependency("shader_compiler", .{
         .target = build_step_target,
@@ -117,6 +118,10 @@ pub fn build(b: *std.Build) void {
     installShader(b, shader_compiler_exe, "sprite.frag", optimize);
 
     const run_cmd = b.addRunArtifact(exe);
+    run_cmd.setCwd(.{ .cwd_relative = std.fs.path.dirname(b.getInstallPath(
+        install_exe.dest_dir.?,
+        install_exe.dest_sub_path,
+    )).? });
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
         run_cmd.addArgs(args);
