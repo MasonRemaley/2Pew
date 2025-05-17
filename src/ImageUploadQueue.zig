@@ -5,6 +5,10 @@
 //! To upload an image, call `beginWrite`, and then write your data to the writer. When all of your
 //! uploads have been queued, call `submit`. This must be done within a frame.
 //!
+//! It's assumed that these images will be read by a fragment shader. If you need to read them in
+//! another stage, you'll need to add an option to change the destination stage of the final
+//! transitions.
+//!
 //! # Uploading Synchronously
 //!
 //! If you only need to upload a small amount of data, you can probably load your images
@@ -58,7 +62,7 @@ const gpu = @import("gpu");
 
 const Gx = gpu.Gx;
 const CmdBuf = gpu.CmdBuf;
-const VolatileWriter = gpu.VolatileWriter;
+const Writer = gpu.Writer;
 const UploadBuf = gpu.UploadBuf;
 const DebugName = gpu.DebugName;
 const Image = gpu.Image;
@@ -68,7 +72,7 @@ cb: CmdBuf.Optional,
 /// The staging buffer.
 staging: gpu.UploadBuf(.{ .transfer_src = true }),
 /// The staging buffer's writer.
-writer: VolatileWriter,
+writer: Writer,
 
 /// Image upload queue options.
 pub const Options = struct {
@@ -113,7 +117,7 @@ pub fn beginWrite(
     self: *@This(),
     gx: *Gx,
     options: Image(.color).InitOptions,
-) VolatileWriter.Error!gpu.Image(.color) {
+) Writer.Error!gpu.Image(.color) {
     // Create the command buffer for this frame if we haven't yet.
     const cb = self.cb.unwrap() orelse b: {
         const cb: CmdBuf = .init(gx, .{
