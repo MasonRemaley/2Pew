@@ -1216,6 +1216,14 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
                 },
             });
 
+            render_game.bindPipeline(&vk.gx, game.assets.sprite_pipeline);
+            render_game.draw(&vk.gx, .{
+                .vertex_count = 4,
+                .instance_count = 1,
+                .first_vertex = 0,
+                .first_instance = 0,
+            });
+
             // XXX: ...
             for (game.stars) |star| {
                 const sprite = game.assets.sprite(switch (star.kind) {
@@ -2800,7 +2808,7 @@ const Assets = struct {
                         .input_assembly = .{ .triangle_strip = .{} },
                         .layout = sprite_pipeline_layout,
                         .color_attachment_formats = &.{
-                            .r8g8b8a8_unorm,
+                            vk.gx.device.surface_format,
                         },
                         .depth_attachment_format = .undefined,
                         .stencil_attachment_format = .undefined,
@@ -2848,6 +2856,7 @@ const Assets = struct {
         a.animations.deinit(a.gpa);
         switch (a.renderer.*) {
             .vk => |*vk| {
+                vk.gx.waitIdle();
                 a.sprite_pipeline_layout.deinit(&vk.gx);
                 a.sprite_pipeline.deinit(&vk.gx);
             },
