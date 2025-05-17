@@ -37,6 +37,13 @@
 //! is unlikely to affect performance much, but it needs to be at least as large as the largest
 //! image.
 //!
+//! This approach may seem sub-optimal since it involves an extra staging buffer on the CPU in the
+//! background thread. In practice, this buffer is typically necessary anyway, since images often
+//! need to be decompressed or unpacked from asset bundles before being uploaded. That work can be
+//! written directly to the provided writer. Even if you're loading data that needs no processing,
+//! increasing the pipeline length for asynchronous work shouldn't be a concern, and when doing
+//! synchronous uploads you can pipe your file directly to the writer.
+//!
 //! # `optimalBufferCopyOffsetAlignment`
 //!
 //! According to the Vulkan docs, aligning your image data to `optimalBufferCopyOffsetAlignment` in
@@ -56,15 +63,23 @@ const UploadBuf = gpu.UploadBuf;
 const DebugName = gpu.DebugName;
 const Image = gpu.Image;
 
+/// The current command buffer, if any.
 cb: CmdBuf.Optional,
+/// The staging buffer.
 staging: gpu.UploadBuf(.{ .transfer_src = true }),
+/// The staging buffer's writer.
 writer: VolatileWriter,
 
+/// Image upload queue options.
 pub const Options = struct {
+    /// The debug name of the upload queue.
     name: gpu.DebugName,
+    /// The number of bytes in the upload queue's staging buffer.
     bytes: u64,
 };
 
+/// Creates an image upload queue. If uploading over the course of multiple frames, you should
+/// create one per frame in flight and reuse them.
 pub fn init(gx: *Gx, options: Options) @This() {
     const staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(gx, .{
         .name = options.name,
@@ -81,16 +96,25 @@ pub fn init(gx: *Gx, options: Options) @This() {
     };
 }
 
+/// Destroys an image upload queue. You may not call this until the uploads are complete, which
+/// requires waiting until the frame in flight repeats. If you are going to upload more data in the
+/// future you should just keep this around, otherwise you may want to put it on a delete queue to
+/// delete it at the proper time.
 pub fn deinit(self: *@This(), gx: *Gx) void {
     self.staging.deinit(gx);
     self.* = undefined;
 }
 
+/// Call this before writing the data for an image to `writer`.
+///
+/// Panics on staging buffer overflow. If you want to handle this case, align the writer to
+/// `gpu.buffer_copy_offset_alignment` before calling and then check if there's enough space left.
 pub fn beginWrite(
     self: *@This(),
     gx: *Gx,
     options: Image(.color).InitOptions,
 ) VolatileWriter.Error!gpu.Image(.color) {
+    // Create the command buffer for this frame if we haven't yet.
     const cb = self.cb.unwrap() orelse b: {
         const cb: CmdBuf = .init(gx, .{
             .name = "Color Image Upload",
@@ -106,8 +130,14 @@ pub fn beginWrite(
     // aligned to their blocks or such which is happening implicitly here.
     try self.writer.alignForward(gpu.buffer_copy_offset_alignment);
 
+    // Create the image.
     const image: gpu.Image(.color) = .init(gx, options);
 
+    // Issue the image transitions and image uploads. Theoretically it's faster to batch all of
+    // these image transitions in a single call to `cb.barrier`. This requires queuing them up CPU
+    // side, which increases complexity. In practice, even when uploading 1000s of images, I was not
+    // able to measure a difference in performance, the bottleneck is clearly the acutal copy so
+    // we're opting to keep thing simple.
     cb.barriers(gx, .{ .image = &.{
         .undefinedToTransferDst(.{
             .handle = image.handle,
@@ -137,9 +167,13 @@ pub fn beginWrite(
         .aspect = .{ .color = true },
     })} });
 
+    // Return the image to the user.
     return image;
 }
 
+/// Submits any queued uploads. Must be called on the same frame the uploads were queued. If
+/// uploading asynchronously, it's recommended to call this every frame whether uploading data or
+/// not since it will detect that case for you.
 pub fn submit(self: *@This(), gx: *Gx) void {
     if (self.cb.unwrap()) |cb| {
         cb.submit(gx);
