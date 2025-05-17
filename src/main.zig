@@ -190,21 +190,14 @@ pub fn main() !void {
             .debug = args.named.@"gpu-debug",
         });
 
-        gx.beginFrame();
-
         const mb = std.math.pow(u64, 2, 20);
         const color_images: gpu.Memory(.color_image) = .init(&gx, .{
             .name = .{ .str = "Color Images" },
             .size = 16 * mb,
         });
-        const cb: gpu.CmdBuf = .init(&gx, .{
-            .name = "Color Image Upload",
-            .src = @src(),
-        });
         const upload_queue: ImageUploadQueue = .init(&gx, .{
             .name = .{ .str = "Color Image Upload" },
             .bytes = 16 * mb,
-            .cb = cb,
         });
 
         break :b .{
@@ -2106,6 +2099,11 @@ const Game = struct {
     }
 
     fn init(allocator: Allocator, assets: *Assets) !Game {
+        switch (assets.renderer.*) {
+            .vk => |*vk| vk.gx.beginFrame(),
+            .sdl => {},
+        }
+
         const team_tints = &.{
             .{
                 16,
@@ -2389,7 +2387,7 @@ const Game = struct {
             .vk => |*vk| {
                 const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
                 defer zone.end();
-                vk.upload_queue.cb.submit(&vk.gx);
+                vk.upload_queue.submit(&vk.gx);
                 vk.gx.endFrame(.{ .present = false });
             },
             else => {},
@@ -2822,7 +2820,7 @@ const Assets = struct {
                 defer c.stbi_image_free(c_pixels);
                 const pixels = c_pixels[0..@intCast(width * height * channel_count)];
 
-                const image = vk.upload_queue.beginWrite(&vk.gx, vk.upload_queue.cb, .{
+                const image = vk.upload_queue.beginWrite(&vk.gx, .{
                     .name = .{ .str = diffuse_name },
                     .alloc = .{ .auto = .{
                         .memory = vk.color_images,

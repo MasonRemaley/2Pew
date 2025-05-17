@@ -7,14 +7,13 @@ const UploadBuf = gpu.UploadBuf;
 const DebugName = gpu.DebugName;
 const Image = gpu.Image;
 
-cb: CmdBuf,
+cb: CmdBuf.Optional,
 staging: gpu.UploadBuf(.{ .transfer_src = true }),
 writer: VolatileWriter,
 
 pub const Options = struct {
     name: gpu.DebugName,
     bytes: u64,
-    cb: CmdBuf,
 };
 
 pub fn init(gx: *Gx, options: Options) @This() {
@@ -27,7 +26,7 @@ pub fn init(gx: *Gx, options: Options) @This() {
     const writer = staging.writer(.{});
 
     return .{
-        .cb = options.cb,
+        .cb = .none,
         .staging = staging,
         .writer = writer,
     };
@@ -41,9 +40,17 @@ pub fn deinit(self: *@This(), gx: *Gx) void {
 pub fn beginWrite(
     self: *@This(),
     gx: *Gx,
-    cb: CmdBuf,
     options: Image(.color).InitOptions,
 ) gpu.Image(.color) {
+    const cb = self.cb.unwrap() orelse b: {
+        const cb: CmdBuf = .init(gx, .{
+            .name = "Color Image Upload",
+            .src = @src(),
+        });
+        self.cb = cb.asOptional();
+        break :b cb;
+    };
+
     const image: gpu.Image(.color) = .init(gx, options);
 
     cb.barriers(gx, .{ .image = &.{
@@ -76,4 +83,11 @@ pub fn beginWrite(
     })} });
 
     return image;
+}
+
+pub fn submit(self: *@This(), gx: *Gx) void {
+    if (self.cb.unwrap()) |cb| {
+        cb.submit(gx);
+        self.cb = .none;
+    }
 }
