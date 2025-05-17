@@ -30,6 +30,7 @@ const structopt = @import("structopt");
 const Command = structopt.Command;
 const NamedArg = structopt.NamedArg;
 const log = std.log.scoped(build.name);
+const ImageUploadQueue = @import("ImageUploadQueue.zig");
 
 const tracy = @import("tracy");
 const Zone = tracy.Zone;
@@ -95,16 +96,13 @@ pub const gpu_options: gpu.Options = .{
 
 pub const VkRenderer = struct {
     gx: Gx,
-    upload: gpu.CmdBuf,
-    staging: gpu.UploadBuf(.{ .transfer_src = true }),
-    staging_writer: gpu.VolatileWriter,
-    image_memory_offset: u64 = 0,
-    image_memory: gpu.Memory(.color_image),
+    upload_queue: ImageUploadQueue,
+    color_images: gpu.Memory(.color_image),
+    upload_offset: u64 = 0,
 
     fn deinit(self: *@This(), gpa: Allocator) void {
-        self.gx.waitIdle();
-        self.staging.deinit(&self.gx);
-        self.image_memory.deinit(&self.gx);
+        self.upload_queue.deinit(&self.gx);
+        self.color_images.deinit(&self.gx);
         self.gx.deinit(gpa);
         self.* = undefined;
     }
@@ -192,30 +190,28 @@ pub fn main() !void {
             .debug = args.named.@"gpu-debug",
         });
 
-        const mb = std.math.pow(u64, 2, 20);
-        const staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(&gx, .{
-            .name = .{ .str = "Staging" },
-            .size = 16 * mb,
-            .prefer_device_local = false,
-        });
-        const image_memory: gpu.Memory(.color_image) = .init(&gx, .{
-            .name = .{ .str = "Images" },
-            .size = 16 * mb,
-        });
-
         gx.beginFrame();
-        const upload: gpu.CmdBuf = .init(&gx, .{
-            .name = "Upload Images",
+
+        const mb = std.math.pow(u64, 2, 20);
+        const color_images: gpu.Memory(.color_image) = .init(&gx, .{
+            .name = .{ .str = "Color Images" },
+            .size = 16 * mb,
+        });
+        const cb: gpu.CmdBuf = .init(&gx, .{
+            .name = "Color Image Upload",
             .src = @src(),
+        });
+        const upload_queue: ImageUploadQueue = .init(&gx, .{
+            .name = .{ .str = "Color Image Upload" },
+            .bytes = 16 * mb,
+            .cb = cb,
         });
 
         break :b .{
             .vk = .{
                 .gx = gx,
-                .staging = staging,
-                .staging_writer = staging.writer(.{}),
-                .image_memory = image_memory,
-                .upload = upload,
+                .upload_queue = upload_queue,
+                .color_images = color_images,
             },
         };
     } else b: {
@@ -226,7 +222,10 @@ pub fn main() !void {
     };
     defer switch (renderer) {
         .sdl => |sr| c.SDL_DestroyRenderer(sr),
-        .vk => |*vk| vk.deinit(allocator),
+        .vk => |*vk| {
+            vk.gx.waitIdle();
+            vk.deinit(allocator);
+        },
     };
 
     // Load assets
@@ -2390,7 +2389,7 @@ const Game = struct {
             .vk => |*vk| {
                 const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
                 defer zone.end();
-                vk.upload.submit(&vk.gx);
+                vk.upload_queue.cb.submit(&vk.gx);
                 vk.gx.endFrame(.{ .present = false });
             },
             else => {},
@@ -2823,11 +2822,11 @@ const Assets = struct {
                 defer c.stbi_image_free(c_pixels);
                 const pixels = c_pixels[0..@intCast(width * height * channel_count)];
 
-                const image: gpu.Image(.color) = .init(&vk.gx, .{
+                const image = vk.upload_queue.beginWrite(&vk.gx, vk.upload_queue.cb, .{
                     .name = .{ .str = diffuse_name },
                     .alloc = .{ .auto = .{
-                        .memory = vk.image_memory,
-                        .offset = &vk.image_memory_offset,
+                        .memory = vk.color_images,
+                        .offset = &vk.upload_offset,
                     } },
                     .image = .{
                         .format = .r8g8b8a8_srgb,
@@ -2843,38 +2842,7 @@ const Assets = struct {
                     },
                 });
 
-                vk.upload.barriers(&vk.gx, .{ .image = &.{
-                    .undefinedToTransferDst(.{
-                        .handle = image.handle,
-                        .range = .first,
-                        .aspect = .{ .color = true },
-                    }),
-                } });
-                vk.upload.uploadImage(&vk.gx, .{
-                    .dst = image.handle,
-                    .src = vk.staging.handle,
-                    .base_mip_level = 0,
-                    .mip_levels = 1,
-                    .regions = &.{
-                        .init(.{
-                            .aspect = .{ .color = true },
-                            .image_extent = .{
-                                .width = @intCast(width),
-                                .height = @intCast(height),
-                                .depth = 1,
-                            },
-                            .buffer_offset = vk.staging_writer.pos,
-                        }),
-                    },
-                });
-                vk.upload.barriers(&vk.gx, .{ .image = &.{.transferDstToReadOnly(.{
-                    .handle = image.handle,
-                    .range = .first,
-                    .dst_stage = .{ .fragment_shader = true },
-                    .aspect = .{ .color = true },
-                })} });
-
-                vk.staging_writer.writeAll(pixels) catch |err| @panic(@errorName(err));
+                vk.upload_queue.writer.writeAll(pixels) catch |err| @panic(@errorName(err));
 
                 try a.sprites.append(a.gpa, .{
                     .tints = &.{},
