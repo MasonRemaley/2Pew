@@ -1,9 +1,14 @@
 //! A color image upload queue.
 //!
-//! Operates on a fixed size staging buffer, writes to whatever memory the caller provides.
+//! Operates on a fixed size staging buffer, writes to the memory and command buffer provided by the
+//! caller.
 //!
-//! To upload an image, call `beginWrite`, and then write your data to the writer. When all of your
-//! uploads have been queued, call `submit`. This must be done within a frame.
+//! To upload an image, call `beginWrite`, and then write your data to the provided writer. Repeat
+//! for each image. To initiate the upload, call submit on the command buffer you provided.
+//!
+//! You may call `reset` to reset the offset into the staging buffer's writer at any time, but you
+//! may not reuse the upload queue until its work completes. See *Uploading Asynchronously* for
+//! the recommended pattern.
 //!
 //! It's assumed that these images will be read by a fragment shader. If you need to read them in
 //! another stage, you'll need to add an option to change the destination stage of the final
@@ -33,7 +38,7 @@
 //! background threads have completed any work, and if they have, checks if there's space in the
 //! current upload queue. If there is, it writes them.
 //!
-//! At the end of each frame, the current upload queue is submitted.
+//! The current upload queue is reset at the end of every frame.
 //!
 //! By tuning the size of the staging buffer, you can limit how much work is done one any single
 //! frame and provide a smooth experience. Keep in mind that the bottleneck is likely the read from
@@ -47,16 +52,6 @@
 //! written directly to the provided writer. Even if you're loading data that needs no processing,
 //! increasing the pipeline length for asynchronous work shouldn't be a concern, and when doing
 //! synchronous uploads you can pipe your file directly to the writer.
-//!
-//! # `optimalBufferCopyOffsetAlignment`
-//!
-//! According to the Vulkan docs, aligning your image data to `optimalBufferCopyOffsetAlignment` in
-//! the buffer provides the best performance when uploading. Seeing as DX12 does not seem to provide
-//! the same guidance, I am skeptical  and this would result in GPU dependent min staging buffer sizes, I recommend
-//! ignoring this for small synchronous uploads, and profiling yourself to see if it makes a
-//! difference on large asynchronous uploads.
-//!
-//! `gpu` does not currently expose this value.
 
 const gpu = @import("gpu");
 
@@ -67,8 +62,6 @@ const UploadBuf = gpu.UploadBuf;
 const DebugName = gpu.DebugName;
 const Image = gpu.Image;
 
-/// The current command buffer, if any.
-cb: CmdBuf.Optional,
 /// The staging buffer.
 staging: gpu.UploadBuf(.{ .transfer_src = true }),
 /// The staging buffer's writer.
@@ -94,7 +87,6 @@ pub fn init(gx: *Gx, options: Options) @This() {
     const writer = staging.writer(.{});
 
     return .{
-        .cb = .none,
         .staging = staging,
         .writer = writer,
     };
@@ -116,18 +108,9 @@ pub fn deinit(self: *@This(), gx: *Gx) void {
 pub fn beginWrite(
     self: *@This(),
     gx: *Gx,
+    cb: CmdBuf,
     options: Image(.color).InitOptions,
 ) Writer.Error!gpu.Image(.color) {
-    // Create the command buffer for this frame if we haven't yet.
-    const cb = self.cb.unwrap() orelse b: {
-        const cb: CmdBuf = .init(gx, .{
-            .name = "Color Image Upload",
-            .src = @src(),
-        });
-        self.cb = cb.asOptional();
-        break :b cb;
-    };
-
     // This alignment is required by DX12. With Vulkan it's device dependent and optional, in
     // practice real GPUs may have the value set to 1. If DX12 ever lifts this requirements we could
     // elide this padding, though keep in mind that block based formats would still need to be
@@ -175,13 +158,9 @@ pub fn beginWrite(
     return image;
 }
 
-/// Submits any queued uploads. Must be called on the same frame the uploads were queued. If
-/// uploading asynchronously, it's recommended to call this every frame whether uploading data or
-/// not since it will detect that case for you.
-pub fn submit(self: *@This(), gx: *Gx) void {
-    if (self.cb.unwrap()) |cb| {
-        cb.submit(gx);
-        self.cb = .none;
-        self.writer.pos = 0;
-    }
+/// Resets the staging buffer's writer to the beginning. If uploading asynchronously, it's
+/// recommended to call this every frame whether uploading data or not, but keep in mind that you'll
+/// want to reserve one upload queue per frame in flight since it does not block the CPU.
+pub fn reset(self: *@This()) void {
+    self.writer.pos = 0;
 }
