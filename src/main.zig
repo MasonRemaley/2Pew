@@ -2838,7 +2838,7 @@ const Assets = struct {
                             .sampled = true,
                         },
                     },
-                });
+                }) catch |err| @panic(@errorName(err));
 
                 vk.upload_queue.writer.writeAll(pixels) catch |err| @panic(@errorName(err));
 

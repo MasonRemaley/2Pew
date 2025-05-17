@@ -2,8 +2,8 @@
 //!
 //! Operates on a fixed size staging buffer, writes to whatever memory the caller provides.
 //!
-//! To use, first call `beginWrite`, and then write your data to the provided writer. When all of
-//! your uploads have been queued, call `submit`. This must be done within a frame.
+//! To upload an image, call `beginWrite`, and then write your data to the writer. When all of your
+//! uploads have been queued, call `submit`. This must be done within a frame.
 //!
 //! # Uploading Synchronously
 //!
@@ -36,6 +36,16 @@
 //! disk, not the GPU upload, and you can set your values accordingly. Setting the buffer too small
 //! is unlikely to affect performance much, but it needs to be at least as large as the largest
 //! image.
+//!
+//! # `optimalBufferCopyOffsetAlignment`
+//!
+//! According to the Vulkan docs, aligning your image data to `optimalBufferCopyOffsetAlignment` in
+//! the buffer provides the best performance when uploading. Seeing as DX12 does not seem to provide
+//! the same guidance, I am skeptical  and this would result in GPU dependent min staging buffer sizes, I recommend
+//! ignoring this for small synchronous uploads, and profiling yourself to see if it makes a
+//! difference on large asynchronous uploads.
+//!
+//! `gpu` does not currently expose this value.
 
 const gpu = @import("gpu");
 
@@ -80,7 +90,7 @@ pub fn beginWrite(
     self: *@This(),
     gx: *Gx,
     options: Image(.color).InitOptions,
-) gpu.Image(.color) {
+) VolatileWriter.Error!gpu.Image(.color) {
     const cb = self.cb.unwrap() orelse b: {
         const cb: CmdBuf = .init(gx, .{
             .name = "Color Image Upload",
@@ -89,6 +99,12 @@ pub fn beginWrite(
         self.cb = cb.asOptional();
         break :b cb;
     };
+
+    // This alignment is required by DX12. With Vulkan it's device dependent and optional, in
+    // practice real GPUs may have the value set to 1. If DX12 ever lifts this requirements we could
+    // elide this padding, though keep in mind that block based formats would still need to be
+    // aligned to their blocks or such which is happening implicitly here.
+    try self.writer.alignForward(gpu.buffer_copy_offset_alignment);
 
     const image: gpu.Image(.color) = .init(gx, options);
 
