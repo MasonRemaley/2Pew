@@ -1190,7 +1190,7 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
             var global_writer = frame_layout.global.writer(game.assets.sprite_storage_buffer);
             global_writer.writeStruct(SpriteGlobal{
-                .camera = game.camera,
+                .world_to_view = .translation(game.camera.negated()).multiplied(.rotation()),
             }) catch |err| @panic(@errorName(err));
 
             vk.gx.beginFrame();
@@ -1209,8 +1209,6 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
                         .view = framebuf.view,
                     }),
                 },
-                // XXX: can probably configure these to make coords line up with 1920x1080? or can
-                // not do that. idk
                 .viewport = .{
                     .x = 0,
                     .y = 0,
@@ -2764,7 +2762,7 @@ const Game = struct {
 };
 
 pub const SpriteGlobal = extern struct {
-    camera: Vec2 = .zero,
+    world_to_view: Mat2x3 = .identity,
 };
 
 const SpriteStorageLayout = BufferLayout(.{

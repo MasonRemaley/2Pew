@@ -168,6 +168,8 @@ fn installShader(
     // them etc.
     compile_shader.addArg("--debug");
 
+    compile_shader.addArg("--scalar-block-layout");
+
     compile_shader.addArgs(&.{ "--target", "Vulkan-1.3" });
 
     compile_shader.addArg("--include-path");
