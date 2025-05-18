@@ -32,6 +32,7 @@ const NamedArg = structopt.NamedArg;
 const log = std.log.scoped(build.name);
 const ImageUploadQueue = @import("ImageUploadQueue.zig");
 const BufferLayout = @import("buffer_layout.zig").BufferLayout;
+const SpriteRenderer = @import("SpriteRenderer.zig");
 
 const tracy = @import("tracy");
 const Zone = tracy.Zone;
@@ -259,7 +260,7 @@ pub fn main() !void {
             return;
         }
         update(&es, &cb, &game, delta_s);
-        render(&es, &game, delta_s, fx_loop_s);
+        render(&es, &game, &game.sprite_renderer, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
         // results if it's too close to zero!
@@ -1067,7 +1068,13 @@ pub fn exec(es: *Entities, cb: *CmdBuf) void {
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
+fn render(
+    es: *Entities,
+    game: *const Game,
+    sprite_renderer: *SpriteRenderer,
+    delta_s: f32,
+    fx_loop_s: f32,
+) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
@@ -1192,61 +1199,47 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
 
             // Get this frame's storage writers
             vk.gx.beginFrame();
-            const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
+            sprite_renderer.begin(&vk.gx, .{
+                .view_from_world = ortho(.{
+                    .left = 0,
+                    .right = display_width,
+                    .bottom = 0,
+                    .top = display_height,
+                }).times(.translation(game.camera.negated())),
+            });
 
-            // Write the scene data
-            {
-                var scene_writer = frame_layout.scene.writer(game.assets.sprite_storage_buffer);
-                scene_writer.writeStruct(Ubo.Scene{
-                    .view_from_world = ortho(.{
-                        .left = 0,
-                        .right = display_width,
-                        .bottom = 0,
-                        .top = display_height,
-                    }).times(.translation(game.camera.negated())),
-                }) catch |err| @panic(@errorName(err));
+            // Draw the stars
+            for (game.stars) |star| {
+                const sprite_index = switch (star.kind) {
+                    .small => game.star_small,
+                    .large => game.star_large,
+                    .planet_red => game.planet_red,
+                };
+                const sprite = game.assets.sprite(sprite_index);
+                var world_from_model: Mat2x3 = .scale(.{
+                    .x = @floatFromInt(sprite.rect.w),
+                    .y = @floatFromInt(sprite.rect.h),
+                });
+                world_from_model.apply(.translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }));
+                sprite_renderer.draw(.{
+                    .world_from_model = world_from_model,
+                    .texture_index = @intFromEnum(sprite_index),
+                });
             }
 
-            // Draw the sprites
-            var sprite_instances: u32 = 0;
+            // Draw the ring
             {
-                var instance_writer = frame_layout.instances.writer(game.assets.sprite_storage_buffer);
-
-                // Draw the stars
-                for (game.stars) |star| {
-                    const sprite_index = switch (star.kind) {
-                        .small => game.star_small,
-                        .large => game.star_large,
-                        .planet_red => game.planet_red,
-                    };
-                    const sprite = game.assets.sprite(sprite_index);
-                    var world_from_model: Mat2x3 = .scale(.{
-                        .x = @floatFromInt(sprite.rect.w),
-                        .y = @floatFromInt(sprite.rect.h),
-                    });
-                    world_from_model.apply(.translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }));
-                    instance_writer.writeStruct(Ubo.Instance{
-                        .world_from_model = world_from_model,
-                        .texture_index = @intFromEnum(sprite_index),
-                    }) catch |err| @panic(@errorName(err));
-                    sprite_instances += 1;
-                }
-
-                // Draw the ring
-                {
-                    const sprite_index = game.ring_bg;
-                    const sprite = game.assets.sprite(sprite_index);
-                    var world_from_model: Mat2x3 = .scale(.{
-                        .x = @floatFromInt(sprite.rect.w),
-                        .y = @floatFromInt(sprite.rect.h),
-                    });
-                    world_from_model.apply(.translation(display_center));
-                    instance_writer.writeStruct(Ubo.Instance{
-                        .world_from_model = world_from_model,
-                        .texture_index = @intFromEnum(sprite_index),
-                    }) catch |err| @panic(@errorName(err));
-                    sprite_instances += 1;
-                }
+                const sprite_index = game.ring_bg;
+                const sprite = game.assets.sprite(sprite_index);
+                var world_from_model: Mat2x3 = .scale(.{
+                    .x = @floatFromInt(sprite.rect.w),
+                    .y = @floatFromInt(sprite.rect.h),
+                });
+                world_from_model.apply(.translation(display_center));
+                sprite_renderer.draw(.{
+                    .world_from_model = world_from_model,
+                    .texture_index = @intFromEnum(sprite_index),
+                });
             }
 
             const framebuf = vk.gx.acquireNextImage(.{
@@ -1289,12 +1282,7 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
                 game.assets.sprite_desc_sets[vk.gx.frame],
             );
 
-            render_game.draw(&vk.gx, .{
-                .vertex_count = 4,
-                .instance_count = sprite_instances,
-                .first_vertex = 0,
-                .first_instance = 0,
-            });
+            sprite_renderer.submit(&vk.gx, render_game);
 
             render_game.endRendering(&vk.gx);
             render_game.submit(&vk.gx);
@@ -1760,6 +1748,8 @@ const Game = struct {
     rng: std.Random.DefaultPrng,
 
     camera: Vec2 = .zero,
+
+    sprite_renderer: SpriteRenderer,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -2532,6 +2522,11 @@ const Game = struct {
             else => {},
         }
 
+        const sprite_renderer: SpriteRenderer = .init(.{
+            .storage_layout = assets.sprite_storage_layout,
+            .storage = assets.sprite_storage_buffer,
+        });
+
         return .{
             .rng = std.Random.DefaultPrng.init(random_seed),
             .assets = assets,
@@ -2608,6 +2603,8 @@ const Game = struct {
             .stars = undefined,
 
             .particle = particle,
+
+            .sprite_renderer = sprite_renderer,
         };
     }
 
@@ -2844,34 +2841,6 @@ const Game = struct {
     }
 };
 
-const Ubo = struct {
-    const Scene = extern struct {
-        view_from_world: Mat2x3 = .identity,
-    };
-    const Instance = extern struct {
-        world_from_model: Mat2x3,
-        texture_index: u32,
-    };
-};
-
-const max_sprites = 16384;
-
-const SpriteStorageLayout = BufferLayout(.{
-    .kind = .{ .storage = true },
-    .frame = &.{
-        .{
-            .name = "scene",
-            .size = @sizeOf(Ubo.Scene),
-            .alignment = @alignOf(Ubo.Scene),
-        },
-        .{
-            .name = "instances",
-            .size = @sizeOf(Ubo.Instance) * max_sprites,
-            .alignment = @alignOf(Ubo.Instance),
-        },
-    },
-});
-
 const Assets = struct {
     gpa: Allocator,
     renderer: *Renderer,
@@ -2884,7 +2853,7 @@ const Assets = struct {
     desc_pool: gpu.DescPool,
     sprite_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
     sprite_storage_buffer: gpu.UploadBuf(.{ .storage = true }),
-    sprite_storage_layout: SpriteStorageLayout,
+    sprite_storage_layout: SpriteRenderer.StorageLayout,
     texture_sampler: gpu.Sampler,
 
     const Frame = struct {
@@ -2907,7 +2876,7 @@ const Assets = struct {
         var sprite_pipeline_layout: gpu.Pipeline.Layout = undefined;
         var sprite_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
         var desc_pool: gpu.DescPool = undefined;
-        var sprite_storage_layout: SpriteStorageLayout = undefined;
+        var sprite_storage_layout: SpriteRenderer.StorageLayout = undefined;
         var sprite_storage_buffer: gpu.UploadBuf(.{ .storage = true }) = undefined;
         var texture_sampler: gpu.Sampler = undefined;
         switch (renderer.*) {
