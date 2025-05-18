@@ -1186,11 +1186,14 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             }
         },
         .vk => |*vk| {
-            // Write the camera position
+            // Get this frame's storage writers
             const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
             var global_writer = frame_layout.global.writer(game.assets.sprite_storage_buffer);
+            var world_from_model_writer = frame_layout.world_from_models.writer(game.assets.sprite_storage_buffer);
+
+            // Write the camera position
             global_writer.writeStruct(SpriteGlobal{
-                .world_to_view = ortho(.{
+                .view_from_world = ortho(.{
                     .left = 0,
                     .right = display_width,
                     .bottom = 0,
@@ -1238,9 +1241,17 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
                 game.assets.sprite_pipeline,
                 game.assets.sprite_desc_sets[vk.gx.frame],
             );
+
+            // Draw some objects
+            var wfm: Mat2x3 = .scale(.{ .x = 100, .y = 100 });
+            world_from_model_writer.writeStruct(wfm) catch |err| @panic(@errorName(err));
+            wfm.apply(.translation(.{ .x = 200, .y = 0 }));
+            world_from_model_writer.writeStruct(wfm) catch |err| @panic(@errorName(err));
+            wfm.apply(.translation(.{ .x = 200, .y = 0 }));
+            world_from_model_writer.writeStruct(wfm) catch |err| @panic(@errorName(err));
             render_game.draw(&vk.gx, .{
                 .vertex_count = 4,
-                .instance_count = 1,
+                .instance_count = 3,
                 .first_vertex = 0,
                 .first_instance = 0,
             });
@@ -2767,8 +2778,10 @@ const Game = struct {
 };
 
 pub const SpriteGlobal = extern struct {
-    world_to_view: Mat2x3 = .identity,
+    view_from_world: Mat2x3 = .identity,
 };
+
+const max_sprites = 16384;
 
 const SpriteStorageLayout = BufferLayout(.{
     .kind = .{ .storage = true },
@@ -2777,6 +2790,11 @@ const SpriteStorageLayout = BufferLayout(.{
             .name = "global",
             .size = @sizeOf(SpriteGlobal),
             .alignment = @alignOf(SpriteGlobal),
+        },
+        .{
+            .name = "world_from_models",
+            .size = @sizeOf(Mat2x3) * max_sprites,
+            .alignment = @alignOf(Mat2x3),
         },
     },
 });
@@ -2842,7 +2860,12 @@ const Assets = struct {
                     .name = .{ .str = "Pixelate Pipeline" },
                     .descs = &.{
                         .{
-                            .name = "camera",
+                            .name = "Global",
+                            .kind = .storage_buffer,
+                            .stages = .{ .vertex = true },
+                        },
+                        .{
+                            .name = "ModelToWorlds",
                             .kind = .storage_buffer,
                             .stages = .{ .vertex = true },
                         },
@@ -2892,7 +2915,7 @@ const Assets = struct {
 
                 var desc_set_updates: std.BoundedArray(
                     gpu.DescSet.Update,
-                    sprite_desc_sets.len,
+                    sprite_desc_sets.len * 2,
                 ) = .{};
                 for (sprite_desc_sets, 0..) |set, i| {
                     desc_set_updates.appendAssumeCapacity(.{
@@ -2900,6 +2923,13 @@ const Assets = struct {
                         .binding = 0,
                         .value = .{
                             .storage_buf = sprite_storage_layout.frame(@intCast(i)).global.view(sprite_storage_buffer.handle),
+                        },
+                    });
+                    desc_set_updates.appendAssumeCapacity(.{
+                        .set = set,
+                        .binding = 1,
+                        .value = .{
+                            .storage_buf = sprite_storage_layout.frame(@intCast(i)).world_from_models.view(sprite_storage_buffer.handle),
                         },
                     });
                 }
