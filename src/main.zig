@@ -31,6 +31,7 @@ const Command = structopt.Command;
 const NamedArg = structopt.NamedArg;
 const log = std.log.scoped(build.name);
 const ImageUploadQueue = @import("ImageUploadQueue.zig");
+const BufferLayout = @import("buffer_layout.zig").BufferLayout;
 
 const tracy = @import("tracy");
 const Zone = tracy.Zone;
@@ -340,6 +341,11 @@ fn update(
 ) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
+
+    switch (game.assets.renderer.*) {
+        .vk => game.camera.x += 0.1 * delta_s,
+        .sdl => {},
+    }
 
     updateInput(es, cb, game);
     updatePhysics(game, es, cb);
@@ -1180,6 +1186,13 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             }
         },
         .vk => |*vk| {
+            // Write the camera position
+            const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
+            var global_writer = frame_layout.global.writer(game.assets.sprite_storage_buffer);
+            global_writer.writeStruct(SpriteGlobal{
+                .camera = game.camera,
+            }) catch |err| @panic(@errorName(err));
+
             vk.gx.beginFrame();
             const framebuf = vk.gx.acquireNextImage(.{
                 .width = display_width,
@@ -1217,6 +1230,11 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             });
 
             render_game.bindPipeline(&vk.gx, game.assets.sprite_pipeline);
+            render_game.bindDescSet(
+                &vk.gx,
+                game.assets.sprite_pipeline,
+                game.assets.sprite_desc_sets[vk.gx.frame],
+            );
             render_game.draw(&vk.gx, .{
                 .vertex_count = 4,
                 .instance_count = 1,
@@ -1704,6 +1722,8 @@ const Game = struct {
     particle: Sprite.Index,
 
     rng: std.Random.DefaultPrng,
+
+    camera: Vec2 = .zero,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -2743,6 +2763,21 @@ const Game = struct {
     }
 };
 
+pub const SpriteGlobal = extern struct {
+    camera: Vec2 = .zero,
+};
+
+const SpriteStorageLayout = BufferLayout(.{
+    .kind = .{ .storage = true },
+    .frame = &.{
+        .{
+            .name = "global",
+            .size = @sizeOf(SpriteGlobal),
+            .alignment = @alignOf(SpriteGlobal),
+        },
+    },
+});
+
 const Assets = struct {
     gpa: Allocator,
     renderer: *Renderer,
@@ -2752,6 +2787,10 @@ const Assets = struct {
     animations: std.ArrayListUnmanaged(Animation),
     sprite_pipeline: gpu.Pipeline,
     sprite_pipeline_layout: gpu.Pipeline.Layout,
+    desc_pool: gpu.DescPool,
+    sprite_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
+    sprite_storage_buffer: gpu.UploadBuf(.{ .storage = true }),
+    sprite_storage_layout: SpriteStorageLayout,
 
     const Frame = struct {
         sprite: Sprite,
@@ -2771,6 +2810,10 @@ const Assets = struct {
 
         var sprite_pipeline: gpu.Pipeline = undefined;
         var sprite_pipeline_layout: gpu.Pipeline.Layout = undefined;
+        var sprite_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
+        var desc_pool: gpu.DescPool = undefined;
+        var sprite_storage_layout: SpriteStorageLayout = undefined;
+        var sprite_storage_buffer: gpu.UploadBuf(.{ .storage = true }) = undefined;
         switch (renderer.*) {
             .vk => |*vk| {
                 const zone = Zone.begin(.{ .name = "create pipelines", .src = @src() });
@@ -2792,10 +2835,18 @@ const Assets = struct {
                 });
                 defer sprite_frag_module.deinit(&vk.gx);
 
-                sprite_pipeline_layout = .init(&vk.gx, .{
+                const sprite_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
                     .name = .{ .str = "Pixelate Pipeline" },
-                    .descs = &.{},
-                });
+                    .descs = &.{
+                        .{
+                            .name = "camera",
+                            .kind = .storage_buffer,
+                            .stages = .{ .vertex = true },
+                        },
+                    },
+                };
+
+                sprite_pipeline_layout = .init(&vk.gx, sprite_pipeline_layout_options);
 
                 gpu.Pipeline.initGraphics(&vk.gx, &.{
                     .{
@@ -2814,6 +2865,42 @@ const Assets = struct {
                         .stencil_attachment_format = .undefined,
                     },
                 });
+
+                var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, sprite_desc_sets.len) = .{};
+                for (&sprite_desc_sets, 0..) |*desc_set, i| {
+                    create_descs.appendAssumeCapacity(.{
+                        .name = .{ .str = "Sprites", .index = i },
+                        .result = desc_set,
+                        .layout = sprite_pipeline_layout.desc_set,
+                        .layout_options = &sprite_pipeline_layout_options,
+                    });
+                }
+                desc_pool = .init(&vk.gx, .{
+                    .name = .{ .str = "Game" },
+                    .cmds = create_descs.constSlice(),
+                });
+
+                sprite_storage_layout = .init(&vk.gx);
+                sprite_storage_buffer = .init(&vk.gx, .{
+                    .name = .{ .str = "Sprite Storage" },
+                    .size = sprite_storage_layout.buffer_size,
+                    .prefer_device_local = false,
+                });
+
+                var desc_set_updates: std.BoundedArray(
+                    gpu.DescSet.Update,
+                    sprite_desc_sets.len,
+                ) = .{};
+                for (sprite_desc_sets, 0..) |set, i| {
+                    desc_set_updates.appendAssumeCapacity(.{
+                        .set = set,
+                        .binding = 0,
+                        .value = .{
+                            .storage_buf = sprite_storage_layout.frame(@intCast(i)).global.view(sprite_storage_buffer.handle),
+                        },
+                    });
+                }
+                gpu.DescSet.update(&vk.gx, desc_set_updates.constSlice());
             },
             .sdl => {},
         }
@@ -2827,8 +2914,13 @@ const Assets = struct {
             .animations = .{},
             .sprite_pipeline = sprite_pipeline,
             .sprite_pipeline_layout = sprite_pipeline_layout,
+            .desc_pool = desc_pool,
+            .sprite_desc_sets = sprite_desc_sets,
+            .sprite_storage_layout = sprite_storage_layout,
+            .sprite_storage_buffer = sprite_storage_buffer,
         };
     }
+
     fn initSpv(gpa: Allocator, path: []const u8) []const u32 {
         const max_bytes = 80192;
         const size_hint = 4096;
@@ -2859,6 +2951,8 @@ const Assets = struct {
                 vk.gx.waitIdle();
                 a.sprite_pipeline_layout.deinit(&vk.gx);
                 a.sprite_pipeline.deinit(&vk.gx);
+                a.desc_pool.deinit(&vk.gx);
+                a.sprite_storage_buffer.deinit(&vk.gx);
             },
             .sdl => {},
         }
