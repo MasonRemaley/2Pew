@@ -38,6 +38,8 @@ const Zone = tracy.Zone;
 
 pub const tracy_impl = @import("tracy_impl");
 
+const max_textures = 255;
+
 pub const std_options: std.Options = .{
     .logFn = Logger.logFn,
     .log_level = .info,
@@ -93,6 +95,7 @@ const profile = false;
 
 pub const gpu_options: gpu.Options = .{
     .Backend = VkBackend,
+    .update_desc_sets_buf_len = 1000,
 };
 
 pub const VkRenderer = struct {
@@ -1190,11 +1193,11 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
 
             // Get this frame's storage writers
             const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
-            var global_writer = frame_layout.global.writer(game.assets.sprite_storage_buffer);
+            var shared_writer = frame_layout.shared.writer(game.assets.sprite_storage_buffer);
             var world_from_model_writer = frame_layout.world_from_models.writer(game.assets.sprite_storage_buffer);
 
             // Write the camera position
-            global_writer.writeStruct(SpriteGlobal{
+            shared_writer.writeStruct(SpriteShared{
                 .view_from_world = ortho(.{
                     .left = 0,
                     .right = display_width,
@@ -2206,6 +2209,40 @@ const Game = struct {
             s.* = try assets.loadSprite(allocator, cb, name, null, no_tint);
         }
 
+        // Load some images randomly into the array as a test of bindless image access
+        switch (assets.renderer.*) {
+            .vk => |*vk| {
+                var desc_set_updates: std.BoundedArray(
+                    gpu.DescSet.Update,
+                    assets.sprite_desc_sets.len * 255,
+                ) = .{};
+                for (assets.sprite_desc_sets) |set| {
+                    for (0..max_textures / 2) |i| {
+                        desc_set_updates.appendAssumeCapacity(.{
+                            .set = set,
+                            .binding = 2,
+                            .index = @intCast(i),
+                            .value = .{
+                                .combined_image_sampler = .{
+                                    .view = switch (i % 4) {
+                                        0 => assets.sprite(planet_red).image.?.view,
+                                        1 => assets.sprite(ring_bg).image.?.view,
+                                        2 => assets.sprite(bullet_small).image.?.view,
+                                        3 => assets.sprite(rock_sprites[0]).image.?.view,
+                                        else => unreachable,
+                                    },
+                                    .sampler = assets.texture_sampler,
+                                    .layout = .read_only,
+                                },
+                            },
+                        });
+                    }
+                }
+                gpu.DescSet.update(&vk.gx, desc_set_updates.constSlice());
+            },
+            else => {},
+        }
+
         const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
             try assets.addAnimation(&.{shrapnel_sprites[0]}, null, 30, 0.0),
             try assets.addAnimation(&.{shrapnel_sprites[1]}, null, 30, 0.0),
@@ -2768,7 +2805,7 @@ const Game = struct {
     }
 };
 
-pub const SpriteGlobal = extern struct {
+pub const SpriteShared = extern struct {
     view_from_world: Mat2x3 = .identity,
 };
 
@@ -2778,9 +2815,9 @@ const SpriteStorageLayout = BufferLayout(.{
     .kind = .{ .storage = true },
     .frame = &.{
         .{
-            .name = "global",
-            .size = @sizeOf(SpriteGlobal),
-            .alignment = @alignOf(SpriteGlobal),
+            .name = "shared",
+            .size = @sizeOf(SpriteShared),
+            .alignment = @alignOf(SpriteShared),
         },
         .{
             .name = "world_from_models",
@@ -2803,6 +2840,7 @@ const Assets = struct {
     sprite_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
     sprite_storage_buffer: gpu.UploadBuf(.{ .storage = true }),
     sprite_storage_layout: SpriteStorageLayout,
+    texture_sampler: gpu.Sampler,
 
     const Frame = struct {
         sprite: Sprite,
@@ -2826,6 +2864,7 @@ const Assets = struct {
         var desc_pool: gpu.DescPool = undefined;
         var sprite_storage_layout: SpriteStorageLayout = undefined;
         var sprite_storage_buffer: gpu.UploadBuf(.{ .storage = true }) = undefined;
+        var texture_sampler: gpu.Sampler = undefined;
         switch (renderer.*) {
             .vk => |*vk| {
                 const zone = Zone.begin(.{ .name = "create pipelines", .src = @src() });
@@ -2851,7 +2890,7 @@ const Assets = struct {
                     .name = .{ .str = "Pixelate Pipeline" },
                     .descs = &.{
                         .{
-                            .name = "Global",
+                            .name = "Shared",
                             .kind = .storage_buffer,
                             .stages = .{ .vertex = true },
                         },
@@ -2859,6 +2898,12 @@ const Assets = struct {
                             .name = "ModelToWorlds",
                             .kind = .storage_buffer,
                             .stages = .{ .vertex = true },
+                        },
+                        .{
+                            .name = "Textures",
+                            .kind = .combined_image_sampler,
+                            .count = max_textures,
+                            .stages = .{ .fragment = true },
                         },
                     },
                 };
@@ -2913,7 +2958,7 @@ const Assets = struct {
                         .set = set,
                         .binding = 0,
                         .value = .{
-                            .storage_buf = sprite_storage_layout.frame(@intCast(i)).global.view(sprite_storage_buffer.handle),
+                            .storage_buf = sprite_storage_layout.frame(@intCast(i)).shared.view(sprite_storage_buffer.handle),
                         },
                     });
                     desc_set_updates.appendAssumeCapacity(.{
@@ -2925,6 +2970,19 @@ const Assets = struct {
                     });
                 }
                 gpu.DescSet.update(&vk.gx, desc_set_updates.constSlice());
+
+                texture_sampler = .init(&vk.gx, .{ .str = "Texture" }, .{
+                    .mag_filter = .linear,
+                    .min_filter = .linear,
+                    .mipmap_mode = .linear,
+                    .address_mode = .initAll(.clamp_to_border),
+                    .mip_lod_bias = 0.0,
+                    .max_anisotropy = .@"16",
+                    .compare_op = null,
+                    .min_lod = 0.0,
+                    .max_lod = null,
+                    .border_color = .int_transparent_black,
+                });
             },
             .sdl => {},
         }
@@ -2942,6 +3000,7 @@ const Assets = struct {
             .sprite_desc_sets = sprite_desc_sets,
             .sprite_storage_layout = sprite_storage_layout,
             .sprite_storage_buffer = sprite_storage_buffer,
+            .texture_sampler = texture_sampler,
         };
     }
 
@@ -2964,10 +3023,6 @@ const Assets = struct {
 
     fn deinit(a: *Assets) void {
         a.dir.close();
-        for (a.sprites.items) |*s| {
-            s.deinit(a.gpa, a.renderer);
-        }
-        a.sprites.deinit(a.gpa);
         a.frames.deinit(a.gpa);
         a.animations.deinit(a.gpa);
         switch (a.renderer.*) {
@@ -2977,9 +3032,14 @@ const Assets = struct {
                 a.sprite_pipeline.deinit(&vk.gx);
                 a.desc_pool.deinit(&vk.gx);
                 a.sprite_storage_buffer.deinit(&vk.gx);
+                a.texture_sampler.deinit(&vk.gx);
             },
             .sdl => {},
         }
+        for (a.sprites.items) |*s| {
+            s.deinit(a.gpa, a.renderer);
+        }
+        a.sprites.deinit(a.gpa);
         a.* = undefined;
     }
 
