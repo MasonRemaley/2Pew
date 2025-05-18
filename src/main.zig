@@ -1186,6 +1186,8 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             }
         },
         .vk => |*vk| {
+            var sprite_instances: u32 = 0;
+
             // Get this frame's storage writers
             const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
             var global_writer = frame_layout.global.writer(game.assets.sprite_storage_buffer);
@@ -1202,6 +1204,20 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             }) catch |err| @panic(@errorName(err));
 
             vk.gx.beginFrame();
+
+            for (game.stars) |star| {
+                const sprite = game.assets.sprite(switch (star.kind) {
+                    .small => game.star_small,
+                    .large => game.star_large,
+                    .planet_red => game.planet_red,
+                });
+                // TODO: texture = sprite.tints[0]
+                var world_from_model: Mat2x3 = .translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) });
+                world_from_model.apply(.scale(.{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) }));
+                world_from_model_writer.writeStruct(world_from_model) catch |err| @panic(@errorName(err));
+                sprite_instances += 1;
+            }
+
             const framebuf = vk.gx.acquireNextImage(.{
                 .width = display_width,
                 .height = display_height,
@@ -1242,37 +1258,12 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
                 game.assets.sprite_desc_sets[vk.gx.frame],
             );
 
-            // Draw some objects
-            var wfm: Mat2x3 = .scale(.{ .x = 100, .y = 100 });
-            world_from_model_writer.writeStruct(wfm) catch |err| @panic(@errorName(err));
-            wfm.apply(.translation(.{ .x = 200, .y = 0 }));
-            world_from_model_writer.writeStruct(wfm) catch |err| @panic(@errorName(err));
-            wfm.apply(.translation(.{ .x = 200, .y = 0 }));
-            world_from_model_writer.writeStruct(wfm) catch |err| @panic(@errorName(err));
             render_game.draw(&vk.gx, .{
                 .vertex_count = 4,
-                .instance_count = 3,
+                .instance_count = sprite_instances,
                 .first_vertex = 0,
                 .first_instance = 0,
             });
-
-            // TODO: ...
-            for (game.stars) |star| {
-                const sprite = game.assets.sprite(switch (star.kind) {
-                    .small => game.star_small,
-                    .large => game.star_large,
-                    .planet_red => game.planet_red,
-                });
-                // TODO: ...
-                _ = sprite;
-                // renderCopy(.{
-                //     .renderer = sdl,
-                //     .tex = sprite.tints[0],
-                //     .rad = 0.0,
-                //     .pos = .{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) },
-                //     .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
-                // });
-            }
 
             render_game.endRendering(&vk.gx);
             render_game.submit(&vk.gx);
