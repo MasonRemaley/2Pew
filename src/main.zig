@@ -1189,43 +1189,64 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             }
         },
         .vk => |*vk| {
-            var sprite_instances: u32 = 0;
 
             // Get this frame's storage writers
-            const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
-            var scene_writer = frame_layout.scene.writer(game.assets.sprite_storage_buffer);
-            var instance_writer = frame_layout.instances.writer(game.assets.sprite_storage_buffer);
-
-            // Write the camera position
-            scene_writer.writeStruct(Ubo.Scene{
-                .view_from_world = ortho(.{
-                    .left = 0,
-                    .right = display_width,
-                    .bottom = 0,
-                    .top = display_height,
-                }).times(.translation(game.camera.negated())),
-            }) catch |err| @panic(@errorName(err));
-
             vk.gx.beginFrame();
+            const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
 
-            for (game.stars) |star| {
-                const sprite_index = switch (star.kind) {
-                    .small => game.star_small,
-                    .large => game.star_large,
-                    .planet_red => game.planet_red,
-                };
-                const sprite = game.assets.sprite(sprite_index);
-                // TODO: texture = sprite.tints[0]
-                var world_from_model: Mat2x3 = .scale(.{
-                    .x = @floatFromInt(sprite.rect.w),
-                    .y = @floatFromInt(sprite.rect.h),
-                });
-                world_from_model.apply(.translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }));
-                instance_writer.writeStruct(Ubo.Instance{
-                    .world_from_model = world_from_model,
-                    .texture_index = @intFromEnum(sprite_index),
+            // Write the scene data
+            {
+                var scene_writer = frame_layout.scene.writer(game.assets.sprite_storage_buffer);
+                scene_writer.writeStruct(Ubo.Scene{
+                    .view_from_world = ortho(.{
+                        .left = 0,
+                        .right = display_width,
+                        .bottom = 0,
+                        .top = display_height,
+                    }).times(.translation(game.camera.negated())),
                 }) catch |err| @panic(@errorName(err));
-                sprite_instances += 1;
+            }
+
+            // Draw the sprites
+            var sprite_instances: u32 = 0;
+            {
+                var instance_writer = frame_layout.instances.writer(game.assets.sprite_storage_buffer);
+
+                // Draw the stars
+                for (game.stars) |star| {
+                    const sprite_index = switch (star.kind) {
+                        .small => game.star_small,
+                        .large => game.star_large,
+                        .planet_red => game.planet_red,
+                    };
+                    const sprite = game.assets.sprite(sprite_index);
+                    var world_from_model: Mat2x3 = .scale(.{
+                        .x = @floatFromInt(sprite.rect.w),
+                        .y = @floatFromInt(sprite.rect.h),
+                    });
+                    world_from_model.apply(.translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }));
+                    instance_writer.writeStruct(Ubo.Instance{
+                        .world_from_model = world_from_model,
+                        .texture_index = @intFromEnum(sprite_index),
+                    }) catch |err| @panic(@errorName(err));
+                    sprite_instances += 1;
+                }
+
+                // Draw the ring
+                {
+                    const sprite_index = game.ring_bg;
+                    const sprite = game.assets.sprite(sprite_index);
+                    var world_from_model: Mat2x3 = .scale(.{
+                        .x = @floatFromInt(sprite.rect.w),
+                        .y = @floatFromInt(sprite.rect.h),
+                    });
+                    world_from_model.apply(.translation(display_center));
+                    instance_writer.writeStruct(Ubo.Instance{
+                        .world_from_model = world_from_model,
+                        .texture_index = @intFromEnum(sprite_index),
+                    }) catch |err| @panic(@errorName(err));
+                    sprite_instances += 1;
+                }
             }
 
             const framebuf = vk.gx.acquireNextImage(.{
