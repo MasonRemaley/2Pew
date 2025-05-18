@@ -343,7 +343,7 @@ fn update(
     defer zone.end();
 
     switch (game.assets.renderer.*) {
-        .vk => game.camera.x += 0.1 * delta_s,
+        .vk => game.camera.x += delta_s * 10.0,
         .sdl => {},
     }
 
@@ -1190,7 +1190,12 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
             var global_writer = frame_layout.global.writer(game.assets.sprite_storage_buffer);
             global_writer.writeStruct(SpriteGlobal{
-                .world_to_view = .translation(game.camera.negated()).multiplied(.rotation()),
+                .world_to_view = ortho(.{
+                    .left = 0,
+                    .right = display_width,
+                    .bottom = 0,
+                    .top = display_height,
+                }).times(.translation(game.camera.negated())),
             }) catch |err| @panic(@errorName(err));
 
             vk.gx.beginFrame();
@@ -1240,14 +1245,14 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
                 .first_instance = 0,
             });
 
-            // XXX: ...
+            // TODO: ...
             for (game.stars) |star| {
                 const sprite = game.assets.sprite(switch (star.kind) {
                     .small => game.star_small,
                     .large => game.star_large,
                     .planet_red => game.planet_red,
                 });
-                // XXX: ...
+                // TODO: ...
                 _ = sprite;
                 // renderCopy(.{
                 //     .renderer = sdl,
@@ -2690,7 +2695,7 @@ const Game = struct {
             .deathmatch_1v1_one_rock => 1,
             .royale_4p => 1,
         };
-        // XXX: random in circle biased doesn't need to be scaled, audit other calls to this
+        // TODO: random in circle biased doesn't need to be scaled, audit other calls to this
         for (0..rock_amt) |_| {
             const speed = 20 + rng.float(f32) * 300;
             const radius = 25 + rng.float(f32) * 110;
@@ -3390,6 +3395,29 @@ fn createVulkanSurface(
         return .null_handle;
     }
     return @enumFromInt(@intFromPtr(surface));
+}
+
+pub const OrthoOptions = struct {
+    left: f32,
+    right: f32,
+    bottom: f32,
+    top: f32,
+};
+
+/// Returns an orthographic projection matrix following the Vulkan/DX12 clip space convention.
+///
+/// Under this convention, (0, 0) is top left and (1, 1) is bottom right.
+fn ortho(options: OrthoOptions) Mat2x3 {
+    const width = options.right - options.left;
+    const height = options.bottom - options.top;
+    const x_scale = 2 / width;
+    const y_scale = 2 / height;
+    const x_off = -(options.right + options.left) / width;
+    const y_off = -(options.top + options.bottom) / height;
+    return .{
+        .r0 = .{ .x = x_scale, .y = 0, .z = x_off },
+        .r1 = .{ .x = 0, .y = y_scale, .z = y_off },
+    };
 }
 
 test {

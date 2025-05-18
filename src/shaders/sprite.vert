@@ -7,9 +7,9 @@ layout(scalar, binding = 0) readonly buffer Global {
 
 const vec2 vertices[4] = vec2[](
     vec2(0, 0),
-    vec2(1, 0),
-    vec2(0, 1),
-    vec2(1, 1)
+    vec2(0, 1080),
+    vec2(1920, 0),
+    vec2(1920, 1080)
 );
 
 void main() {
