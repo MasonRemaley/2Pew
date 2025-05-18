@@ -1193,11 +1193,11 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
 
             // Get this frame's storage writers
             const frame_layout = game.assets.sprite_storage_layout.frame(vk.gx.frame);
-            var shared_writer = frame_layout.shared.writer(game.assets.sprite_storage_buffer);
-            var world_from_model_writer = frame_layout.world_from_models.writer(game.assets.sprite_storage_buffer);
+            var scene_writer = frame_layout.scene.writer(game.assets.sprite_storage_buffer);
+            var instance_writer = frame_layout.instances.writer(game.assets.sprite_storage_buffer);
 
             // Write the camera position
-            shared_writer.writeStruct(SpriteShared{
+            scene_writer.writeStruct(Ubo.Scene{
                 .view_from_world = ortho(.{
                     .left = 0,
                     .right = display_width,
@@ -1209,15 +1209,22 @@ fn render(es: *Entities, game: *const Game, delta_s: f32, fx_loop_s: f32) void {
             vk.gx.beginFrame();
 
             for (game.stars) |star| {
-                const sprite = game.assets.sprite(switch (star.kind) {
+                const sprite_index = switch (star.kind) {
                     .small => game.star_small,
                     .large => game.star_large,
                     .planet_red => game.planet_red,
-                });
+                };
+                const sprite = game.assets.sprite(sprite_index);
                 // TODO: texture = sprite.tints[0]
-                var world_from_model: Mat2x3 = .translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) });
-                world_from_model.apply(.scale(.{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) }));
-                world_from_model_writer.writeStruct(world_from_model) catch |err| @panic(@errorName(err));
+                var world_from_model: Mat2x3 = .scale(.{
+                    .x = @floatFromInt(sprite.rect.w),
+                    .y = @floatFromInt(sprite.rect.h),
+                });
+                world_from_model.apply(.translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }));
+                instance_writer.writeStruct(Ubo.Instance{
+                    .world_from_model = world_from_model,
+                    .texture_index = @intFromEnum(sprite_index),
+                }) catch |err| @panic(@errorName(err));
                 sprite_instances += 1;
             }
 
@@ -2209,40 +2216,6 @@ const Game = struct {
             s.* = try assets.loadSprite(allocator, cb, name, null, no_tint);
         }
 
-        // Load some images randomly into the array as a test of bindless image access
-        switch (assets.renderer.*) {
-            .vk => |*vk| {
-                var desc_set_updates: std.BoundedArray(
-                    gpu.DescSet.Update,
-                    assets.sprite_desc_sets.len * 255,
-                ) = .{};
-                for (assets.sprite_desc_sets) |set| {
-                    for (0..max_textures / 2) |i| {
-                        desc_set_updates.appendAssumeCapacity(.{
-                            .set = set,
-                            .binding = 2,
-                            .index = @intCast(i),
-                            .value = .{
-                                .combined_image_sampler = .{
-                                    .view = switch (i % 4) {
-                                        0 => assets.sprite(planet_red).image.?.view,
-                                        1 => assets.sprite(ring_bg).image.?.view,
-                                        2 => assets.sprite(bullet_small).image.?.view,
-                                        3 => assets.sprite(rock_sprites[0]).image.?.view,
-                                        else => unreachable,
-                                    },
-                                    .sampler = assets.texture_sampler,
-                                    .layout = .read_only,
-                                },
-                            },
-                        });
-                    }
-                }
-                gpu.DescSet.update(&vk.gx, desc_set_updates.constSlice());
-            },
-            else => {},
-        }
-
         const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
             try assets.addAnimation(&.{shrapnel_sprites[0]}, null, 30, 0.0),
             try assets.addAnimation(&.{shrapnel_sprites[1]}, null, 30, 0.0),
@@ -2492,6 +2465,51 @@ const Game = struct {
             else => {},
         }
         image_zone.end();
+
+        switch (assets.renderer.*) {
+            .vk => |*vk| {
+                var desc_set_updates: std.BoundedArray(
+                    gpu.DescSet.Update,
+                    assets.sprite_desc_sets.len * (2 + max_textures),
+                ) = .{};
+                for (assets.sprite_desc_sets, 0..) |set, frame| {
+                    const frame_storage = assets.sprite_storage_layout.frame(@intCast(frame));
+                    desc_set_updates.appendAssumeCapacity(.{
+                        .set = set,
+                        .binding = 0,
+                        .value = .{
+                            .storage_buf = frame_storage.scene.view(assets.sprite_storage_buffer.handle),
+                        },
+                    });
+                    desc_set_updates.appendAssumeCapacity(.{
+                        .set = set,
+                        .binding = 1,
+                        .value = .{
+                            .storage_buf = frame_storage.instances.view(assets.sprite_storage_buffer.handle),
+                        },
+                    });
+
+                    for (assets.sprites.items, 0..) |sprite, sprite_index| {
+                        if (sprite_index > max_textures) @panic("textures oob");
+                        desc_set_updates.appendAssumeCapacity(.{
+                            .set = set,
+                            .binding = 2,
+                            .index = @intCast(sprite_index),
+                            .value = .{
+                                .combined_image_sampler = .{
+                                    .view = sprite.image.?.view,
+                                    .sampler = assets.texture_sampler,
+                                    .layout = .read_only,
+                                },
+                            },
+                        });
+                    }
+                }
+
+                gpu.DescSet.update(&vk.gx, desc_set_updates.constSlice());
+            },
+            else => {},
+        }
 
         return .{
             .rng = std.Random.DefaultPrng.init(random_seed),
@@ -2805,8 +2823,14 @@ const Game = struct {
     }
 };
 
-pub const SpriteShared = extern struct {
-    view_from_world: Mat2x3 = .identity,
+const Ubo = struct {
+    const Scene = extern struct {
+        view_from_world: Mat2x3 = .identity,
+    };
+    const Instance = extern struct {
+        world_from_model: Mat2x3,
+        texture_index: u32,
+    };
 };
 
 const max_sprites = 16384;
@@ -2815,14 +2839,14 @@ const SpriteStorageLayout = BufferLayout(.{
     .kind = .{ .storage = true },
     .frame = &.{
         .{
-            .name = "shared",
-            .size = @sizeOf(SpriteShared),
-            .alignment = @alignOf(SpriteShared),
+            .name = "scene",
+            .size = @sizeOf(Ubo.Scene),
+            .alignment = @alignOf(Ubo.Scene),
         },
         .{
-            .name = "world_from_models",
-            .size = @sizeOf(Mat2x3) * max_sprites,
-            .alignment = @alignOf(Mat2x3),
+            .name = "instances",
+            .size = @sizeOf(Ubo.Instance) * max_sprites,
+            .alignment = @alignOf(Ubo.Instance),
         },
     },
 });
@@ -2890,14 +2914,17 @@ const Assets = struct {
                     .name = .{ .str = "Pixelate Pipeline" },
                     .descs = &.{
                         .{
-                            .name = "Shared",
+                            .name = "Scene",
                             .kind = .storage_buffer,
                             .stages = .{ .vertex = true },
                         },
                         .{
-                            .name = "ModelToWorlds",
+                            .name = "Instance",
                             .kind = .storage_buffer,
-                            .stages = .{ .vertex = true },
+                            .stages = .{
+                                .vertex = true,
+                                .fragment = true,
+                            },
                         },
                         .{
                             .name = "Textures",
@@ -2948,28 +2975,6 @@ const Assets = struct {
                     .size = sprite_storage_layout.buffer_size,
                     .prefer_device_local = false,
                 });
-
-                var desc_set_updates: std.BoundedArray(
-                    gpu.DescSet.Update,
-                    sprite_desc_sets.len * 2,
-                ) = .{};
-                for (sprite_desc_sets, 0..) |set, i| {
-                    desc_set_updates.appendAssumeCapacity(.{
-                        .set = set,
-                        .binding = 0,
-                        .value = .{
-                            .storage_buf = sprite_storage_layout.frame(@intCast(i)).shared.view(sprite_storage_buffer.handle),
-                        },
-                    });
-                    desc_set_updates.appendAssumeCapacity(.{
-                        .set = set,
-                        .binding = 1,
-                        .value = .{
-                            .storage_buf = sprite_storage_layout.frame(@intCast(i)).world_from_models.view(sprite_storage_buffer.handle),
-                        },
-                    });
-                }
-                gpu.DescSet.update(&vk.gx, desc_set_updates.constSlice());
 
                 texture_sampler = .init(&vk.gx, .{ .str = "Texture" }, .{
                     .mag_filter = .linear,
