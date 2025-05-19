@@ -29,8 +29,8 @@ storage_buf: gpu.UploadBuf(.{ .storage = true }),
 
 texture_sampler: gpu.Sampler,
 
-sprites: [gpu.global_options.max_frames_in_flight]gpu.Writer,
-scene: [gpu.global_options.max_frames_in_flight]gpu.Writer,
+sprites: [gpu.global_options.max_frames_in_flight]gpu.UploadBuf(.{}).View,
+scene: [gpu.global_options.max_frames_in_flight]gpu.UploadBuf(.{}).View,
 
 pub const max_textures = 255;
 pub const max_sprites = 16384;
@@ -183,8 +183,8 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         .border_color = .int_transparent_black,
     });
 
-    const scene = storage_layout.frameWriters(storage_buf, "scene");
-    const sprites = storage_layout.frameWriters(storage_buf, "instances");
+    const scene = storage_layout.frameViews(storage_buf, "scene", .{});
+    const sprites = storage_layout.frameViews(storage_buf, "instances", .{});
 
     return .{
         .gx = gx,

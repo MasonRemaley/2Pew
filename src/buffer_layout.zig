@@ -3,6 +3,7 @@ const gpu = @import("gpu");
 const Gx = gpu.Gx;
 const BufHandle = gpu.BufHandle;
 const UploadBuf = gpu.UploadBuf;
+const Buf = gpu.Buf;
 const BufKind = gpu.BufKind;
 const log = std.log.scoped(.buffer_layout);
 const Writer = gpu.Writer;
@@ -120,6 +121,20 @@ pub fn BufferLayout(options: Options) type {
             }
             return result;
         }
+
+        pub fn frameViews(
+            self: @This(),
+            buf: UploadBuf(options.kind),
+            comptime partition: []const u8,
+            comptime kind: BufKind,
+        ) [gpu.global_options.max_frames_in_flight]UploadBuf(kind).View {
+            const field_frames = self.frames(partition);
+            var result: [gpu.global_options.max_frames_in_flight]UploadBuf(kind).View = undefined;
+            for (&result, field_frames) |*writer, field_frame| {
+                writer.* = field_frame.view(buf).as(kind);
+            }
+            return result;
+        }
     };
 }
 
@@ -131,11 +146,12 @@ fn BufferPartitions(partitions: []const Options.Partition, kind: BufKind) type {
             comptime alignment: u16 = partition.alignment,
             offset: u64,
 
-            pub fn view(self: @This(), handle: BufHandle(kind)) BufHandle(kind).View {
+            pub fn view(self: @This(), buf: UploadBuf(kind)) UploadBuf(kind).View {
                 return .{
-                    .handle = handle,
+                    .handle = buf.handle,
                     .offset = self.offset,
-                    .size = self.size,
+                    .len = self.size,
+                    .ptr = buf.data.ptr,
                 };
             }
 

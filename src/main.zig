@@ -1163,7 +1163,7 @@ fn render(
             // Get this frame's storage writers
             vk.gx.beginFrame();
 
-            var scene_writer = vk.scene[vk.gx.frame];
+            var scene_writer = vk.scene[vk.gx.frame].writer();
             scene_writer.writeStruct(ubos.Scene{
                 .view_from_world = ortho(.{
                     .left = 0,
@@ -1173,7 +1173,7 @@ fn render(
                 }).times(.translation(game.camera.negated())),
             }) catch |err| @panic(@errorName(err));
 
-            var sprite_writer = vk.sprites[vk.gx.frame];
+            var sprite_writer = vk.sprites[vk.gx.frame].writer();
             var sprite_instances: u32 = 0;
 
             // Draw the stars
@@ -2459,14 +2459,14 @@ const Game = struct {
                         .set = set,
                         .binding = 0,
                         .value = .{
-                            .storage_buf = frame_storage.scene.view(vk.storage_buf.handle),
+                            .storage_buf = frame_storage.scene.view(vk.storage_buf).asBuf(.{ .storage = true }),
                         },
                     });
                     desc_set_updates.appendAssumeCapacity(.{
                         .set = set,
                         .binding = 1,
                         .value = .{
-                            .storage_buf = frame_storage.instances.view(vk.storage_buf.handle),
+                            .storage_buf = frame_storage.instances.view(vk.storage_buf).asBuf(.{ .storage = true }),
                         },
                     });
 

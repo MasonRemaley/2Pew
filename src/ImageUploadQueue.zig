@@ -84,7 +84,7 @@ pub fn init(gx: *Gx, options: Options) @This() {
         .prefer_device_local = false,
     });
 
-    const writer = staging.writer(.{});
+    const writer = staging.view().writer();
 
     return .{
         .staging = staging,
