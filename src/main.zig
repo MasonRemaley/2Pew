@@ -2924,6 +2924,7 @@ const Assets = struct {
                             .name = "Scene",
                             .kind = .storage_buffer,
                             .stages = .{ .vertex = true },
+                            .partially_bound = false,
                         },
                         .{
                             .name = "Instance",
@@ -2932,12 +2933,14 @@ const Assets = struct {
                                 .vertex = true,
                                 .fragment = true,
                             },
+                            .partially_bound = false,
                         },
                         .{
                             .name = "Textures",
                             .kind = .combined_image_sampler,
                             .count = max_textures,
                             .stages = .{ .fragment = true },
+                            .partially_bound = true,
                         },
                     },
                 };
