@@ -31,32 +31,14 @@ const Command = structopt.Command;
 const NamedArg = structopt.NamedArg;
 const log = std.log.scoped(build.name);
 const ImageUploadQueue = @import("ImageUploadQueue.zig");
-const BufferLayout = @import("buffer_layout.zig").BufferLayout;
-const SpriteRenderer = @import("SpriteRenderer.zig");
+const VkRenderer = @import("Renderer.zig");
+const ubos = VkRenderer.ubos;
+const SpriteRenderer = VkRenderer.SpriteRenderer;
 
 const tracy = @import("tracy");
 const Zone = tracy.Zone;
 
 pub const tracy_impl = @import("tracy_impl");
-
-const max_textures = 255;
-const max_sprites = 16384;
-
-pub const StorageLayout = BufferLayout(.{
-    .kind = .{ .storage = true },
-    .frame = &.{
-        .{
-            .name = "scene",
-            .size = @sizeOf(SpriteRenderer.Ubo.Scene),
-            .alignment = @alignOf(SpriteRenderer.Ubo.Scene),
-        },
-        .{
-            .name = "instances",
-            .size = @sizeOf(SpriteRenderer.Ubo.Instance) * max_sprites,
-            .alignment = @alignOf(SpriteRenderer.Ubo.Instance),
-        },
-    },
-});
 
 pub const std_options: std.Options = .{
     .logFn = Logger.logFn,
@@ -100,9 +82,6 @@ const display_center: Vec2 = .{
 };
 const display_radius = display_height / 2.0;
 
-const PrefabEntity = Entities.PrefabEntity;
-const ComponentFlags = Entities.ComponentFlags;
-
 const dead_zone = 10000;
 
 // This turns off vsync and logs the frame times to the console. Even better would be debug text on
@@ -114,20 +93,6 @@ const profile = false;
 pub const gpu_options: gpu.Options = .{
     .Backend = VkBackend,
     .update_desc_sets_buf_len = 1000,
-};
-
-pub const VkRenderer = struct {
-    gx: Gx,
-    upload_queue: ImageUploadQueue,
-    color_images: gpu.Memory(.color_image),
-    upload_offset: u64 = 0,
-
-    fn deinit(self: *@This(), gpa: Allocator) void {
-        self.upload_queue.deinit(&self.gx);
-        self.color_images.deinit(&self.gx);
-        self.gx.deinit(gpa);
-        self.* = undefined;
-    }
 };
 
 const Renderer = union(enum) {
@@ -277,7 +242,7 @@ pub fn main() !void {
             return;
         }
         update(&es, &cb, &game, delta_s);
-        render(&es, &game, &game.sprite_renderer, delta_s, fx_loop_s);
+        render(&es, &game, delta_s, fx_loop_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
         // results if it's too close to zero!
@@ -1087,8 +1052,7 @@ pub fn exec(es: *Entities, cb: *CmdBuf) void {
 // TODO(mason): allow passing in const for rendering to make sure no modifications
 fn render(
     es: *Entities,
-    game: *const Game,
-    sprite_renderer: *SpriteRenderer,
+    game: *Game,
     delta_s: f32,
     fx_loop_s: f32,
 ) void {
@@ -1216,14 +1180,18 @@ fn render(
 
             // Get this frame's storage writers
             vk.gx.beginFrame();
-            sprite_renderer.begin(&vk.gx, .{
+
+            game.scene_writers[vk.gx.frame].reset();
+            game.scene_writers[vk.gx.frame].writeStruct(ubos.Scene{
                 .view_from_world = ortho(.{
                     .left = 0,
                     .right = display_width,
                     .bottom = 0,
                     .top = display_height,
                 }).times(.translation(game.camera.negated())),
-            });
+            }) catch |err| @panic(@errorName(err));
+
+            game.sprite_renderer.begin(&vk.gx);
 
             // Draw the stars
             for (game.stars) |star| {
@@ -1238,7 +1206,7 @@ fn render(
                     .y = @floatFromInt(sprite.rect.h),
                 });
                 world_from_model.apply(.translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }));
-                sprite_renderer.draw(&vk.gx, .{
+                game.sprite_renderer.draw(&vk.gx, .{
                     .world_from_model = world_from_model,
                     .texture_index = @intFromEnum(sprite_index),
                 });
@@ -1253,7 +1221,7 @@ fn render(
                     .y = @floatFromInt(sprite.rect.h),
                 });
                 world_from_model.apply(.translation(display_center));
-                sprite_renderer.draw(&vk.gx, .{
+                game.sprite_renderer.draw(&vk.gx, .{
                     .world_from_model = world_from_model,
                     .texture_index = @intFromEnum(sprite_index),
                 });
@@ -1299,7 +1267,7 @@ fn render(
                 game.assets.sprite_desc_sets[vk.gx.frame],
             );
 
-            sprite_renderer.submit(&vk.gx, render_game);
+            game.sprite_renderer.submit(&vk.gx, render_game);
 
             render_game.endRendering(&vk.gx);
             render_game.submit(&vk.gx);
@@ -1767,6 +1735,7 @@ const Game = struct {
     camera: Vec2 = .zero,
 
     sprite_renderer: SpriteRenderer,
+    scene_writers: [gpu.global_options.max_frames_in_flight]gpu.Writer,
 
     const ShipAnimations = struct {
         still: Animation.Index,
@@ -2498,7 +2467,7 @@ const Game = struct {
             .vk => |*vk| {
                 var desc_set_updates: std.BoundedArray(
                     gpu.DescSet.Update,
-                    assets.sprite_desc_sets.len * (2 + max_textures),
+                    assets.sprite_desc_sets.len * (2 + VkRenderer.max_textures),
                 ) = .{};
                 for (assets.sprite_desc_sets, 0..) |set, frame| {
                     const frame_storage = assets.storage_layout.frame(@intCast(frame));
@@ -2518,7 +2487,7 @@ const Game = struct {
                     });
 
                     for (assets.sprites.items, 0..) |sprite, sprite_index| {
-                        if (sprite_index > max_textures) @panic("textures oob");
+                        if (sprite_index > VkRenderer.max_textures) @panic("textures oob");
                         desc_set_updates.appendAssumeCapacity(.{
                             .set = set,
                             .binding = 2,
@@ -2539,10 +2508,11 @@ const Game = struct {
             else => {},
         }
 
-        const sprite_renderer: SpriteRenderer = .init(.{
-            .scene = assets.storage_layout.frameWriters(assets.storage_buffer, "scene"),
-            .instances = assets.storage_layout.frameWriters(assets.storage_buffer, "instances"),
-        });
+        const scene_writers = assets.storage_layout.frameWriters(assets.storage_buffer, "scene");
+        const sprite_renderer: SpriteRenderer = .init(assets.storage_layout.frameWriters(
+            assets.storage_buffer,
+            "instances",
+        ));
 
         return .{
             .rng = std.Random.DefaultPrng.init(random_seed),
@@ -2622,6 +2592,7 @@ const Game = struct {
             .particle = particle,
 
             .sprite_renderer = sprite_renderer,
+            .scene_writers = scene_writers,
         };
     }
 
@@ -2870,7 +2841,7 @@ const Assets = struct {
     desc_pool: gpu.DescPool,
     sprite_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
     storage_buffer: gpu.UploadBuf(.{ .storage = true }),
-    storage_layout: StorageLayout,
+    storage_layout: VkRenderer.StorageLayout,
     texture_sampler: gpu.Sampler,
 
     const Frame = struct {
@@ -2893,7 +2864,7 @@ const Assets = struct {
         var sprite_pipeline_layout: gpu.Pipeline.Layout = undefined;
         var sprite_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
         var desc_pool: gpu.DescPool = undefined;
-        var storage_layout: StorageLayout = undefined;
+        var storage_layout: VkRenderer.StorageLayout = undefined;
         var storage_buffer: gpu.UploadBuf(.{ .storage = true }) = undefined;
         var texture_sampler: gpu.Sampler = undefined;
         switch (renderer.*) {
@@ -2917,35 +2888,7 @@ const Assets = struct {
                 });
                 defer sprite_frag_module.deinit(&vk.gx);
 
-                const sprite_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
-                    .name = .{ .str = "Pixelate Pipeline" },
-                    .descs = &.{
-                        .{
-                            .name = "Scene",
-                            .kind = .storage_buffer,
-                            .stages = .{ .vertex = true },
-                            .partially_bound = false,
-                        },
-                        .{
-                            .name = "Instance",
-                            .kind = .storage_buffer,
-                            .stages = .{
-                                .vertex = true,
-                                .fragment = true,
-                            },
-                            .partially_bound = false,
-                        },
-                        .{
-                            .name = "Textures",
-                            .kind = .combined_image_sampler,
-                            .count = max_textures,
-                            .stages = .{ .fragment = true },
-                            .partially_bound = true,
-                        },
-                    },
-                };
-
-                sprite_pipeline_layout = .init(&vk.gx, sprite_pipeline_layout_options);
+                sprite_pipeline_layout = .init(&vk.gx, VkRenderer.pipeline_layout_options);
 
                 gpu.Pipeline.initGraphics(&vk.gx, &.{
                     .{
@@ -2968,10 +2911,10 @@ const Assets = struct {
                 var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, sprite_desc_sets.len) = .{};
                 for (&sprite_desc_sets, 0..) |*desc_set, i| {
                     create_descs.appendAssumeCapacity(.{
-                        .name = .{ .str = "Sprites", .index = i },
+                        .name = .{ .str = "Game", .index = i },
                         .result = desc_set,
                         .layout = sprite_pipeline_layout.desc_set,
-                        .layout_options = &sprite_pipeline_layout_options,
+                        .layout_options = &VkRenderer.pipeline_layout_options,
                     });
                 }
                 desc_pool = .init(&vk.gx, .{
@@ -2981,7 +2924,7 @@ const Assets = struct {
 
                 storage_layout = .init(&vk.gx);
                 storage_buffer = .init(&vk.gx, .{
-                    .name = .{ .str = "Sprite Storage" },
+                    .name = .{ .str = "Storage" },
                     .size = storage_layout.buffer_size,
                     .prefer_device_local = false,
                 });

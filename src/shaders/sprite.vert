@@ -6,10 +6,10 @@
 #include "sprite.glsl"
 
 
-layout(scalar, binding = 0) readonly buffer SceneData {
+layout(scalar, binding = 0) readonly buffer SceneUbo {
     Scene scene;
 };
-layout(scalar, binding = 1) readonly buffer InstanceData {
+layout(scalar, binding = 1) readonly buffer InstanceUbo {
     Instance instances[];
 };
 

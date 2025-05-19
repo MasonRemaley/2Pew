@@ -6,7 +6,7 @@
 #include "sprite.glsl"
 
 
-layout(scalar, binding = 1) readonly buffer InstanceData {
+layout(scalar, binding = 1) readonly buffer InstanceUbo {
     Instance instances[];
 };
 

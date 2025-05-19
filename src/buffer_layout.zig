@@ -143,7 +143,7 @@ fn BufferPartitions(partitions: []const Options.Partition, kind: BufKind) type {
                 return handle.writer(.{
                     .offset = self.offset,
                     .size = self.size,
-                });
+                }).trimmed();
             }
         };
         field.* = .{
