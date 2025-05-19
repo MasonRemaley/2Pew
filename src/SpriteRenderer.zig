@@ -12,71 +12,54 @@ const Mat2x3 = geom.Mat2x3;
 
 const assert = std.debug.assert;
 
-pub const max_instances = 16384;
-
-storage_layout: StorageLayout,
-storage: UploadBuf(.{ .storage = true }),
-instances: Writer,
-first_instance: u32,
-instance_count: u32,
+scene: [gpu.global_options.max_frames_in_flight]Writer,
+instances: [gpu.global_options.max_frames_in_flight]Writer,
+first_instance: u32 = 0,
+instance_count: u32 = 0,
 
 pub const Ubo = struct {
-    const Scene = extern struct {
+    pub const Scene = extern struct {
         view_from_world: Mat2x3 = .identity,
     };
-    const Instance = extern struct {
+    pub const Instance = extern struct {
         world_from_model: Mat2x3,
         texture_index: u32,
     };
 };
 
-pub const StorageLayout = BufferLayout(.{
-    .kind = .{ .storage = true },
-    .frame = &.{
-        .{
-            .name = "scene",
-            .size = @sizeOf(Ubo.Scene),
-            .alignment = @alignOf(Ubo.Scene),
-        },
-        .{
-            .name = "instances",
-            .size = @sizeOf(Ubo.Instance) * max_instances,
-            .alignment = @alignOf(Ubo.Instance),
-        },
-    },
-});
-
 pub const Options = struct {
-    storage_layout: StorageLayout,
-    storage: UploadBuf(.{ .storage = true }),
+    scene: [gpu.global_options.max_frames_in_flight]Writer,
+    instances: [gpu.global_options.max_frames_in_flight]Writer,
 };
 
 pub fn init(options: Options) @This() {
-    return .{
-        .storage_layout = options.storage_layout,
-        .storage = options.storage,
-        .instances = undefined,
+    var result: @This() = .{
+        .scene = options.scene,
+        .instances = options.instances,
         .first_instance = undefined,
         .instance_count = undefined,
     };
+    for (&result.scene, &result.instances) |*scene_writer, *instance_writer| {
+        scene_writer.trim();
+        instance_writer.trim();
+    }
+    return result;
 }
 
 pub fn begin(self: *@This(), gx: *Gx, scene: Ubo.Scene) void {
     assert(gx.in_frame);
 
-    const frame = self.storage_layout.frame(gx.frame);
+    self.scene[gx.frame].reset();
+    self.instances[gx.frame].reset();
 
-    var scene_writer = frame.scene.writer(self.storage);
-    scene_writer.writeStruct(scene) catch |err| @panic(@errorName(err));
+    self.scene[gx.frame].writeStruct(scene) catch |err| @panic(@errorName(err));
 
-    self.instances = frame.instances.writer(self.storage);
     self.first_instance = 0;
     self.instance_count = 0;
 }
 
-pub fn draw(self: *@This(), options: Ubo.Instance) void {
-    if (self.instance_count > max_instances) @panic("sprite instance_count oob");
-    self.instances.writeStruct(options) catch |err| @panic(@errorName(err));
+pub fn draw(self: *@This(), gx: *Gx, options: Ubo.Instance) void {
+    self.instances[gx.frame].writeStruct(options) catch |err| @panic(@errorName(err));
     self.instance_count += 1;
 }
 

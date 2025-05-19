@@ -95,6 +95,31 @@ pub fn BufferLayout(options: Options) type {
             }
             return frame_offsets;
         }
+
+        pub fn Frames(partition: []const u8) type {
+            return [gpu.global_options.max_frames_in_flight]@FieldType(Frame, partition);
+        }
+
+        pub fn frames(self: @This(), comptime partition: []const u8) Frames(partition) {
+            var result: Frames(partition) = undefined;
+            for (&result, 0..) |*result_frame, frame_index| {
+                result_frame.* = @field(self.frame(@intCast(frame_index)), partition);
+            }
+            return result;
+        }
+
+        pub fn frameWriters(
+            self: @This(),
+            handle: UploadBuf(options.kind),
+            comptime partition: []const u8,
+        ) [gpu.global_options.max_frames_in_flight]Writer {
+            const field_frames = self.frames(partition);
+            var result: [gpu.global_options.max_frames_in_flight]Writer = undefined;
+            for (&result, field_frames) |*writer, field_frame| {
+                writer.* = field_frame.writer(handle);
+            }
+            return result;
+        }
     };
 }
 
