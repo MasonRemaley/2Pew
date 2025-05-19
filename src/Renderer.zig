@@ -5,7 +5,6 @@ const tracy = @import("tracy");
 
 const ImageUploadQueue = @import("ImageUploadQueue.zig");
 const BufferLayout = @import("buffer_layout.zig").BufferLayout;
-const Instancer = @import("instancer.zig").Instancer;
 
 const Gx = gpu.Gx;
 const Memory = gpu.Memory;
@@ -30,8 +29,8 @@ storage_buf: gpu.UploadBuf(.{ .storage = true }),
 
 texture_sampler: gpu.Sampler,
 
-sprite_renderer: SpriteRenderer,
-scene_writers: [gpu.global_options.max_frames_in_flight]gpu.Writer,
+sprites: [gpu.global_options.max_frames_in_flight]gpu.Writer,
+scene: [gpu.global_options.max_frames_in_flight]gpu.Writer,
 
 pub const max_textures = 255;
 pub const max_sprites = 16384;
@@ -65,8 +64,6 @@ pub const StorageLayout = BufferLayout(.{
         },
     },
 });
-
-pub const SpriteRenderer = Instancer(ubos.Instance);
 
 pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
     .name = .{ .str = "Game" },
@@ -186,11 +183,8 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         .border_color = .int_transparent_black,
     });
 
-    const scene_writers = storage_layout.frameWriters(storage_buf, "scene");
-    const sprite_renderer: SpriteRenderer = .init(storage_layout.frameWriters(
-        storage_buf,
-        "instances",
-    ));
+    const scene = storage_layout.frameWriters(storage_buf, "scene");
+    const sprites = storage_layout.frameWriters(storage_buf, "instances");
 
     return .{
         .gx = gx,
@@ -209,8 +203,8 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
 
         .texture_sampler = texture_sampler,
 
-        .scene_writers = scene_writers,
-        .sprite_renderer = sprite_renderer,
+        .scene = scene,
+        .sprites = sprites,
     };
 }
 

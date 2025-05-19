@@ -1160,12 +1160,11 @@ fn render(
             }
         },
         .vk => |*vk| {
-
             // Get this frame's storage writers
             vk.gx.beginFrame();
 
-            vk.scene_writers[vk.gx.frame].reset();
-            vk.scene_writers[vk.gx.frame].writeStruct(ubos.Scene{
+            var scene_writer = vk.scene[vk.gx.frame];
+            scene_writer.writeStruct(ubos.Scene{
                 .view_from_world = ortho(.{
                     .left = 0,
                     .right = display_width,
@@ -1174,7 +1173,8 @@ fn render(
                 }).times(.translation(game.camera.negated())),
             }) catch |err| @panic(@errorName(err));
 
-            vk.sprite_renderer.begin(&vk.gx);
+            var sprite_writer = vk.sprites[vk.gx.frame];
+            var sprite_instances: u32 = 0;
 
             // Draw the stars
             for (game.stars) |star| {
@@ -1188,11 +1188,15 @@ fn render(
                     .x = @floatFromInt(sprite.rect.w),
                     .y = @floatFromInt(sprite.rect.h),
                 });
-                world_from_model.apply(.translation(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }));
-                vk.sprite_renderer.draw(&vk.gx, .{
+                world_from_model.apply(.translation(.{
+                    .x = @floatFromInt(star.x),
+                    .y = @floatFromInt(star.y),
+                }));
+                sprite_writer.writeStruct(ubos.Instance{
                     .world_from_model = world_from_model,
                     .texture_index = @intFromEnum(sprite_index),
-                });
+                }) catch |err| @panic(@errorName(err));
+                sprite_instances += 1;
             }
 
             // Draw the ring
@@ -1204,10 +1208,11 @@ fn render(
                     .y = @floatFromInt(sprite.rect.h),
                 });
                 world_from_model.apply(.translation(display_center));
-                vk.sprite_renderer.draw(&vk.gx, .{
+                sprite_writer.writeStruct(ubos.Instance{
                     .world_from_model = world_from_model,
                     .texture_index = @intFromEnum(sprite_index),
-                });
+                }) catch |err| @panic(@errorName(err));
+                sprite_instances += 1;
             }
 
             const framebuf = vk.gx.acquireNextImage(.{
@@ -1242,14 +1247,17 @@ fn render(
                     .extent = framebuf.extent,
                 },
             });
-
             render_game.bindPipeline(&vk.gx, vk.pipeline);
             render_game.bindDescSet(&vk.gx, vk.pipeline, vk.desc_sets[vk.gx.frame]);
-
-            vk.sprite_renderer.submit(&vk.gx, render_game);
-
+            render_game.draw(&vk.gx, .{
+                .vertex_count = 4,
+                .instance_count = sprite_instances,
+                .first_vertex = 0,
+                .first_instance = 0,
+            });
             render_game.endRendering(&vk.gx);
             render_game.submit(&vk.gx);
+
             vk.gx.endFrame(.{});
         },
     }
