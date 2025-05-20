@@ -1171,7 +1171,7 @@ fn render(
                     .bottom = 0,
                     .top = display_height,
                 }).times(.translation(game.camera.negated())),
-            }) catch |err| @panic(@errorName(err));
+            });
 
             var sprite_writer = vk.sprites[vk.gx.frame].writer();
             var sprite_instances: u32 = 0;
@@ -1195,7 +1195,7 @@ fn render(
                 sprite_writer.writeStruct(ubos.Instance{
                     .world_from_model = world_from_model,
                     .texture_index = @intFromEnum(sprite_index),
-                }) catch |err| @panic(@errorName(err));
+                });
                 sprite_instances += 1;
             }
 
@@ -1211,7 +1211,7 @@ fn render(
                 sprite_writer.writeStruct(ubos.Instance{
                     .world_from_model = world_from_model,
                     .texture_index = @intFromEnum(sprite_index),
-                }) catch |err| @panic(@errorName(err));
+                });
                 sprite_instances += 1;
             }
 
@@ -2941,9 +2941,9 @@ const Assets = struct {
                             .sampled = true,
                         },
                     },
-                }) catch |err| @panic(@errorName(err));
+                });
 
-                vk.upload_queue.writer.writeAll(pixels) catch |err| @panic(@errorName(err));
+                vk.upload_queue.writer.writeAll(pixels);
 
                 try a.sprites.append(a.gpa, .{
                     .tints = &.{},
