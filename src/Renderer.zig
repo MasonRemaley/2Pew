@@ -8,6 +8,7 @@ const BufferLayout = @import("buffer_layout.zig").BufferLayout;
 
 const Gx = gpu.Gx;
 const Memory = gpu.Memory;
+const UploadBuf = gpu.UploadBuf;
 const Mat2x3 = geom.Mat2x3;
 const Zone = tracy.Zone;
 
@@ -15,9 +16,9 @@ const Allocator = std.mem.Allocator;
 
 gx: Gx,
 
-upload_queue: ImageUploadQueue,
+image_staging: gpu.UploadBuf(.{ .transfer_src = true }),
 color_images: Memory(.color_image),
-upload_offset: u64,
+color_image_bytes: u64,
 
 pipeline: gpu.Pipeline,
 pipeline_layout: gpu.Pipeline.Layout,
@@ -106,9 +107,10 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         .size = image_mbs * mb,
     });
 
-    const upload_queue: ImageUploadQueue = .init(&gx, .{
-        .name = .{ .str = "Color Image Upload" },
-        .bytes = image_mbs * mb,
+    const image_staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(&gx, .{
+        .name = .{ .str = "Upload Queue" },
+        .size = image_mbs * mb,
+        .prefer_device_local = false,
     });
 
     const sprite_vert_spv = initSpv(gpa, "data/shaders/sprite.vert.spv");
@@ -189,9 +191,9 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
     return .{
         .gx = gx,
 
-        .upload_queue = upload_queue,
+        .image_staging = image_staging,
         .color_images = color_images,
-        .upload_offset = 0,
+        .color_image_bytes = 0,
 
         .pipeline = pipeline,
         .pipeline_layout = pipeline_layout,
@@ -219,7 +221,7 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.storage_buf.deinit(&self.gx);
     self.texture_sampler.deinit(&self.gx);
 
-    self.upload_queue.deinit(&self.gx);
+    self.image_staging.deinit(&self.gx);
     self.color_images.deinit(&self.gx);
     self.gx.deinit(gpa);
     self.* = undefined;
