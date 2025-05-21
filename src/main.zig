@@ -1161,9 +1161,7 @@ fn render(
         },
         .vk => |*vk| {
             // Get this frame's storage writers
-            vk.gx.beginFrame();
-            // XXX: take gx and assert in frame to make order clear?
-            vk.delete_queues[vk.gx.frame].reset(&vk.gx);
+            vk.beginFrame();
 
             var scene_writer = vk.scene[vk.gx.frame].writer();
             scene_writer.writeStruct(ubos.Scene{
@@ -2150,8 +2148,7 @@ const Game = struct {
         var cb: gpu.CmdBuf = undefined;
         switch (assets.renderer.*) {
             .vk => |*vk| {
-                vk.gx.beginFrame();
-                vk.delete_queues[vk.gx.frame].reset(&vk.gx);
+                vk.beginFrame();
                 cb = .init(&vk.gx, .{
                     .name = "Color Image Upload",
                     .src = @src(),
@@ -2450,15 +2447,24 @@ const Game = struct {
             .vk => |*vk| {
                 const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
                 defer zone.end();
+
+                var image_barriers: std.BoundedArray(
+                    gpu.ImageBarrier,
+                    VkRenderer.max_textures,
+                ) = .{};
+                for (assets.sprites.items) |sprite| {
+                    image_barriers.appendAssumeCapacity(.transferDstToReadOnly(.{
+                        .handle = sprite.image.?.handle,
+                        .range = .first,
+                        .dst_stage = .{ .fragment_shader = true },
+                        .aspect = .{ .color = true },
+                    }));
+                }
+                cb.barriers(&vk.gx, .{ .image = image_barriers.constSlice() });
+
                 cb.submit(&vk.gx);
                 vk.gx.endFrame(.{ .present = false });
-            },
-            else => {},
-        }
-        image_zone.end();
 
-        switch (assets.renderer.*) {
-            .vk => |*vk| {
                 var desc_set_updates: std.BoundedArray(
                     gpu.DescSet.Update,
                     vk.desc_sets.len * (2 + VkRenderer.max_textures),
@@ -2496,11 +2502,11 @@ const Game = struct {
                         });
                     }
                 }
-
                 gpu.DescSet.update(&vk.gx, desc_set_updates.constSlice());
             },
             else => {},
         }
+        image_zone.end();
 
         return .{
             .rng = std.Random.DefaultPrng.init(random_seed),

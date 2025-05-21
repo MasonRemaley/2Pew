@@ -241,3 +241,8 @@ fn initSpv(gpa: Allocator, path: []const u8) []const u32 {
     u32s.len = spv.len / 4;
     return u32s;
 }
+
+pub fn beginFrame(self: *@This()) void {
+    self.gx.beginFrame();
+    self.delete_queues[self.gx.frame].reset(&self.gx);
+}

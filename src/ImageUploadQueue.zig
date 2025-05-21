@@ -9,9 +9,8 @@
 //! You may not use the staging buffer view until the work completes asynchronously on the GPU, see
 //! *Uploading Asynchronously* for the recommended pattern.
 //!
-//! It's assumed that these images will be read by a fragment shader. If you need to read them in
-//! another stage, you'll need to add an option to change the destination stage of the final
-//! transitions.
+//! Caller is responsible for issuing the barriers to transition the image from `transfer_dst` once
+//! they wish to begin using them.
 //!
 //! # Uploading Synchronously
 //!
@@ -118,13 +117,6 @@ pub fn beginWrite(
             }),
         },
     });
-
-    cb.barriers(gx, .{ .image = &.{.transferDstToReadOnly(.{
-        .handle = image.handle,
-        .range = .first,
-        .dst_stage = .{ .fragment_shader = true },
-        .aspect = .{ .color = true },
-    })} });
 
     // Return the image to the user.
     return image;
