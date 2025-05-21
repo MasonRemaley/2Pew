@@ -73,9 +73,6 @@ pub fn init(staging: gpu.UploadBuf(.{ .transfer_src = true }).View) @This() {
     };
 }
 
-// XXX: we could take the image as an argument instead of the allocator, but we'd need to store
-// extent and such on the image then right? that wouldn't be unreasonable and would further reduce
-// coupling if we keep this abstraction around. we may not though.
 /// Call this before writing the data for an image to `writer`.
 ///
 /// Panics on staging buffer overflow. If you want to handle this case, align the writer to
