@@ -5,6 +5,7 @@ const tracy = @import("tracy");
 
 const ImageUploadQueue = @import("ImageUploadQueue.zig");
 const BufferLayout = @import("buffer_layout.zig").BufferLayout;
+const DeleteQueue = @import("delete_queue.zig").DeleteQueue;
 
 const Gx = gpu.Gx;
 const Memory = gpu.Memory;
@@ -16,7 +17,8 @@ const Allocator = std.mem.Allocator;
 
 gx: Gx,
 
-image_staging: gpu.UploadBuf(.{ .transfer_src = true }),
+delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue(8),
+
 color_images: Memory(.color_image),
 color_image_bytes: u64,
 
@@ -37,7 +39,7 @@ pub const max_textures = 255;
 pub const max_sprites = 16384;
 pub const image_mbs = 16;
 
-const mb = std.math.pow(u64, 2, 20);
+pub const mb = std.math.pow(u64, 2, 20);
 
 pub const ubos = struct {
     pub const Scene = extern struct {
@@ -105,12 +107,6 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
     const color_images: gpu.Memory(.color_image) = .init(&gx, .{
         .name = .{ .str = "Color Images" },
         .size = image_mbs * mb,
-    });
-
-    const image_staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(&gx, .{
-        .name = .{ .str = "Upload Queue" },
-        .size = image_mbs * mb,
-        .prefer_device_local = false,
     });
 
     const sprite_vert_spv = initSpv(gpa, "data/shaders/sprite.vert.spv");
@@ -191,7 +187,8 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
     return .{
         .gx = gx,
 
-        .image_staging = image_staging,
+        .delete_queues = @splat(.{}),
+
         .color_images = color_images,
         .color_image_bytes = 0,
 
@@ -214,6 +211,8 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     const zone: Zone = .begin(.{ .src = @src() });
     defer zone.end();
 
+    for (&self.delete_queues) |*dq| dq.reset(&self.gx);
+
     self.pipeline_layout.deinit(&self.gx);
     self.pipeline.deinit(&self.gx);
 
@@ -221,7 +220,6 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.storage_buf.deinit(&self.gx);
     self.texture_sampler.deinit(&self.gx);
 
-    self.image_staging.deinit(&self.gx);
     self.color_images.deinit(&self.gx);
     self.gx.deinit(gpa);
     self.* = undefined;

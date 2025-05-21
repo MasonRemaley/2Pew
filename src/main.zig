@@ -1162,6 +1162,8 @@ fn render(
         .vk => |*vk| {
             // Get this frame's storage writers
             vk.gx.beginFrame();
+            // XXX: take gx and assert in frame to make order clear?
+            vk.delete_queues[vk.gx.frame].reset(&vk.gx);
 
             var scene_writer = vk.scene[vk.gx.frame].writer();
             scene_writer.writeStruct(ubos.Scene{
@@ -2149,11 +2151,18 @@ const Game = struct {
         switch (assets.renderer.*) {
             .vk => |*vk| {
                 vk.gx.beginFrame();
+                vk.delete_queues[vk.gx.frame].reset(&vk.gx);
                 cb = .init(&vk.gx, .{
                     .name = "Color Image Upload",
                     .src = @src(),
                 });
-                up = .init(vk.image_staging.view());
+                const image_staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(&vk.gx, .{
+                    .name = .{ .str = "Upload Queue" },
+                    .size = VkRenderer.image_mbs * VkRenderer.mb,
+                    .prefer_device_local = false,
+                });
+                up = .init(image_staging.view());
+                vk.delete_queues[vk.gx.frame].append(image_staging);
             },
             .sdl => {},
         }
