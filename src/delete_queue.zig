@@ -29,10 +29,7 @@ pub fn DeleteQueue(capacity: usize) type {
 
         /// Appends the given resource to the delete queue.
         ///
-        /// If the resource is a 64 bit enum with a `deinit(*@This(), *Gx)` field, appends it as is.
-        /// If it's a struct, it looks for a `handle` field that satisfies the above requirement,
-        /// and optionally for a `memory` field of type `Memory` and a `dedicated_memory` field of
-        /// type `Memory.Optional`.
+        /// Checks for various relevant fields on GPU types.
         pub fn append(self: *@This(), resource: anytype) void {
             switch (@typeInfo(@TypeOf(resource))) {
                 .@"enum" => {
@@ -50,6 +47,9 @@ pub fn DeleteQueue(capacity: usize) type {
                 },
                 .@"struct" => {
                     self.append(resource.handle);
+                    if (@hasField(@TypeOf(resource), "view")) {
+                        self.append(resource.view);
+                    }
                     if (@hasField(@TypeOf(resource), "memory")) {
                         self.append(resource.memory);
                     }

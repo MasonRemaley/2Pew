@@ -52,6 +52,7 @@
 //! synchronous uploads you can pipe your file directly to the writer.
 
 const gpu = @import("gpu");
+const ImageBumpAllocator = @import("image_bump_allocator.zig").ImageBumpAllocator;
 
 const Gx = gpu.Gx;
 const CmdBuf = gpu.CmdBuf;
@@ -72,6 +73,9 @@ pub fn init(staging: gpu.UploadBuf(.{ .transfer_src = true }).View) @This() {
     };
 }
 
+// XXX: we could take the image as an argument instead of the allocator, but we'd need to store
+// extent and such on the image then right? that wouldn't be unreasonable and would further reduce
+// coupling if we keep this abstraction around. we may not though.
 /// Call this before writing the data for an image to `writer`.
 ///
 /// Panics on staging buffer overflow. If you want to handle this case, align the writer to
@@ -80,7 +84,8 @@ pub fn beginWrite(
     self: *@This(),
     gx: *Gx,
     cb: CmdBuf,
-    options: Image(.color).InitOptions,
+    allocator: *ImageBumpAllocator(.color),
+    options: ImageBumpAllocator(.color).AllocOptions,
 ) gpu.Image(.color) {
     // This alignment is required by DX12. With Vulkan it's device dependent and optional, in
     // practice real GPUs may have the value set to 1. If DX12 ever lifts this requirements we could
@@ -89,7 +94,7 @@ pub fn beginWrite(
     self.writer.alignForward(gpu.buffer_copy_offset_alignment);
 
     // Create the image.
-    const image: gpu.Image(.color) = .init(gx, options);
+    const image: gpu.Image(.color) = allocator.alloc(gx, options);
 
     // Issue the image transitions and image uploads. Theoretically it's faster to batch all of
     // these image transitions in a single call to `cb.barrier`. This requires queuing them up CPU

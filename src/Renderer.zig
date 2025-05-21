@@ -6,6 +6,7 @@ const tracy = @import("tracy");
 const ImageUploadQueue = @import("ImageUploadQueue.zig");
 const BufferLayout = @import("buffer_layout.zig").BufferLayout;
 const DeleteQueue = @import("delete_queue.zig").DeleteQueue;
+const ImageBumpAllocator = @import("image_bump_allocator.zig").ImageBumpAllocator;
 
 const Gx = gpu.Gx;
 const Memory = gpu.Memory;
@@ -19,8 +20,7 @@ gx: Gx,
 
 delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue(8),
 
-color_images: Memory(.color_image),
-color_image_bytes: u64,
+color_images: ImageBumpAllocator(.color),
 
 pipeline: gpu.Pipeline,
 pipeline_layout: gpu.Pipeline.Layout,
@@ -37,9 +37,9 @@ scene: [gpu.global_options.max_frames_in_flight]gpu.UploadBuf(.{}).View,
 
 pub const max_textures = 255;
 pub const max_sprites = 16384;
-pub const image_mbs = 16;
+pub const image_mibs = 16;
 
-pub const mb = std.math.pow(u64, 2, 20);
+pub const mib = std.math.pow(u64, 2, 20);
 
 pub const ubos = struct {
     pub const Scene = extern struct {
@@ -104,10 +104,12 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
     // maintaining both the SDL and Vulkan renderer simultaneously through the transition
     var gx = ctx;
 
-    const color_images: gpu.Memory(.color_image) = .init(&gx, .{
-        .name = .{ .str = "Color Images" },
-        .size = image_mbs * mb,
-    });
+    const color_images = ImageBumpAllocator(.color).init(gpa, &gx, .{
+        .name = "Color Images",
+        .page_size = 16 * mib,
+        .max_pages = 64,
+        .initial_pages = 1,
+    }) catch |err| @panic(@errorName(err));
 
     const sprite_vert_spv = initSpv(gpa, "data/shaders/sprite.vert.spv");
     defer gpa.free(sprite_vert_spv);
@@ -190,7 +192,6 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         .delete_queues = @splat(.{}),
 
         .color_images = color_images,
-        .color_image_bytes = 0,
 
         .pipeline = pipeline,
         .pipeline_layout = pipeline_layout,
@@ -220,7 +221,7 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.storage_buf.deinit(&self.gx);
     self.texture_sampler.deinit(&self.gx);
 
-    self.color_images.deinit(&self.gx);
+    self.color_images.deinit(gpa, &self.gx);
     self.gx.deinit(gpa);
     self.* = undefined;
 }

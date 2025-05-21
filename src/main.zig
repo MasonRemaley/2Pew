@@ -2155,7 +2155,7 @@ const Game = struct {
                 });
                 const image_staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(&vk.gx, .{
                     .name = .{ .str = "Upload Queue" },
-                    .size = VkRenderer.image_mbs * VkRenderer.mb,
+                    .size = VkRenderer.image_mibs * VkRenderer.mib,
                     .prefer_device_local = false,
                 });
                 up = .init(image_staging.view());
@@ -2947,12 +2947,8 @@ const Assets = struct {
                 defer c.stbi_image_free(c_pixels);
                 const pixels = c_pixels[0..@intCast(width * height * channel_count)];
 
-                const image = up.beginWrite(&vk.gx, cb, .{
+                const image = up.beginWrite(&vk.gx, cb, &vk.color_images, .{
                     .name = .{ .str = diffuse_name },
-                    .alloc = .{ .auto = .{
-                        .memory = vk.color_images,
-                        .offset = &vk.color_image_bytes,
-                    } },
                     .image = .{
                         .format = .r8g8b8a8_srgb,
                         .extent = .{
