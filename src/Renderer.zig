@@ -3,10 +3,10 @@ const gpu = @import("gpu");
 const geom = @import("zcs").ext.geom;
 const tracy = @import("tracy");
 
-const ImageUploadQueue = @import("ImageUploadQueue.zig");
 const BufferLayout = @import("buffer_layout.zig").BufferLayout;
-const DeleteQueue = @import("delete_queue.zig").DeleteQueue;
-const ImageBumpAllocator = @import("image_bump_allocator.zig").ImageBumpAllocator;
+const ImageUploadQueue = gpu.ext.ImageUploadQueue;
+const DeleteQueue = gpu.ext.DeleteQueue;
+const ImageBumpAllocator = gpu.ext.ImageBumpAllocator;
 
 const Gx = gpu.Gx;
 const Memory = gpu.Memory;
@@ -106,9 +106,6 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
 
     const color_images = ImageBumpAllocator(.color).init(gpa, &gx, .{
         .name = "Color Images",
-        .page_size = 16 * mib,
-        .max_pages = 64,
-        .initial_pages = 1,
     }) catch |err| @panic(@errorName(err));
 
     const sprite_vert_spv = initSpv(gpa, "data/shaders/sprite.vert.spv");
