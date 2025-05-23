@@ -1,6 +1,10 @@
+const uint MatTex = 0;
+const uint MatSolid = 1;
+
 struct Instance {
     mat2x3 model_to_world;
-    uint texture_index;
+    uint mat;
+    uint mat_ex;
 };
 
 struct Scene {

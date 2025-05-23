@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const gpu = @import("gpu");
 const geom = @import("zcs").ext.geom;
@@ -45,8 +46,16 @@ pub const ubos = struct {
     };
 
     pub const Instance = extern struct {
+        pub const Material = enum(u32) {
+            tex = 0,
+            solid = 1,
+        };
         world_from_model: Mat2x3,
-        texture_index: u32,
+        mat: Material,
+        mat_ex: if (builtin.cpu.arch.endian() == .little)
+            u32
+        else
+            @compileError("callers may assume little endian"),
     };
 };
 
@@ -62,10 +71,7 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
         .{
             .name = "Instance",
             .kind = .storage_buffer,
-            .stages = .{
-                .vertex = true,
-                .fragment = true,
-            },
+            .stages = .{ .vertex = true },
             .partially_bound = false,
         },
         .{

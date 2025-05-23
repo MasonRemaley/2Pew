@@ -1182,13 +1182,14 @@ fn render(
                     .x = @floatFromInt(sprite.rect.w),
                     .y = @floatFromInt(sprite.rect.h),
                 });
-                world_from_model.apply(.translation(.{
+                world_from_model.apply(Mat2x3.translation(.{
                     .x = @floatFromInt(star.x),
                     .y = @floatFromInt(star.y),
-                }));
+                }).times(.translation(.{ .x = -0.5, .y = -0.5 })));
                 sprite_writer.writeStruct(ubos.Instance{
                     .world_from_model = world_from_model,
-                    .texture_index = @intFromEnum(sprite_index),
+                    .mat = .tex,
+                    .mat_ex = @intFromEnum(sprite_index),
                 });
             }
 
@@ -1196,14 +1197,15 @@ fn render(
             {
                 const sprite_index = game.ring_bg;
                 const sprite = game.assets.sprite(sprite_index);
-                var world_from_model: Mat2x3 = .scale(.{
+                var world_from_model = Mat2x3.scale(.{
                     .x = @floatFromInt(sprite.rect.w),
                     .y = @floatFromInt(sprite.rect.h),
-                });
+                }).times(.translation(.{ .x = -0.5, .y = -0.5 }));
                 world_from_model.apply(.translation(display_center));
                 sprite_writer.writeStruct(ubos.Instance{
                     .world_from_model = world_from_model,
-                    .texture_index = @intFromEnum(sprite_index),
+                    .mat = .tex,
+                    .mat_ex = @intFromEnum(sprite_index),
                 });
             }
 
@@ -1214,7 +1216,7 @@ fn render(
                 .sprite_writer = &sprite_writer,
             });
 
-            es.forEach("renderHealthBar", renderHealthBar, .{});
+            es.forEach("renderHealthBar", renderHealthBar, .{.sprite_writer = &sprite_writer,});
             es.forEach("renderSprite", renderSprite, .{
                 .game = game,
                 .sprite_writer = &sprite_writer,
@@ -1238,8 +1240,10 @@ fn render(
                         });
                         sprite_writer.writeStruct(ubos.Instance{
                             .world_from_model = Mat2x3.translation(pos)
-                                .times(.scale(sprite.size())),
-                            .texture_index = @intFromEnum(game.particle),
+                                .times(.scale(sprite.size()))
+                                .times(.translation(.{ .x = -0.5, .y = -0.5 })),
+                            .mat = .tex,
+                            .mat_ex = @intFromEnum(game.particle),
                         });
                     }
                     for (team.ship_progression, 0..) |class, display_prog_index| {
@@ -1253,8 +1257,10 @@ fn render(
                         });
                         sprite_writer.writeStruct(ubos.Instance{
                             .world_from_model = Mat2x3.translation(pos)
-                                .times(.scale(sprite.size().scaled(0.5))),
-                            .texture_index = @intFromEnum(game.shipLifeSprite(class)),
+                                .times(.scale(sprite.size().scaled(0.5)))
+                                .times(.translation(.{ .x = -0.5, .y = -0.5 })),
+                            .mat = .tex,
+                            .mat_ex = @intFromEnum(game.shipLifeSprite(class)),
                         });
                     }
                 }
@@ -1435,8 +1441,10 @@ fn renderAnimations(
                     .x = sprite_size.x,
                     .y = sprite_size.y,
                 }))
-                .times(.rotation(.fromAngle(frame.angle))),
-            .texture_index = @intFromEnum(frame.sprite),
+                .times(.rotation(.fromAngle(frame.angle)))
+                .times(.translation(.{ .x = -0.5, .y = -0.5 })),
+            .mat = .tex,
+            .mat_ex = @intFromEnum(frame.sprite),
         });
     }
 }
@@ -1475,7 +1483,7 @@ fn renderHealthBarSdl(
 }
 
 fn renderHealthBar(
-    ctx: struct {},
+    ctx: struct { sprite_writer: *gpu.Writer },
     health: *const Health,
     rb: *const RigidBody,
     transform: *const Transform,
@@ -1484,27 +1492,27 @@ fn renderHealthBar(
 
     const health_bar_size: Vec2 = .{ .x = 32, .y = 4 };
     var start = transform.getWorldPos().minus(health_bar_size.scaled(0.5)).floored();
-    start.y = display_height - start.y;
-    start.y -= rb.radius + health_bar_size.y;
-    // TODO: implement Vulkan health bar renderer
-    _ = ctx;
-    // sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
-    // sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
-    //     start.minus(.{ .x = 1, .y = 1 }),
-    //     health_bar_size.plus(.{ .x = 2, .y = 2 }),
-    // )));
-    // const hp_percent = health.hp / health.max_hp;
-    // if (hp_percent >= health.regen_ratio) {
-    //     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
-    // } else if (health.regen_cooldown_s > 0.0) {
-    //     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
-    // } else {
-    //     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0x7d, 0x03, 0xff));
-    // }
-    // sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
-    //     start,
-    //     .{ .x = health_bar_size.x * hp_percent, .y = health_bar_size.y },
-    // )));
+    start.y += rb.radius + health_bar_size.y;
+
+    ctx.sprite_writer.writeStruct(ubos.Instance{
+        .world_from_model = Mat2x3.translation(start.minus(.{.x = 1, .y = 1}))
+            .times(.scale(health_bar_size.plus(.{ .x = 2, .y = 2 }))),
+        .mat = .solid,
+        .mat_ex = 0xffffffff,
+    });
+    const hp_percent = health.hp / health.max_hp;
+    const color: u32 = if (hp_percent >= health.regen_ratio)
+        0x009413ff
+    else if (health.regen_cooldown_s > 0.0)
+        0xe20003ff
+    else
+        0xff7d03ff;
+    ctx.sprite_writer.writeStruct(ubos.Instance{
+        .world_from_model = Mat2x3.translation(start)
+            .times(.scale(health_bar_size.compProd(.{ .x = hp_percent, .y = 1.0 }))),
+        .mat = .solid,
+        .mat_ex = color,
+    });
 }
 
 fn renderSpriteSdl(
@@ -1552,10 +1560,12 @@ fn renderSprite(
     ctx.sprite_writer.writeStruct(ubos.Instance{
         .world_from_model = transform.world_from_model
             .times(.scale(.{
-            .x = sprite_size.x,
-            .y = sprite_size.y,
-        })),
-        .texture_index = @intFromEnum(sprite_index.*),
+                .x = sprite_size.x,
+                .y = sprite_size.y,
+            }))
+            .times(.translation(.{ .x = -0.5, .y = -0.5 })),
+        .mat = .tex,
+        .mat_ex = @intFromEnum(sprite_index.*),
     });
 }
 
