@@ -2470,19 +2470,18 @@ const Game = struct {
                     vk.desc_sets.len * (2 + VkRenderer.max_textures),
                 ) = .{};
                 for (vk.desc_sets, 0..) |set, frame| {
-                    const frame_storage = vk.storage_layout.frame(@intCast(frame));
                     desc_set_updates.appendAssumeCapacity(.{
                         .set = set,
                         .binding = 0,
                         .value = .{
-                            .storage_buf = frame_storage.scene.view(vk.storage_buf).asBuf(.{ .storage = true }),
+                            .storage_buf = vk.scene[frame].asBuf(.{ .storage = true }),
                         },
                     });
                     desc_set_updates.appendAssumeCapacity(.{
                         .set = set,
                         .binding = 1,
                         .value = .{
-                            .storage_buf = frame_storage.instances.view(vk.storage_buf).asBuf(.{ .storage = true }),
+                            .storage_buf = vk.sprites[frame].asBuf(.{ .storage = true }),
                         },
                     });
 

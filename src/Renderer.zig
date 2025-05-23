@@ -3,10 +3,9 @@ const gpu = @import("gpu");
 const geom = @import("zcs").ext.geom;
 const tracy = @import("tracy");
 
-const BufferLayout = @import("buffer_layout.zig").BufferLayout;
-const ImageUploadQueue = gpu.ext.ImageUploadQueue;
 const DeleteQueue = gpu.ext.DeleteQueue;
 const ImageBumpAllocator = gpu.ext.ImageBumpAllocator;
+const bufPart = gpu.ext.bufPart;
 
 const Gx = gpu.Gx;
 const Memory = gpu.Memory;
@@ -27,13 +26,12 @@ pipeline_layout: gpu.Pipeline.Layout,
 desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
 
-storage_layout: StorageLayout,
-storage_buf: gpu.UploadBuf(.{ .storage = true }),
+storage_buf: UploadBuf(.{ .storage = true }),
 
 texture_sampler: gpu.Sampler,
 
-sprites: [gpu.global_options.max_frames_in_flight]gpu.UploadBuf(.{}).View,
-scene: [gpu.global_options.max_frames_in_flight]gpu.UploadBuf(.{}).View,
+sprites: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
+scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 
 pub const max_textures = 255;
 pub const max_sprites = 16384;
@@ -51,22 +49,6 @@ pub const ubos = struct {
         texture_index: u32,
     };
 };
-
-pub const StorageLayout = BufferLayout(.{
-    .kind = .{ .storage = true },
-    .frame = &.{
-        .{
-            .name = "scene",
-            .size = @sizeOf(ubos.Scene),
-            .alignment = @alignOf(ubos.Scene),
-        },
-        .{
-            .name = "instances",
-            .size = @sizeOf(ubos.Instance) * max_sprites,
-            .alignment = @alignOf(ubos.Instance),
-        },
-    },
-});
 
 pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
     .name = .{ .str = "Game" },
@@ -160,11 +142,17 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         .cmds = create_descs.constSlice(),
     });
 
-    const storage_layout: StorageLayout = .init(&gx);
-    const storage_buf: gpu.UploadBuf(.{ .storage = true }) = .init(&gx, .{
-        .name = .{ .str = "Storage" },
-        .size = storage_layout.buffer_size,
-        .prefer_device_local = false,
+    var scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
+    var sprites: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
+    const storage_buf = bufPart(&gx, UploadBuf(.{ .storage = true }), .{
+        .buf = .{
+            .name = .{ .str = "Storage" },
+            .prefer_device_local = false,
+        },
+        .frame = &.{
+            .init(ubos.Scene, &scene),
+            .init([max_sprites]ubos.Instance, &sprites),
+        },
     });
 
     const texture_sampler: gpu.Sampler = .init(&gx, .{ .str = "Texture" }, .{
@@ -180,9 +168,6 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         .border_color = .int_transparent_black,
     });
 
-    const scene = storage_layout.frameViews(storage_buf, "scene", .{});
-    const sprites = storage_layout.frameViews(storage_buf, "instances", .{});
-
     return .{
         .gx = gx,
 
@@ -195,7 +180,6 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         .desc_sets = desc_sets,
         .desc_pool = desc_pool,
 
-        .storage_layout = storage_layout,
         .storage_buf = storage_buf,
 
         .texture_sampler = texture_sampler,
