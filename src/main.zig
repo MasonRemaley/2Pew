@@ -74,13 +74,9 @@ const input_system = @import("input_system.zig").init(enum {
     start,
 });
 
-const display_width = 1920;
-const display_height = 1080;
-const display_center: Vec2 = .{
-    .x = display_width / 2.0,
-    .y = display_height / 2.0,
-};
-const display_radius = display_height / 2.0;
+const display_size: Vec2 = .{ .x = 1920, .y = 1080 };
+const display_center = display_size.scaled(0.5);
+const display_radius = display_size.y / 2.0;
 
 const dead_zone = 10000;
 
@@ -133,8 +129,8 @@ pub fn main() !void {
         @tagName(build.name),
         c.SDL_WINDOWPOS_UNDEFINED,
         c.SDL_WINDOWPOS_UNDEFINED,
-        display_width,
-        display_height,
+        display_size.x,
+        display_size.y,
         window_mode | c.SDL_WINDOW_VULKAN,
     ) orelse {
         panic("SDL_CreateWindow failed: {s}\n", .{c.SDL_GetError()});
@@ -418,7 +414,7 @@ fn updateHealth(
                 .pos = transform.getWorldPos(),
             });
             e.add(cb, RigidBody, .{
-                .vel = if (rb_opt) |rb| rb.vel else .{ .x = 0, .y = 0 },
+                .vel = if (rb_opt) |rb| rb.vel else .zero,
                 .rotation_vel = 0,
                 .radius = 32,
                 .density = 0.001,
@@ -766,10 +762,10 @@ fn updateShip(
 ) void {
     const input_state = &ctx.game.input_state[@intFromEnum(player_index.*)];
     if (ship.omnithrusters) {
-        rb.vel.add(.{
-            .x = input_state.getAxis(.thrust_x) * ship.thrust * ctx.delta_s,
-            .y = input_state.getAxis(.thrust_y) * ship.thrust * ctx.delta_s,
-        });
+        rb.vel.addScaled(.{
+            .x = input_state.getAxis(.thrust_x),
+            .y = input_state.getAxis(.thrust_y),
+        }, ship.thrust * ctx.delta_s);
     } else {
         // convert to 1.0 or 0.0
         transform.rotate(
@@ -1113,7 +1109,7 @@ fn render(
 
                 const row_height = 64;
                 const col_width = 64;
-                const top_left: Vec2 = .{ .x = 20, .y = 20 };
+                const top_left: Vec2 = .splat(20);
 
                 for (game.teams, 0..) |team, team_index| {
                     {
@@ -1136,7 +1132,7 @@ fn render(
                         const sprite = game.assets.sprite(game.shipLifeSprite(class));
                         const pos = top_left.plus(.{
                             .x = col_width * @as(f32, @floatFromInt(team_index)),
-                            .y = display_height - row_height * @as(f32, @floatFromInt(display_prog_index)),
+                            .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
                         });
                         renderCopy(.{
                             .renderer = sdl,
@@ -1160,11 +1156,11 @@ fn render(
 
             var scene_writer = vk.scene[vk.gx.frame].writer();
             scene_writer.writeStruct(ubos.Scene{
-                .view_from_world = ortho(.{
+                .view_from_world = Mat2x3.ortho(.{
                     .left = 0,
-                    .right = display_width,
+                    .right = display_size.x,
                     .bottom = 0,
-                    .top = display_height,
+                    .top = display_size.y,
                 }).times(.translation(game.camera.negated())),
             });
 
@@ -1178,16 +1174,14 @@ fn render(
                     .planet_red => game.planet_red,
                 };
                 const sprite = game.assets.sprite(sprite_index);
-                var world_from_model: Mat2x3 = .scale(.{
-                    .x = @floatFromInt(sprite.rect.w),
-                    .y = @floatFromInt(sprite.rect.h),
-                });
-                world_from_model.apply(Mat2x3.translation(.{
-                    .x = @floatFromInt(star.x),
-                    .y = @floatFromInt(star.y),
-                }).times(.translation(.{ .x = -0.5, .y = -0.5 })));
                 sprite_writer.writeStruct(ubos.Instance{
-                    .world_from_model = world_from_model,
+                    .world_from_model = Mat2x3.identity
+                        .translated(.splat(-0.5))
+                        .scaled(.{
+                            .x = @floatFromInt(sprite.rect.w),
+                            .y = @floatFromInt(sprite.rect.h),
+                        })
+                        .translated(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }),
                     .mat = .tex,
                     .mat_ex = @intFromEnum(sprite_index),
                 });
@@ -1197,13 +1191,14 @@ fn render(
             {
                 const sprite_index = game.ring_bg;
                 const sprite = game.assets.sprite(sprite_index);
-                var world_from_model = Mat2x3.scale(.{
-                    .x = @floatFromInt(sprite.rect.w),
-                    .y = @floatFromInt(sprite.rect.h),
-                }).times(.translation(.{ .x = -0.5, .y = -0.5 }));
-                world_from_model.apply(.translation(display_center));
                 sprite_writer.writeStruct(ubos.Instance{
-                    .world_from_model = world_from_model,
+                    .world_from_model = Mat2x3.identity
+                        .translated(.splat(-0.5))
+                        .scaled(.{
+                            .x = @floatFromInt(sprite.rect.w),
+                            .y = @floatFromInt(sprite.rect.h),
+                        })
+                        .translated(display_center),
                     .mat = .tex,
                     .mat_ex = @intFromEnum(sprite_index),
                 });
@@ -1229,7 +1224,7 @@ fn render(
             {
                 const row_height = 64;
                 const col_width = 64;
-                const top_left: Vec2 = .{ .x = 20, .y = 20 };
+                const top_left: Vec2 = .splat(20);
 
                 for (game.teams, 0..) |team, team_index| {
                     {
@@ -1239,9 +1234,10 @@ fn render(
                             .y = 0,
                         });
                         sprite_writer.writeStruct(ubos.Instance{
-                            .world_from_model = Mat2x3.translation(pos)
-                                .times(.scale(sprite.size()))
-                                .times(.translation(.{ .x = -0.5, .y = -0.5 })),
+                            .world_from_model = Mat2x3.identity
+                                .translated(.splat(-0.5))
+                                .scaled(sprite.size())
+                                .translated(pos),
                             .mat = .tex,
                             .mat_ex = @intFromEnum(game.particle),
                         });
@@ -1253,12 +1249,13 @@ fn render(
                         const sprite = game.assets.sprite(game.shipLifeSprite(class));
                         const pos = top_left.plus(.{
                             .x = col_width * @as(f32, @floatFromInt(team_index)),
-                            .y = display_height - row_height * @as(f32, @floatFromInt(display_prog_index)),
+                            .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
                         });
                         sprite_writer.writeStruct(ubos.Instance{
-                            .world_from_model = Mat2x3.translation(pos)
-                                .times(.scale(sprite.size().scaled(0.5)))
-                                .times(.translation(.{ .x = -0.5, .y = -0.5 })),
+                            .world_from_model = Mat2x3.identity
+                                .translated(.splat(-0.5))
+                                .scaled(sprite.size().scaled(0.5))
+                                .translated(pos),
                             .mat = .tex,
                             .mat_ex = @intFromEnum(game.shipLifeSprite(class)),
                         });
@@ -1267,8 +1264,8 @@ fn render(
             }
 
             const framebuf = vk.gx.acquireNextImage(.{
-                .width = display_width,
-                .height = display_height,
+                .width = display_size.x,
+                .height = display_size.y,
             });
             const render_game: gpu.CmdBuf = .init(&vk.gx, .{
                 .name = "Render Game",
@@ -1290,11 +1287,11 @@ fn render(
                     .max_depth = 1.0,
                 },
                 .scissor = .{
-                    .offset = .{ .x = 0, .y = 0 },
+                    .offset = .zero,
                     .extent = framebuf.extent,
                 },
                 .area = .{
-                    .offset = .{ .x = 0, .y = 0 },
+                    .offset = .zero,
                     .extent = framebuf.extent,
                 },
             });
@@ -1436,13 +1433,11 @@ fn renderAnimations(
         const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
         _ = team_index_opt;
         ctx.sprite_writer.writeStruct(ubos.Instance{
-            .world_from_model = transform.world_from_model
-                .times(.scale(.{
-                    .x = sprite_size.x,
-                    .y = sprite_size.y,
-                }))
-                .times(.rotation(.fromAngle(frame.angle)))
-                .times(.translation(.{ .x = -0.5, .y = -0.5 })),
+            .world_from_model = Mat2x3.identity
+                .translated(.splat(-0.5))
+                .rotated(.fromAngle(frame.angle))
+                .scaled(sprite_size)
+                .applied(transform.world_from_model),
             .mat = .tex,
             .mat_ex = @intFromEnum(frame.sprite),
         });
@@ -1461,12 +1456,12 @@ fn renderHealthBarSdl(
 
     const health_bar_size: Vec2 = .{ .x = 32, .y = 4 };
     var start = transform.getWorldPos().minus(health_bar_size.scaled(0.5)).floored();
-    start.y = display_height - start.y;
+    start.y = display_size.y - start.y;
     start.y -= rb.radius + health_bar_size.y;
     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
     sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
-        start.minus(.{ .x = 1, .y = 1 }),
-        health_bar_size.plus(.{ .x = 2, .y = 2 }),
+        start.minus(.splat(1)),
+        health_bar_size.plus(.splat(2)),
     )));
     const hp_percent = health.hp / health.max_hp;
     if (hp_percent >= health.regen_ratio) {
@@ -1495,8 +1490,9 @@ fn renderHealthBar(
     start.y += rb.radius + health_bar_size.y;
 
     ctx.sprite_writer.writeStruct(ubos.Instance{
-        .world_from_model = Mat2x3.translation(start.minus(.{.x = 1, .y = 1}))
-            .times(.scale(health_bar_size.plus(.{ .x = 2, .y = 2 }))),
+        .world_from_model = Mat2x3.identity
+            .scaled(health_bar_size.plus(.splat(2)))
+            .translated(start.minus(.splat(1))),
         .mat = .solid,
         .mat_ex = 0xffffffff,
     });
@@ -1508,8 +1504,9 @@ fn renderHealthBar(
     else
         0xff7d03ff;
     ctx.sprite_writer.writeStruct(ubos.Instance{
-        .world_from_model = Mat2x3.translation(start)
-            .times(.scale(health_bar_size.compProd(.{ .x = hp_percent, .y = 1.0 }))),
+        .world_from_model = Mat2x3.identity
+            .scaled(health_bar_size.compProd(.{ .x = hp_percent, .y = 1.0 }))
+            .translated(start),
         .mat = .solid,
         .mat_ex = color,
     });
@@ -1558,12 +1555,10 @@ fn renderSprite(
     const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
     _ = team_index;
     ctx.sprite_writer.writeStruct(ubos.Instance{
-        .world_from_model = transform.world_from_model
-            .times(.scale(.{
-                .x = sprite_size.x,
-                .y = sprite_size.y,
-            }))
-            .times(.translation(.{ .x = -0.5, .y = -0.5 })),
+        .world_from_model = Mat2x3.identity
+            .translated(.splat(-0.5))
+            .scaled(sprite_size)
+            .applied(transform.world_from_model),
         .mat = .tex,
         .mat_ex = @intFromEnum(sprite_index.*),
     });
@@ -1746,7 +1741,7 @@ const RigidBody = struct {
     }
 
     /// pixels per second
-    vel: Vec2 = .{ .x = 0, .y = 0 },
+    vel: Vec2 = .zero,
     /// radians per second
     rotation_vel: f32 = 0.0,
     radius: f32,
@@ -1961,7 +1956,7 @@ const Game = struct {
             .rot = .fromAngle(angle),
         });
         ship.add(cb, RigidBody, .{
-            .vel = .{ .x = 0, .y = 0 },
+            .vel = .zero,
             .radius = self.ranger_radius,
             .rotation_vel = 0.0,
             .density = 0.02,
@@ -2027,7 +2022,7 @@ const Game = struct {
             .rot = .fromAngle(angle),
         });
         ship.add(cb, RigidBody, .{
-            .vel = .{ .x = 0, .y = 0 },
+            .vel = .zero,
             .radius = 26,
             .rotation_vel = 0.0,
             .density = 0.02,
@@ -2092,7 +2087,7 @@ const Game = struct {
             .rot = .fromAngle(angle),
         });
         ship.add(cb, RigidBody, .{
-            .vel = .{ .x = 0, .y = 0 },
+            .vel = .zero,
             .rotation_vel = 0.0,
             .radius = self.militia_radius,
             .density = 0.06,
@@ -2160,7 +2155,7 @@ const Game = struct {
             .rot = .fromAngle(angle),
         });
         ship.add(cb, RigidBody, .{
-            .vel = .{ .x = 0, .y = 0 },
+            .vel = .zero,
             .radius = radius,
             .rotation_vel = 0.0,
             .density = 0.02,
@@ -2234,7 +2229,7 @@ const Game = struct {
             .pos = pos,
         });
         ship.add(cb, RigidBody, .{
-            .vel = .{ .x = 0, .y = 0 },
+            .vel = .zero,
             .radius = self.wendy_radius,
             .rotation_vel = 0.0,
             .density = 0.02,
@@ -3431,8 +3426,8 @@ const Star = struct {
 fn generateStars(stars: []Star, rng: std.Random) void {
     for (stars) |*star| {
         star.* = .{
-            .x = rng.uintLessThanBiased(u31, display_width),
-            .y = rng.uintLessThanBiased(u31, display_height),
+            .x = rng.uintLessThanBiased(u31, display_size.x),
+            .y = rng.uintLessThanBiased(u31, display_size.y),
             .kind = @enumFromInt(rng.uintLessThanBiased(u8, 2)),
         };
     }
@@ -3469,7 +3464,7 @@ const RenderCopyOptions = struct {
 fn renderCopy(opt: RenderCopyOptions) void {
     const pos: Vec2 = .{
         .x = opt.pos.x,
-        .y = display_height - opt.pos.y,
+        .y = display_size.y - opt.pos.y,
     };
     var rect = sdlRect(pos.minus(opt.size.scaled(0.5)), opt.size);
     sdlAssertZero(c.SDL_RenderCopyEx(
@@ -3499,29 +3494,6 @@ fn createVulkanSurface(
         return .null_handle;
     }
     return @enumFromInt(@intFromPtr(surface));
-}
-
-pub const OrthoOptions = struct {
-    left: f32,
-    right: f32,
-    bottom: f32,
-    top: f32,
-};
-
-/// Returns an orthographic projection matrix following the Vulkan/DX12 clip space convention.
-///
-/// Under this convention, (0, 0) is top left and (1, 1) is bottom right.
-fn ortho(options: OrthoOptions) Mat2x3 {
-    const width = options.right - options.left;
-    const height = options.bottom - options.top;
-    const x_scale = 2 / width;
-    const y_scale = 2 / height;
-    const x_off = -(options.right + options.left) / width;
-    const y_off = -(options.top + options.bottom) / height;
-    return .{
-        .r0 = .{ .x = x_scale, .y = 0, .z = x_off },
-        .r1 = .{ .x = 0, .y = y_scale, .z = y_off },
-    };
 }
 
 test {
