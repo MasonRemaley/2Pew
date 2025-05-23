@@ -1093,7 +1093,7 @@ fn render(
                 });
             }
 
-            es.forEach("renderAnimations", renderAnimations, .{
+            es.forEach("renderAnimations", renderAnimationsSdl, .{
                 .assets = game.assets,
                 .es = es,
                 .delta_s = delta_s,
@@ -1174,7 +1174,6 @@ fn render(
             });
 
             var sprite_writer = vk.sprites[vk.gx.frame].writer();
-            var sprite_instances: u32 = 0;
 
             // Draw the stars
             for (game.stars) |star| {
@@ -1196,7 +1195,6 @@ fn render(
                     .world_from_model = world_from_model,
                     .texture_index = @intFromEnum(sprite_index),
                 });
-                sprite_instances += 1;
             }
 
             // Draw the ring
@@ -1212,8 +1210,14 @@ fn render(
                     .world_from_model = world_from_model,
                     .texture_index = @intFromEnum(sprite_index),
                 });
-                sprite_instances += 1;
             }
+
+            es.forEach("renderAnimations", renderAnimations, .{
+                .assets = game.assets,
+                .es = es,
+                .delta_s = delta_s,
+                .sprite_writer = &sprite_writer,
+            });
 
             const framebuf = vk.gx.acquireNextImage(.{
                 .width = display_width,
@@ -1251,7 +1255,7 @@ fn render(
             render_game.bindDescSet(&vk.gx, vk.pipeline, vk.desc_sets[vk.gx.frame]);
             render_game.draw(&vk.gx, .{
                 .vertex_count = 4,
-                .instance_count = sprite_instances,
+                .instance_count = @intCast(@divExact(sprite_writer.pos, @sizeOf(ubos.Instance))),
                 .first_vertex = 0,
                 .first_instance = 0,
             });
@@ -1263,7 +1267,7 @@ fn render(
     }
 }
 
-fn renderAnimations(
+fn renderAnimationsSdl(
     ctx: struct {
         assets: *const Assets,
         es: *Entities,
@@ -1313,16 +1317,85 @@ fn renderAnimations(
 
     if (animation.index != .none) {
         const frame = assets.animate(animation, delta_s);
-        const unscaled_sprite_size = frame.sprite.size();
+        const sprite = assets.sprite(frame.sprite);
+        const unscaled_sprite_size = sprite.size();
         const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
         const size_coefficient = rb.radius / sprite_radius;
         const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
         renderCopy(.{
             .renderer = ctx.renderer,
-            .tex = frame.sprite.getTint(if (team_index_opt) |ti| ti.* else null),
+            .tex = sprite.getTint(if (team_index_opt) |ti| ti.* else null),
             .rad = transform.world_from_model.getRotation() + frame.angle,
             .pos = transform.getWorldPos(),
             .size = sprite_size,
+        });
+    }
+}
+
+fn renderAnimations(
+    ctx: struct {
+        assets: *const Assets,
+        es: *Entities,
+        delta_s: f32,
+        sprite_writer: *gpu.Writer,
+    },
+    entity: Entity,
+    rb: *const RigidBody,
+    transform: *const Transform,
+    animation: *Animation.Playback,
+    team_index_opt: ?*const TeamIndex,
+) void {
+    const es = ctx.es;
+    const assets = ctx.assets;
+    const delta_s = ctx.delta_s;
+
+    // Skip rendering if flashing, or if any parent is flashing.
+    //
+    // We should probably make the sprites half opacity instead of turning them off when
+    // flashing for a less jarring effect, but that is difficult right now w/ SDL as our
+    // renderer.
+    {
+        var curr = entity;
+        while (true) {
+            if (curr.get(es, Health)) |health| {
+                if (health.invulnerable_s > 0.0) {
+                    var flashes_ps: f32 = 2;
+                    if (health.invulnerable_s < 0.25 * std.math.round(Health.max_invulnerable_s * flashes_ps) / flashes_ps) {
+                        flashes_ps = 4;
+                    }
+                    if (@sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
+                        return;
+                    }
+                }
+            }
+
+            if (curr.get(es, Node)) |node| {
+                if (node.parent.unwrap()) |parent| {
+                    curr = parent;
+                    continue;
+                }
+            }
+
+            break;
+        }
+    }
+
+    if (animation.index != .none) {
+        const frame = assets.animate(animation, delta_s);
+        const sprite = assets.sprite(frame.sprite);
+        const unscaled_sprite_size = sprite.size();
+        const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
+        const size_coefficient = rb.radius / sprite_radius;
+        const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
+        _ = team_index_opt;
+        ctx.sprite_writer.writeStruct(ubos.Instance{
+            .world_from_model = transform.world_from_model
+                .times(.scale(.{
+                    .x = sprite_size.x,
+                    .y = sprite_size.y,
+                }))
+                .times(.rotation(.fromAngle(frame.angle))),
+            .texture_index = @intFromEnum(frame.sprite),
         });
     }
 }
@@ -2828,7 +2901,7 @@ const Assets = struct {
     animations: std.ArrayListUnmanaged(Animation),
 
     const Frame = struct {
-        sprite: Sprite,
+        sprite: Sprite.Index,
         angle: f32,
     };
 
@@ -2873,7 +2946,6 @@ const Assets = struct {
         const frame_index: u32 = @intFromFloat(@floor(anim.time_passed * animation.fps));
         const frame = animation.start + frame_index;
         // TODO: for large delta_s can cause out of bounds index
-        const frame_sprite = a.sprite(a.frames.items[frame]);
         anim.time_passed += delta_s;
         const end_time = @as(f32, @floatFromInt(animation.len)) / animation.fps;
         if (anim.time_passed >= end_time) {
@@ -2881,7 +2953,7 @@ const Assets = struct {
             anim.index = animation.next;
         }
         return .{
-            .sprite = frame_sprite,
+            .sprite = a.frames.items[frame],
             .angle = animation.angle,
         };
     }
