@@ -311,11 +311,6 @@ fn update(
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
-    switch (game.assets.renderer.*) {
-        .vk => game.camera.x += delta_s * 10.0,
-        .sdl => {},
-    }
-
     updateInput(es, cb, game);
     updatePhysics(game, es, cb);
     es.forEach("updateGravity", updateGravity, .{
@@ -1099,14 +1094,14 @@ fn render(
                 .delta_s = delta_s,
                 .renderer = sdl,
             });
-            es.forEach("renderHealthBar", renderHealthBar, .{
+            es.forEach("renderHealthBar", renderHealthBarSdl, .{
                 .renderer = sdl,
             });
-            es.forEach("renderSprite", renderSprite, .{
+            es.forEach("renderSprite", renderSpriteSdl, .{
                 .game = game,
                 .renderer = sdl,
             });
-            es.forEach("renderSpring", renderSpring, .{
+            es.forEach("renderSpring", renderSpringSdl, .{
                 .es = es,
                 .renderer = sdl,
             });
@@ -1218,6 +1213,52 @@ fn render(
                 .delta_s = delta_s,
                 .sprite_writer = &sprite_writer,
             });
+
+            es.forEach("renderHealthBar", renderHealthBar, .{});
+            es.forEach("renderSprite", renderSprite, .{
+                .game = game,
+                .sprite_writer = &sprite_writer,
+            });
+            es.forEach("renderSpring", renderSpring, .{
+                .es = es,
+            });
+
+            // Draw the ships in the bank.
+            {
+                const row_height = 64;
+                const col_width = 64;
+                const top_left: Vec2 = .{ .x = 20, .y = 20 };
+
+                for (game.teams, 0..) |team, team_index| {
+                    {
+                        const sprite = game.assets.sprite(game.particle);
+                        const pos = top_left.plus(.{
+                            .x = col_width * @as(f32, @floatFromInt(team_index)),
+                            .y = 0,
+                        });
+                        sprite_writer.writeStruct(ubos.Instance{
+                            .world_from_model = Mat2x3.translation(pos)
+                                .times(.scale(sprite.size())),
+                            .texture_index = @intFromEnum(game.particle),
+                        });
+                    }
+                    for (team.ship_progression, 0..) |class, display_prog_index| {
+                        const dead = team.ship_progression_index > display_prog_index;
+                        if (dead) continue;
+
+                        const sprite = game.assets.sprite(game.shipLifeSprite(class));
+                        const pos = top_left.plus(.{
+                            .x = col_width * @as(f32, @floatFromInt(team_index)),
+                            .y = display_height - row_height * @as(f32, @floatFromInt(display_prog_index)),
+                        });
+                        sprite_writer.writeStruct(ubos.Instance{
+                            .world_from_model = Mat2x3.translation(pos)
+                                .times(.scale(sprite.size().scaled(0.5))),
+                            .texture_index = @intFromEnum(game.shipLifeSprite(class)),
+                        });
+                    }
+                }
+            }
 
             const framebuf = vk.gx.acquireNextImage(.{
                 .width = display_width,
@@ -1400,7 +1441,7 @@ fn renderAnimations(
     }
 }
 
-fn renderHealthBar(
+fn renderHealthBarSdl(
     ctx: struct { renderer: *c.SDL_Renderer },
     health: *const Health,
     rb: *const RigidBody,
@@ -1433,7 +1474,40 @@ fn renderHealthBar(
     )));
 }
 
-fn renderSprite(
+fn renderHealthBar(
+    ctx: struct {},
+    health: *const Health,
+    rb: *const RigidBody,
+    transform: *const Transform,
+) void {
+    if (health.hp >= health.max_hp) return;
+
+    const health_bar_size: Vec2 = .{ .x = 32, .y = 4 };
+    var start = transform.getWorldPos().minus(health_bar_size.scaled(0.5)).floored();
+    start.y = display_height - start.y;
+    start.y -= rb.radius + health_bar_size.y;
+    // TODO: implement Vulkan health bar renderer
+    _ = ctx;
+    // sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0xff, 0xff));
+    // sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
+    //     start.minus(.{ .x = 1, .y = 1 }),
+    //     health_bar_size.plus(.{ .x = 2, .y = 2 }),
+    // )));
+    // const hp_percent = health.hp / health.max_hp;
+    // if (hp_percent >= health.regen_ratio) {
+    //     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0x00, 0x94, 0x13, 0xff));
+    // } else if (health.regen_cooldown_s > 0.0) {
+    //     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xe2, 0x00, 0x03, 0xff));
+    // } else {
+    //     sdlAssertZero(c.SDL_SetRenderDrawColor(renderer, 0xff, 0x7d, 0x03, 0xff));
+    // }
+    // sdlAssertZero(c.SDL_RenderFillRect(renderer, &sdlRect(
+    //     start,
+    //     .{ .x = health_bar_size.x * hp_percent, .y = health_bar_size.y },
+    // )));
+}
+
+fn renderSpriteSdl(
     ctx: struct { game: *const Game, renderer: *c.SDL_Renderer },
     sprite_index: *const Sprite.Index,
     rb_opt: ?*const RigidBody,
@@ -1457,7 +1531,35 @@ fn renderSprite(
     });
 }
 
-fn renderSpring(ctx: struct {
+fn renderSprite(
+    ctx: struct {
+        game: *const Game,
+        sprite_writer: *gpu.Writer,
+    },
+    sprite_index: *const Sprite.Index,
+    rb_opt: ?*const RigidBody,
+    transform: *const Transform,
+    team_index: ?*const TeamIndex,
+) void {
+    const assets = ctx.game.assets;
+    // TODO(mason): sort draw calls somehow (can the sdl renderer do depth buffers?)
+    const sprite = assets.sprite(sprite_index.*);
+    const unscaled_sprite_size = sprite.size();
+    const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
+    const size_coefficient = if (rb_opt) |rb| rb.radius / sprite_radius else 1.0;
+    const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
+    _ = team_index;
+    ctx.sprite_writer.writeStruct(ubos.Instance{
+        .world_from_model = transform.world_from_model
+            .times(.scale(.{
+            .x = sprite_size.x,
+            .y = sprite_size.y,
+        })),
+        .texture_index = @intFromEnum(sprite_index.*),
+    });
+}
+
+fn renderSpringSdl(ctx: struct {
     es: *const Entities,
     renderer: *c.SDL_Renderer,
 }, spring: *const Spring) void {
@@ -1476,6 +1578,16 @@ fn renderSpring(ctx: struct {
         @intFromFloat(@floor(end.x)),
         @intFromFloat(@floor(end.y)),
     ));
+}
+
+fn renderSpring(ctx: struct { es: *const Entities }, spring: *const Spring) void {
+    const es = ctx.es;
+    const start = (spring.start.get(es, Transform) orelse return).getWorldPos();
+    const end = (spring.end.get(es, Transform) orelse return).getWorldPos();
+    // TODO(mason): the SDL renderer drew hese as lines, but we wanted to switch to a themed grapple
+    // effect that has its own components and gets drawn from spring start to end.
+    _ = start;
+    _ = end;
 }
 
 const Team = struct {
