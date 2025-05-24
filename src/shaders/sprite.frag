@@ -4,7 +4,7 @@
 #extension GL_ARB_shading_language_include : require
 
 #include "sprite.glsl"
-#include "convert.glsl"
+#include "unpack.glsl"
 
 layout(scalar, binding = 1) readonly buffer InstanceUbo {
     Instance instances[];
@@ -18,16 +18,21 @@ layout(location = 1) in flat Instance instance;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    switch (instance.mat) {
-        case MatTex: {
-            out_color = texture(textures[nonuniformEXT(instance.mat_ex)], texcoord);
-        } break;
-        case MatSolid: {
-            out_color = unormToVec4(instance.mat_ex);
-        } break;
-        default: {
-            // Error color
-            out_color = vec4(1, 0, 1, 1);
-        } break;
+    ivec2 diffuse_recolor = unpackUintToIVec2(instance.diffuse_recolor);
+    uint diffuse_idx = diffuse_recolor.x;
+    uint recolor_idx = diffuse_recolor.y;
+
+    vec4 diffuse = vec4(1.0);
+    if (diffuse_idx != TexNone) {
+        diffuse = texture(textures[nonuniformEXT(diffuse_idx)], texcoord);
     }
+
+    float recolor = diffuse.a;
+    if (recolor_idx != TexNone) {
+        recolor *= texture(textures[nonuniformEXT(recolor_idx)], texcoord).r;
+    }
+
+    // Rough SRGB approximation, should just do the exact math on the CPU instead
+    vec4 color = pow(unpackUnormToVec4(instance.color), vec4(vec3(2.2), 1.0));
+    out_color = mix(diffuse, diffuse * color, recolor);
 }

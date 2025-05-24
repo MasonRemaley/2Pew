@@ -34,29 +34,32 @@ texture_sampler: gpu.Sampler,
 sprites: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 
-pub const max_textures = 255;
+pub const max_textures = @intFromEnum(ubo.Texture.none);
 pub const max_sprites = 16384;
 pub const image_mibs = 16;
 
 pub const mib = std.math.pow(u64, 2, 20);
 
-pub const ubos = struct {
+pub const ubo = struct {
+    pub const Texture = enum(u16) {
+        none = std.math.maxInt(u16),
+        _,
+    };
+
     pub const Scene = extern struct {
         view_from_world: Mat2x3 = .identity,
     };
 
-    pub const Instance = extern struct {
-        pub const Material = enum(u32) {
-            tex = 0,
-            solid = 1,
+    pub const Instance = if (builtin.cpu.arch.endian() != .little)
+        // XXX: could we get rid of this by packing the color ourselves?
+        @compileError("users may assume little endian")
+    else
+        extern struct {
+            world_from_model: Mat2x3,
+            diffuse: Texture = .none,
+            recolor: Texture = .none,
+            color: u32 = 0xffffffff,
         };
-        world_from_model: Mat2x3,
-        mat: Material,
-        mat_ex: if (builtin.cpu.arch.endian() == .little)
-            u32
-        else
-            @compileError("callers may assume little endian"),
-    };
 };
 
 pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
@@ -156,8 +159,8 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
             .prefer_device_local = false,
         },
         .frame = &.{
-            .init(ubos.Scene, &scene),
-            .init([max_sprites]ubos.Instance, &sprites),
+            .init(ubo.Scene, &scene),
+            .init([max_sprites]ubo.Instance, &sprites),
         },
     });
 

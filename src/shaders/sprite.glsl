@@ -1,10 +1,12 @@
 const uint MatTex = 0;
 const uint MatSolid = 1;
 
+const uint TexNone = 0xFFFF;
+
 struct Instance {
     mat2x3 model_to_world;
-    uint mat;
-    uint mat_ex;
+    uint diffuse_recolor;
+    uint color;
 };
 
 struct Scene {

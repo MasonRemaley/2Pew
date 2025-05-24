@@ -1,4 +1,4 @@
-vec4 unormToVec4(uint unorm) {
+vec4 unpackUnormToVec4(uint unorm) {
 	// Multiplying by the reciprocal is faster than dividing by 255.0, but does not produce exact
 	// results. By multiplying both the numerator and denominator by three, we get exact results for
 	// the full possible range of inputs. This has been verified by looping over all inputs and
@@ -9,4 +9,11 @@ vec4 unormToVec4(uint unorm) {
 	    (unorm & 0x0000FF00) >> 8,
 	    unorm & 0x000000FF
 	) * 3.0 * 1.0 / (3.0 * 255.0);
+}
+
+ivec2 unpackUintToIVec2(uint n) {
+	return ivec2(
+		n & 0x0000FFFF,
+		n >> 16
+	);
 }

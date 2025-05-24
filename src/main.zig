@@ -32,7 +32,7 @@ const NamedArg = structopt.NamedArg;
 const log = std.log.scoped(build.name);
 const ImageUploadQueue = gpu.ext.ImageUploadQueue;
 const VkRenderer = @import("Renderer.zig");
-const ubos = VkRenderer.ubos;
+const ubo = VkRenderer.ubo;
 const SpriteRenderer = VkRenderer.SpriteRenderer;
 
 const tracy = @import("tracy");
@@ -191,7 +191,7 @@ pub fn main() !void {
     var assets = try Assets.init(allocator, &renderer);
     defer assets.deinit();
 
-    var game = try Game.init(allocator, &assets);
+    var game = try Game.init(&assets);
 
     // Create initial entities
     var es: Entities = try .init(.{ .gpa = allocator });
@@ -1154,8 +1154,8 @@ fn render(
             // Get this frame's storage writers
             vk.beginFrame();
 
-            var scene_writer = vk.scene[vk.gx.frame].writer();
-            scene_writer.writeStruct(ubos.Scene{
+            var scene_writer = vk.scene[vk.gx.frame].writer().typed(ubo.Scene);
+            scene_writer.write(.{
                 .view_from_world = Mat2x3.ortho(.{
                     .left = 0,
                     .right = display_size.x,
@@ -1164,17 +1164,16 @@ fn render(
                 }).times(.translation(game.camera.negated())),
             });
 
-            var sprite_writer = vk.sprites[vk.gx.frame].writer();
+            var instances = vk.sprites[vk.gx.frame].writer().typed(ubo.Instance);
 
             // Draw the stars
             for (game.stars) |star| {
-                const sprite_index = switch (star.kind) {
+                const sprite = game.assets.sprite(switch (star.kind) {
                     .small => game.star_small,
                     .large => game.star_large,
                     .planet_red => game.planet_red,
-                };
-                const sprite = game.assets.sprite(sprite_index);
-                sprite_writer.writeStruct(ubos.Instance{
+                });
+                instances.write(.{
                     .world_from_model = Mat2x3.identity
                         .translated(.splat(-0.5))
                         .scaled(.{
@@ -1182,16 +1181,16 @@ fn render(
                             .y = @floatFromInt(sprite.rect.h),
                         })
                         .translated(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }),
-                    .mat = .tex,
-                    .mat_ex = @intFromEnum(sprite_index),
+                    .diffuse = sprite.diffuse,
+                    .recolor = sprite.recolor,
                 });
             }
 
+
             // Draw the ring
             {
-                const sprite_index = game.ring_bg;
-                const sprite = game.assets.sprite(sprite_index);
-                sprite_writer.writeStruct(ubos.Instance{
+                const sprite = game.assets.sprite(game.ring_bg);
+                instances.write(.{
                     .world_from_model = Mat2x3.identity
                         .translated(.splat(-0.5))
                         .scaled(.{
@@ -1199,8 +1198,8 @@ fn render(
                             .y = @floatFromInt(sprite.rect.h),
                         })
                         .translated(display_center),
-                    .mat = .tex,
-                    .mat_ex = @intFromEnum(sprite_index),
+                    .diffuse = sprite.diffuse,
+                    .recolor = sprite.recolor,
                 });
             }
 
@@ -1208,13 +1207,13 @@ fn render(
                 .assets = game.assets,
                 .es = es,
                 .delta_s = delta_s,
-                .sprite_writer = &sprite_writer,
+                .instances = &instances,
             });
 
-            es.forEach("renderHealthBar", renderHealthBar, .{.sprite_writer = &sprite_writer,});
+            es.forEach("renderHealthBar", renderHealthBar, .{.instances = &instances,});
             es.forEach("renderSprite", renderSprite, .{
                 .game = game,
-                .sprite_writer = &sprite_writer,
+                .instances = &instances,
             });
             es.forEach("renderSpring", renderSpring, .{
                 .es = es,
@@ -1233,13 +1232,14 @@ fn render(
                             .x = col_width * @as(f32, @floatFromInt(team_index)),
                             .y = 0,
                         });
-                        sprite_writer.writeStruct(ubos.Instance{
+                        instances.write(.{
                             .world_from_model = Mat2x3.identity
                                 .translated(.splat(-0.5))
                                 .scaled(sprite.size())
                                 .translated(pos),
-                            .mat = .tex,
-                            .mat_ex = @intFromEnum(game.particle),
+                            .diffuse = sprite.diffuse,
+                            .recolor = sprite.recolor,
+                            .color = team_tints[team_index],
                         });
                     }
                     for (team.ship_progression, 0..) |class, display_prog_index| {
@@ -1251,13 +1251,14 @@ fn render(
                             .x = col_width * @as(f32, @floatFromInt(team_index)),
                             .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
                         });
-                        sprite_writer.writeStruct(ubos.Instance{
+                        instances.write(.{
                             .world_from_model = Mat2x3.identity
                                 .translated(.splat(-0.5))
                                 .scaled(sprite.size().scaled(0.5))
                                 .translated(pos),
-                            .mat = .tex,
-                            .mat_ex = @intFromEnum(game.shipLifeSprite(class)),
+                            .diffuse = sprite.diffuse,
+                            .recolor = sprite.recolor,
+                            .color = team_tints[team_index],
                         });
                     }
                 }
@@ -1299,7 +1300,7 @@ fn render(
             render_game.bindDescSet(&vk.gx, vk.pipeline, vk.desc_sets[vk.gx.frame]);
             render_game.draw(&vk.gx, .{
                 .vertex_count = 4,
-                .instance_count = @intCast(@divExact(sprite_writer.pos, @sizeOf(ubos.Instance))),
+                .instance_count = @intCast(instances.len),
                 .first_vertex = 0,
                 .first_instance = 0,
             });
@@ -1381,13 +1382,13 @@ fn renderAnimations(
         assets: *const Assets,
         es: *Entities,
         delta_s: f32,
-        sprite_writer: *gpu.Writer,
+        instances: *gpu.Writer.Typed(ubo.Instance),
     },
     entity: Entity,
     rb: *const RigidBody,
     transform: *const Transform,
     animation: *Animation.Playback,
-    team_index_opt: ?*const TeamIndex,
+    team_index: ?*const TeamIndex,
 ) void {
     const es = ctx.es;
     const assets = ctx.assets;
@@ -1431,15 +1432,15 @@ fn renderAnimations(
         const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
         const size_coefficient = rb.radius / sprite_radius;
         const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-        _ = team_index_opt;
-        ctx.sprite_writer.writeStruct(ubos.Instance{
+        ctx.instances.write(.{
             .world_from_model = Mat2x3.identity
                 .translated(.splat(-0.5))
                 .rotated(.fromAngle(frame.angle))
                 .scaled(sprite_size)
                 .applied(transform.world_from_model),
-            .mat = .tex,
-            .mat_ex = @intFromEnum(frame.sprite),
+            .diffuse = sprite.diffuse,
+            .recolor = sprite.recolor,
+            .color = if (team_index) |ti| team_tints[@intFromEnum(ti.*)] else 0xffffffff,
         });
     }
 }
@@ -1478,7 +1479,7 @@ fn renderHealthBarSdl(
 }
 
 fn renderHealthBar(
-    ctx: struct { sprite_writer: *gpu.Writer },
+    ctx: struct { instances: *gpu.Writer.Typed(ubo.Instance) },
     health: *const Health,
     rb: *const RigidBody,
     transform: *const Transform,
@@ -1489,12 +1490,11 @@ fn renderHealthBar(
     var start = transform.getWorldPos().minus(health_bar_size.scaled(0.5)).floored();
     start.y += rb.radius + health_bar_size.y;
 
-    ctx.sprite_writer.writeStruct(ubos.Instance{
+    ctx.instances.write(.{
         .world_from_model = Mat2x3.identity
             .scaled(health_bar_size.plus(.splat(2)))
             .translated(start.minus(.splat(1))),
-        .mat = .solid,
-        .mat_ex = 0xffffffff,
+        .color = 0xffffffff,
     });
     const hp_percent = health.hp / health.max_hp;
     const color: u32 = if (hp_percent >= health.regen_ratio)
@@ -1503,12 +1503,11 @@ fn renderHealthBar(
         0xe20003ff
     else
         0xff7d03ff;
-    ctx.sprite_writer.writeStruct(ubos.Instance{
+    ctx.instances.write(.{
         .world_from_model = Mat2x3.identity
             .scaled(health_bar_size.compProd(.{ .x = hp_percent, .y = 1.0 }))
             .translated(start),
-        .mat = .solid,
-        .mat_ex = color,
+        .color = color,
     });
 }
 
@@ -1539,7 +1538,7 @@ fn renderSpriteSdl(
 fn renderSprite(
     ctx: struct {
         game: *const Game,
-        sprite_writer: *gpu.Writer,
+        instances: *gpu.Writer.Typed(ubo.Instance),
     },
     sprite_index: *const Sprite.Index,
     rb_opt: ?*const RigidBody,
@@ -1553,14 +1552,14 @@ fn renderSprite(
     const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
     const size_coefficient = if (rb_opt) |rb| rb.radius / sprite_radius else 1.0;
     const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-    _ = team_index;
-    ctx.sprite_writer.writeStruct(ubos.Instance{
+    ctx.instances.write(.{
         .world_from_model = Mat2x3.identity
             .translated(.splat(-0.5))
             .scaled(sprite_size)
             .applied(transform.world_from_model),
-        .mat = .tex,
-        .mat_ex = @intFromEnum(sprite_index.*),
+        .diffuse = sprite.diffuse,
+        .recolor = sprite.recolor,
+        .color = if (team_index) |ti| team_tints[@intFromEnum(ti.*)] else 0xffffffff,
     });
 }
 
@@ -1813,7 +1812,8 @@ const Ship = struct {
 const Sprite = struct {
     tints: []*c.SDL_Texture,
     rect: c.SDL_Rect,
-    image: ?gpu.Image(.color),
+    diffuse: ubo.Texture,
+    recolor: ubo.Texture,
 
     // If this sprite supports tinting, returns the tint. Otherwise returns the default tint.
     fn getTint(self: *const @This(), index: ?TeamIndex) *c.SDL_Texture {
@@ -1824,17 +1824,10 @@ const Sprite = struct {
     }
 
     /// Index into the sprites array.
-    const Index = enum(u32) {
+    pub const Index = enum(u16) {
+        none = std.math.maxInt(u16),
         _,
     };
-
-    fn deinit(self: *@This(), allocator: Allocator, renderer: *Renderer) void {
-        switch (renderer.*) {
-            .vk => |*vk| self.image.?.deinit(&vk.gx),
-            .sdl => allocator.free(self.tints),
-        }
-        self.* = undefined;
-    }
 
     /// Assumes the pos points to the center of the sprite.
     fn toSdlRect(sprite: Sprite, pos: Vec2) c.SDL_Rect {
@@ -1864,6 +1857,36 @@ fn boundedArrayFromArray(comptime T: type, comptime capacity: usize, array: anyt
     comptime assert(array.len <= capacity);
     return BoundedArray(T, capacity).fromSlice(&array) catch unreachable;
 }
+
+const team_tints: [4]u32 = .{
+    0x107cc4ff,
+    0xedd240ff,
+    0xe040edff,
+    0x53ed40ff,
+};
+
+const team_tints_sdl = &.{
+    .{
+        16,
+        124,
+        196,
+    },
+    .{
+        237,
+        210,
+        64,
+    },
+    .{
+        224,
+        64,
+        237,
+    },
+    .{
+        83,
+        237,
+        64,
+    },
+};
 
 const Game = struct {
     assets: *Assets,
@@ -2331,7 +2354,7 @@ const Game = struct {
         }
     }
 
-    fn init(allocator: Allocator, assets: *Assets) !Game {
+    fn init(assets: *Assets) !Game {
         const image_zone = Zone.begin(.{ .src = @src() });
 
         var up: ImageUploadQueue = undefined;
@@ -2354,45 +2377,23 @@ const Game = struct {
             .sdl => {},
         }
 
-        const team_tints = &.{
-            .{
-                16,
-                124,
-                196,
-            },
-            .{
-                237,
-                210,
-                64,
-            },
-            .{
-                224,
-                64,
-                237,
-            },
-            .{
-                83,
-                237,
-                64,
-            },
-        };
         const no_tint = &.{};
 
-        const ring_bg = try assets.loadSprite(allocator, cb, &up, "img/ring.png", null, no_tint);
-        const star_small = try assets.loadSprite(allocator, cb, &up, "img/star/small.png", null, no_tint);
-        const star_large = try assets.loadSprite(allocator, cb, &up, "img/star/large.png", null, no_tint);
-        const planet_red = try assets.loadSprite(allocator, cb, &up, "img/planet-red.png", null, no_tint);
-        const bullet_small = try assets.loadSprite(allocator, cb, &up, "img/bullet/small.png", null, no_tint);
-        const bullet_shiny = try assets.loadSprite(allocator, cb, &up, "img/bullet/shiny.png", null, no_tint);
+        const ring_bg = try assets.loadSprite(cb, &up, "img/ring.png", null, no_tint);
+        const star_small = try assets.loadSprite(cb, &up, "img/star/small.png", null, no_tint);
+        const star_large = try assets.loadSprite(cb, &up, "img/star/large.png", null, no_tint);
+        const planet_red = try assets.loadSprite(cb, &up, "img/planet-red.png", null, no_tint);
+        const bullet_small = try assets.loadSprite(cb, &up, "img/bullet/small.png", null, no_tint);
+        const bullet_shiny = try assets.loadSprite(cb, &up, "img/bullet/shiny.png", null, no_tint);
 
         var shrapnel_sprites: [shrapnel_sprite_names.len]Sprite.Index = undefined;
         for (&shrapnel_sprites, shrapnel_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(allocator, cb, &up, name, null, no_tint);
+            s.* = try assets.loadSprite(cb, &up, name, null, no_tint);
         }
 
         var rock_sprites: [rock_sprite_names.len]Sprite.Index = undefined;
         for (&rock_sprites, rock_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(allocator, cb, &up, name, null, no_tint);
+            s.* = try assets.loadSprite(cb, &up, name, null, no_tint);
         }
 
         const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
@@ -2402,10 +2403,10 @@ const Game = struct {
         };
 
         const ranger_sprites = .{
-            try assets.loadSprite(allocator, cb, &up, "img/ship/ranger/diffuse.png", "img/ship/ranger/recolor.png", team_tints),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/ranger/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/ranger/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/ranger/thrusters/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/ranger/diffuse.png", "img/ship/ranger/recolor.png", team_tints_sdl),
+            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/0.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/1.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/2.png", null, no_tint),
         };
         const ranger_still = try assets.addAnimation(&.{
             ranger_sprites[0],
@@ -2419,10 +2420,10 @@ const Game = struct {
         }, ranger_steady_thrust, 10, 0.0);
 
         const militia_sprites = .{
-            try assets.loadSprite(allocator, cb, &up, "img/ship/militia/diffuse.png", "img/ship/militia/recolor.png", team_tints),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/militia/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/militia/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/militia/thrusters/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/militia/diffuse.png", "img/ship/militia/recolor.png", team_tints_sdl),
+            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/0.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/1.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/2.png", null, no_tint),
         };
         const militia_still = try assets.addAnimation(&.{
             militia_sprites[0],
@@ -2436,25 +2437,25 @@ const Game = struct {
         }, militia_steady_thrust, 10, 0.0);
 
         const explosion_animation = try assets.addAnimation(&.{
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/01.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/02.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/03.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/04.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/05.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/06.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/07.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/08.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/09.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/10.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/11.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/explosion/12.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/01.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/02.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/03.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/04.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/05.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/06.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/07.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/08.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/09.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/10.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/11.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/12.png", null, no_tint),
         }, .none, 30, 0.0);
 
         const triangle_sprites = .{
-            try assets.loadSprite(allocator, cb, &up, "img/ship/triangle/diffuse.png", "img/ship/triangle/recolor.png", team_tints),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/triangle/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/triangle/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/triangle/thrusters/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/triangle/diffuse.png", "img/ship/triangle/recolor.png", team_tints_sdl),
+            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/0.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/1.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/2.png", null, no_tint),
         };
         const triangle_still = try assets.addAnimation(&.{
             triangle_sprites[0],
@@ -2468,10 +2469,10 @@ const Game = struct {
         }, triangle_steady_thrust, 10, 0.0);
 
         const kevin_sprites = .{
-            try assets.loadSprite(allocator, cb, &up, "img/ship/kevin/diffuse.png", "img/ship/kevin/recolor.png", team_tints),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/kevin/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/kevin/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/kevin/thrusters/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/kevin/diffuse.png", "img/ship/kevin/recolor.png", team_tints_sdl),
+            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/0.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/1.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/2.png", null, no_tint),
         };
         const kevin_still = try assets.addAnimation(&.{
             kevin_sprites[0],
@@ -2484,26 +2485,26 @@ const Game = struct {
             kevin_sprites[1],
         }, kevin_steady_thrust, 10, 0.0);
 
-        const wendy_sprite = try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/diffuse.png", "img/ship/wendy/recolor.png", team_tints);
+        const wendy_sprite = try assets.loadSprite(cb, &up, "img/ship/wendy/diffuse.png", "img/ship/wendy/recolor.png", team_tints_sdl);
         const wendy_thrusters_left = .{
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/left/0.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/left/1.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/left/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/0.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/1.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/2.png", null, no_tint),
         };
         const wendy_thrusters_right = .{
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/right/0.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/right/1.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/right/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/0.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/1.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/2.png", null, no_tint),
         };
         const wendy_thrusters_top = .{
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/top/0.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/top/1.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/top/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/0.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/1.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/2.png", null, no_tint),
         };
         const wendy_thrusters_bottom = .{
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/bottom/0.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/bottom/1.png", null, no_tint),
-            try assets.loadSprite(allocator, cb, &up, "img/ship/wendy/thrusters/bottom/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/0.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/1.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/2.png", null, no_tint),
         };
         const wendy_still = try assets.addAnimation(&.{
             wendy_sprite,
@@ -2543,7 +2544,7 @@ const Game = struct {
         const kevin_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
         const wendy_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
 
-        const particle = try assets.loadSprite(allocator, cb, &up, "img/particle.png", null, team_tints);
+        const particle = try assets.loadSprite(cb, &up, "img/particle.png", null, team_tints_sdl);
 
         const controller_default = input_system.ControlScheme.Controller{
             .turn = .{
@@ -2642,9 +2643,9 @@ const Game = struct {
                     gpu.ImageBarrier,
                     VkRenderer.max_textures,
                 ) = .{};
-                for (assets.sprites.items) |sprite| {
+                for (assets.textures.items) |texture| {
                     image_barriers.appendAssumeCapacity(.transferDstToReadOnly(.{
-                        .handle = sprite.image.?.handle,
+                        .handle = texture.handle,
                         .range = .first,
                         .dst_stage = .{ .fragment_shader = true },
                         .aspect = .{ .color = true },
@@ -2657,7 +2658,7 @@ const Game = struct {
 
                 var desc_set_updates: std.BoundedArray(
                     gpu.DescSet.Update,
-                    vk.desc_sets.len * (2 + VkRenderer.max_textures),
+                    vk.desc_sets.len * (2 + @as(usize, VkRenderer.max_textures)),
                 ) = .{};
                 for (vk.desc_sets, 0..) |set, frame| {
                     desc_set_updates.appendAssumeCapacity(.{
@@ -2675,15 +2676,15 @@ const Game = struct {
                         },
                     });
 
-                    for (assets.sprites.items, 0..) |sprite, sprite_index| {
-                        if (sprite_index > VkRenderer.max_textures) @panic("textures oob");
+                    for (assets.textures.items, 0..) |texture, texture_index| {
+                        if (texture_index > VkRenderer.max_textures) @panic("textures oob");
                         desc_set_updates.appendAssumeCapacity(.{
                             .set = set,
                             .binding = 2,
-                            .index = @intCast(sprite_index),
+                            .index = @intCast(texture_index),
                             .value = .{
                                 .combined_image_sampler = .{
-                                    .view = sprite.image.?.view,
+                                    .view = texture.view,
                                     .sampler = vk.texture_sampler,
                                     .layout = .read_only,
                                 },
@@ -3013,6 +3014,7 @@ const Assets = struct {
     gpa: Allocator,
     renderer: *Renderer,
     dir: std.fs.Dir,
+    textures: std.ArrayListUnmanaged(gpu.Image(.color)),
     sprites: std.ArrayListUnmanaged(Sprite),
     frames: std.ArrayListUnmanaged(Sprite.Index),
     animations: std.ArrayListUnmanaged(Animation),
@@ -3037,6 +3039,7 @@ const Assets = struct {
             .gpa = gpa,
             .renderer = renderer,
             .dir = dir,
+            .textures = .{},
             .sprites = .{},
             .frames = .{},
             .animations = .{},
@@ -3051,9 +3054,13 @@ const Assets = struct {
             .vk => |*vk| vk.gx.waitIdle(),
             .sdl => {},
         }
-        for (a.sprites.items) |*s| {
-            s.deinit(a.gpa, a.renderer);
+        switch (a.renderer.*) {
+            .vk => |*vk| for (a.textures.items) |*t| {
+                t.deinit(&vk.gx);
+            },
+            .sdl => {},
         }
+        a.textures.deinit(a.gpa);
         a.sprites.deinit(a.gpa);
         a.* = undefined;
     }
@@ -3085,6 +3092,7 @@ const Assets = struct {
     ) !Animation.Index {
         try a.frames.appendSlice(a.gpa, frames);
         const result: Animation.Index = @enumFromInt(a.animations.items.len);
+        assert(a.animations.items.len < @intFromEnum(Animation.Index.none));
         try a.animations.append(a.gpa, .{
             .start = @intCast(a.frames.items.len - frames.len),
             .len = @intCast(frames.len),
@@ -3099,193 +3107,105 @@ const Assets = struct {
         return a.sprites.items[@intFromEnum(index)];
     }
 
+    fn texture(a: Assets, index: ubo.Texture) gpu.Image(.color) {
+        return a.textures.items[@intFromEnum(index)];
+    }
+
+    const LoadTextureResult = struct {
+        width: u16,
+        height: u16,
+        texture: ubo.Texture,
+    };
+
+    fn loadTexture(
+        a: *Assets,
+        vk: *VkRenderer,
+        cb: gpu.CmdBuf,
+        up: *ImageUploadQueue,
+        name: [:0]const u8,
+    ) !LoadTextureResult {
+        assert(a.textures.items.len < @intFromEnum(ubo.Texture.none));
+        const handle: ubo.Texture = @enumFromInt(a.textures.items.len);
+        
+        const diffuse_png = try a.dir.readFileAlloc(a.gpa, name, 50 * 1024 * 1024);
+        defer a.gpa.free(diffuse_png);
+
+        var width: c_int = undefined;
+        var height: c_int = undefined;
+        const channel_count = 4;
+        const c_pixels = c.stbi_load_from_memory(
+            diffuse_png.ptr,
+            @intCast(diffuse_png.len),
+            &width,
+            &height,
+            null,
+            channel_count,
+        );
+        defer c.stbi_image_free(c_pixels);
+        const pixels = c_pixels[0..@intCast(width * height * channel_count)];
+
+        try a.textures.append(a.gpa, up.beginWrite(&vk.gx, cb, &vk.color_images, .{
+            .name = .{ .str = name },
+            .image = .{
+                .format = .r8g8b8a8_srgb,
+                .extent = .{
+                    .width = @intCast(width),
+                    .height = @intCast(height),
+                    .depth = 1,
+                },
+                .usage = .{
+                    .transfer_dst = true,
+                    .sampled = true,
+                },
+            },
+        }));
+
+        up.writer.writeAll(pixels);
+
+        return .{
+            .texture = handle,
+            .width = @intCast(width),
+            .height = @intCast(height),
+        };
+    }
+
     fn loadSprite(
         a: *Assets,
-        allocator: Allocator,
         cb: gpu.CmdBuf,
         up: *ImageUploadQueue,
         diffuse_name: [:0]const u8,
         recolor_name: ?[:0]const u8,
         tints: []const [3]u8,
     ) !Sprite.Index {
+        assert(a.sprites.items.len < @intFromEnum(Sprite.Index.none));
+        const handle: Sprite.Index = @enumFromInt(a.sprites.items.len);
+
         switch (a.renderer.*) {
             .sdl => |sdl| {
                 const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
                 defer a.gpa.free(diffuse_png);
                 const recolor = if (recolor_name != null) try a.dir.readFileAlloc(a.gpa, recolor_name.?, 50 * 1024 * 1024) else null;
                 defer if (recolor != null) a.gpa.free(recolor.?);
-                try a.sprites.append(a.gpa, try spriteFromBytes(allocator, diffuse_png, recolor, sdl, tints));
-                return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
+                try a.sprites.append(a.gpa, try spriteFromBytes(a.gpa, diffuse_png, recolor, sdl, tints));
+                return handle;
             },
             .vk => |*vk| {
-                const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
-                defer a.gpa.free(diffuse_png);
-
-                var width: c_int = undefined;
-                var height: c_int = undefined;
-                const channel_count = 4;
-                const c_pixels = c.stbi_load_from_memory(
-                    diffuse_png.ptr,
-                    @intCast(diffuse_png.len),
-                    &width,
-                    &height,
-                    null,
-                    channel_count,
-                );
-                defer c.stbi_image_free(c_pixels);
-                const pixels = c_pixels[0..@intCast(width * height * channel_count)];
-
-                const image = up.beginWrite(&vk.gx, cb, &vk.color_images, .{
-                    .name = .{ .str = diffuse_name },
-                    .image = .{
-                        .format = .r8g8b8a8_srgb,
-                        .extent = .{
-                            .width = @intCast(width),
-                            .height = @intCast(height),
-                            .depth = 1,
-                        },
-                        .usage = .{
-                            .transfer_dst = true,
-                            .sampled = true,
-                        },
-                    },
-                });
-
-                up.writer.writeAll(pixels);
-
+                const diffuse = try a.loadTexture(vk, cb, up, diffuse_name);
+                const recolor = if (recolor_name) |name| b: {
+                    const recolor = try a.loadTexture(vk, cb, up, name);
+                    assert(recolor.width == diffuse.width);
+                    assert(recolor.height == diffuse.height);
+                    break :b recolor.texture;
+                } else .none;
                 try a.sprites.append(a.gpa, .{
                     .tints = &.{},
-                    .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
-                    .image = image,
+                    .rect = .{ .x = 0, .y = 0, .w = diffuse.width, .h = diffuse.height },
+                    .diffuse = diffuse.texture,
+                    .recolor = recolor,
                 });
-                return @as(Sprite.Index, @enumFromInt(a.sprites.items.len - 1));
+                return handle;
             },
         }
-    }
-
-    fn spriteFromBytesVk(
-        allocator: Allocator,
-        png_diffuse: []const u8,
-        png_recolor: ?[]const u8,
-        renderer: *c.SDL_Renderer,
-        tints: []const [3]u8,
-    ) !Sprite {
-        var width: c_int = undefined;
-        var height: c_int = undefined;
-        const channel_count = 4;
-        const bits_per_channel = 8;
-        const diffuse_data = c.stbi_load_from_memory(
-            png_diffuse.ptr,
-            @intCast(png_diffuse.len),
-            &width,
-            &height,
-            null,
-            channel_count,
-        );
-        defer c.stbi_image_free(diffuse_data);
-        var recolor_width: c_int = undefined;
-        var recolor_height: c_int = undefined;
-        const recolor_data = if (png_recolor != null) c.stbi_load_from_memory(
-            png_recolor.?.ptr,
-            @intCast(png_recolor.?.len),
-            &recolor_width,
-            &recolor_height,
-            null,
-            1,
-        ) else null;
-        defer if (recolor_data != null) c.stbi_image_free(recolor_data.?);
-        if (recolor_data != null) {
-            assert(width == recolor_width and height == recolor_height);
-        }
-
-        var textures = try ArrayListUnmanaged(*c.SDL_Texture).initCapacity(allocator, tints.len);
-        defer textures.deinit(allocator);
-        for (tints) |tint| {
-            const diffuse_copy = try allocator.alloc(u8, @intCast(width * height * channel_count));
-            defer allocator.free(diffuse_copy);
-            @memcpy(diffuse_copy, diffuse_data[0..diffuse_copy.len]);
-
-            for (0..diffuse_copy.len / channel_count) |pixel| {
-                const r = &diffuse_copy[pixel * channel_count];
-                const g = &diffuse_copy[pixel * channel_count + 1];
-                const b = &diffuse_copy[pixel * channel_count + 2];
-
-                var color: [3]f32 = .{
-                    @as(f32, @floatFromInt(r.*)) / 255.0,
-                    @as(f32, @floatFromInt(g.*)) / 255.0,
-                    @as(f32, @floatFromInt(b.*)) / 255.0,
-                };
-
-                // Change gamma
-                const gamma = 2.2;
-                for (&color) |*color_channel| {
-                    color_channel.* = math.pow(f32, color_channel.*, 1.0 / gamma);
-                }
-
-                // Convert to grayscale or determine recolor amount
-                var amount: f32 = 1.0;
-                if (recolor_data) |recolor| {
-                    amount = @as(f32, @floatFromInt(recolor[pixel])) / 255.0;
-                } else {
-                    var luminosity = 0.299 * color[0] + 0.587 * color[1] + 0.0722 * color[2] / 255.0;
-                    luminosity = math.pow(f32, luminosity, 1.0 / gamma);
-                    for (&color) |*color_channel| {
-                        color_channel.* = luminosity;
-                    }
-                }
-
-                // Apply tint
-                for (&color, tint) |*color_channel, tint_channel| {
-                    const recolored = math.pow(f32, @as(f32, @floatFromInt(tint_channel)) / 255.0, 1.0 / gamma);
-                    color_channel.* = lerp(color_channel.*, color_channel.* * recolored, amount);
-                }
-
-                // Change gamma back
-                for (&color) |*color_channel| {
-                    color_channel.* = math.pow(f32, color_channel.*, gamma);
-                }
-
-                // Apply changes
-                r.* = @intFromFloat(color[0] * 255.0);
-                g.* = @intFromFloat(color[1] * 255.0);
-                b.* = @intFromFloat(color[2] * 255.0);
-            }
-            const pitch = width * channel_count;
-            const surface = c.SDL_CreateRGBSurfaceFrom(
-                diffuse_copy.ptr,
-                width,
-                height,
-                channel_count * bits_per_channel,
-                pitch,
-                0x000000ff,
-                0x0000ff00,
-                0x00ff0000,
-                0xff000000,
-            );
-            defer c.SDL_FreeSurface(surface);
-            textures.appendAssumeCapacity(c.SDL_CreateTextureFromSurface(renderer, surface) orelse
-                panic("unable to convert surface to texture", .{}));
-        } else {
-            const pitch = width * channel_count;
-            const surface = c.SDL_CreateRGBSurfaceFrom(
-                diffuse_data,
-                width,
-                height,
-                channel_count * bits_per_channel,
-                pitch,
-                0x000000ff,
-                0x0000ff00,
-                0x00ff0000,
-                0xff000000,
-            );
-            defer c.SDL_FreeSurface(surface);
-            try textures.append(allocator, c.SDL_CreateTextureFromSurface(renderer, surface) orelse
-                panic("unable to convert surface to texture", .{}));
-        }
-        return .{
-            .tints = try textures.toOwnedSlice(allocator),
-            .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
-        };
     }
 
     fn spriteFromBytes(
@@ -3410,7 +3330,8 @@ const Assets = struct {
         return .{
             .tints = try textures.toOwnedSlice(allocator),
             .rect = .{ .x = 0, .y = 0, .w = width, .h = height },
-            .image = null,
+            .diffuse = undefined,
+            .recolor = undefined,
         };
     }
 };
