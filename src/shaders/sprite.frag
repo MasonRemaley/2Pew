@@ -5,6 +5,7 @@
 
 #include "sprite.glsl"
 #include "unpack.glsl"
+#include "color.glsl"
 
 layout(scalar, binding = 1) readonly buffer InstanceUbo {
     Instance instances[];
@@ -32,7 +33,6 @@ void main() {
         recolor *= texture(textures[nonuniformEXT(recolor_idx)], texcoord).r;
     }
 
-    // Rough SRGB approximation, should just do the exact math on the CPU instead
-    vec4 color = pow(unpackUnormToVec4(instance.color), vec4(vec3(2.2), 1.0));
+    vec4 color = colorSrgbToLinear(unpackUnormToVec4(instance.color));
     out_color = mix(diffuse, diffuse * color, recolor);
 }

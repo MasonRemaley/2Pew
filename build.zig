@@ -131,10 +131,9 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = exe.root_module,
     });
+    const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const bench_exe = b.addExecutable(.{
         .name = "bench",
@@ -148,7 +147,7 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&bench_cmd.step);
 
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&exe_tests.step);
+    test_step.dependOn(&run_exe_tests.step);
 
     const check_step = b.step("check", "Check the build");
     check_step.dependOn(&exe_tests.step);
