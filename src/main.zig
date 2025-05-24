@@ -32,6 +32,7 @@ const NamedArg = structopt.NamedArg;
 const log = std.log.scoped(build.name);
 const ImageUploadQueue = gpu.ext.ImageUploadQueue;
 const VkRenderer = @import("Renderer.zig");
+const colors = gpu.ext.colors;
 const ubo = VkRenderer.ubo;
 const SpriteRenderer = VkRenderer.SpriteRenderer;
 
@@ -1186,7 +1187,6 @@ fn render(
                 });
             }
 
-
             // Draw the ring
             {
                 const sprite = game.assets.sprite(game.ring_bg);
@@ -1210,7 +1210,9 @@ fn render(
                 .instances = &instances,
             });
 
-            es.forEach("renderHealthBar", renderHealthBar, .{.instances = &instances,});
+            es.forEach("renderHealthBar", renderHealthBar, .{
+                .instances = &instances,
+            });
             es.forEach("renderSprite", renderSprite, .{
                 .game = game,
                 .instances = &instances,
@@ -1239,7 +1241,7 @@ fn render(
                                 .translated(pos),
                             .diffuse = sprite.diffuse,
                             .recolor = sprite.recolor,
-                            .color = team_tints[team_index],
+                            .color = team_colors[team_index],
                         });
                     }
                     for (team.ship_progression, 0..) |class, display_prog_index| {
@@ -1258,7 +1260,7 @@ fn render(
                                 .translated(pos),
                             .diffuse = sprite.diffuse,
                             .recolor = sprite.recolor,
-                            .color = team_tints[team_index],
+                            .color = team_colors[team_index],
                         });
                     }
                 }
@@ -1440,7 +1442,7 @@ fn renderAnimations(
                 .applied(transform.world_from_model),
             .diffuse = sprite.diffuse,
             .recolor = sprite.recolor,
-            .color = if (team_index) |ti| team_tints[@intFromEnum(ti.*)] else 0xffffffff,
+            .color = if (team_index) |ti| team_colors[@intFromEnum(ti.*)] else .white,
         });
     }
 }
@@ -1494,15 +1496,15 @@ fn renderHealthBar(
         .world_from_model = Mat2x3.identity
             .scaled(health_bar_size.plus(.splat(2)))
             .translated(start.minus(.splat(1))),
-        .color = 0xffffffff,
+        .color = .white,
     });
     const hp_percent = health.hp / health.max_hp;
-    const color: u32 = if (hp_percent >= health.regen_ratio)
-        0x009413ff
+    const color: ubo.Color = if (hp_percent >= health.regen_ratio)
+        colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{ 0.000, 0.580, 0.075, 1 })
     else if (health.regen_cooldown_s > 0.0)
-        0xe20003ff
+        colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{ 0.886, 0.000, 0.012, 1 })
     else
-        0xff7d03ff;
+        colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{ 1.000, 0.490, 0.012, 1 });
     ctx.instances.write(.{
         .world_from_model = Mat2x3.identity
             .scaled(health_bar_size.compProd(.{ .x = hp_percent, .y = 1.0 }))
@@ -1559,7 +1561,7 @@ fn renderSprite(
             .applied(transform.world_from_model),
         .diffuse = sprite.diffuse,
         .recolor = sprite.recolor,
-        .color = if (team_index) |ti| team_tints[@intFromEnum(ti.*)] else 0xffffffff,
+        .color = if (team_index) |ti| team_colors[@intFromEnum(ti.*)] else .white,
     });
 }
 
@@ -1858,11 +1860,31 @@ fn boundedArrayFromArray(comptime T: type, comptime capacity: usize, array: anyt
     return BoundedArray(T, capacity).fromSlice(&array) catch unreachable;
 }
 
-const team_tints: [4]u32 = .{
-    0x107cc4ff,
-    0xedd240ff,
-    0xe040edff,
-    0x53ed40ff,
+const team_colors: [4]ubo.Color = .{
+    colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{
+        0.063,
+        0.486,
+        0.769,
+        1.0,
+    }),
+    colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{
+        0.929,
+        0.824,
+        0.251,
+        1.0,
+    }),
+    colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{
+        0.878,
+        0.251,
+        0.929,
+        1.0,
+    }),
+    colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{
+        0.325,
+        0.929,
+        0.251,
+        1.0,
+    }),
 };
 
 const team_tints_sdl = &.{
@@ -3126,7 +3148,7 @@ const Assets = struct {
     ) !LoadTextureResult {
         assert(a.textures.items.len < @intFromEnum(ubo.Texture.none));
         const handle: ubo.Texture = @enumFromInt(a.textures.items.len);
-        
+
         const diffuse_png = try a.dir.readFileAlloc(a.gpa, name, 50 * 1024 * 1024);
         defer a.gpa.free(diffuse_png);
 

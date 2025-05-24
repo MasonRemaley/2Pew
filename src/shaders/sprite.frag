@@ -33,6 +33,6 @@ void main() {
         recolor *= texture(textures[nonuniformEXT(recolor_idx)], texcoord).r;
     }
 
-    vec4 color = colorSrgbToLinear(unpackUnormToVec4(instance.color));
+    vec4 color = unpackUnormToVec4(instance.color);
     out_color = mix(diffuse, diffuse * color, recolor);
 }

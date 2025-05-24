@@ -41,6 +41,14 @@ pub const image_mibs = 16;
 pub const mib = std.math.pow(u64, 2, 20);
 
 pub const ubo = struct {
+    pub const Color = extern struct {
+        pub const white: @This() = .{ .r = 0xff, .g = 0xff, .b = 0xff, .a = 0xff };
+        a: u8,
+        b: u8,
+        g: u8,
+        r: u8,
+    };
+
     pub const Texture = enum(u16) {
         none = std.math.maxInt(u16),
         _,
@@ -50,16 +58,12 @@ pub const ubo = struct {
         view_from_world: Mat2x3 = .identity,
     };
 
-    pub const Instance = if (builtin.cpu.arch.endian() != .little)
-        // XXX: could we get rid of this by packing the color ourselves?
-        @compileError("users may assume little endian")
-    else
-        extern struct {
-            world_from_model: Mat2x3,
-            diffuse: Texture = .none,
-            recolor: Texture = .none,
-            color: u32 = 0xffffffff,
-        };
+    pub const Instance = extern struct {
+        world_from_model: Mat2x3,
+        diffuse: Texture = .none,
+        recolor: Texture = .none,
+        color: Color = .white,
+    };
 };
 
 pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
