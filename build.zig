@@ -179,6 +179,10 @@ fn installShader(
     compile_shader.addArg("--include-path");
     compile_shader.addDirectoryArg(b.path("src/shaders"));
 
+    const gbms = b.dependency("gbms", .{});
+    compile_shader.addArg("--include-path");
+    compile_shader.addDirectoryArg(gbms.path("include"));
+
     compile_shader.addArg("--write-deps");
     _ = compile_shader.addDepFileOutputArg("deps.d");
 

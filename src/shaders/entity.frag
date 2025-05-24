@@ -1,6 +1,7 @@
 #include "entity.glsl"
-#include "unpack.glsl"
-#include "color.glsl"
+
+#include <gbms/unpack.glsl>
+#include <gbms/color.glsl>
 
 layout(scalar, binding = 1) readonly buffer InstanceUbo {
     Instance instances[];
