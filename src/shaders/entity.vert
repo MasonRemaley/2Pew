@@ -1,10 +1,4 @@
-#version 460
-#extension GL_EXT_scalar_block_layout : require
-#extension GL_EXT_nonuniform_qualifier : require
-#extension GL_ARB_shading_language_include : require
-
 #include "entity.glsl"
-
 
 layout(scalar, binding = 0) readonly buffer SceneUbo {
     Scene scene;

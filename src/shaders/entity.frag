@@ -1,8 +1,3 @@
-#version 450
-#extension GL_EXT_scalar_block_layout : require
-#extension GL_EXT_nonuniform_qualifier : require
-#extension GL_ARB_shading_language_include : require
-
 #include "entity.glsl"
 #include "unpack.glsl"
 #include "color.glsl"
@@ -25,12 +20,12 @@ void main() {
 
     vec4 diffuse = vec4(1.0);
     if (diffuse_idx != TexNone) {
-        diffuse = texture(textures[nonuniformEXT(diffuse_idx)], texcoord);
+        diffuse = texture(textures[nonuniform(diffuse_idx)], texcoord);
     }
 
     float recolor = diffuse.a;
     if (recolor_idx != TexNone) {
-        recolor *= texture(textures[nonuniformEXT(recolor_idx)], texcoord).r;
+        recolor *= texture(textures[nonuniform(recolor_idx)], texcoord).r;
     }
 
     vec4 color = colorUnormToFloat(unpackUintToUvec4(instance.color));
