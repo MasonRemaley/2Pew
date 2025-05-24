@@ -1,3 +1,6 @@
+#ifndef INCLUDE_ENTITY
+#define INCLUDE_ENTITY
+
 const uint MatTex = 0;
 const uint MatSolid = 1;
 
@@ -12,3 +15,5 @@ struct Instance {
 struct Scene {
     mat2x3 world_to_view;
 };
+
+#endif

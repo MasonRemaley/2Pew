@@ -114,8 +114,8 @@ pub fn build(b: *std.Build) void {
     });
     const shader_compiler_exe = shader_compiler.artifact("shader_compiler");
 
-    installShader(b, shader_compiler_exe, "sprite.vert", optimize);
-    installShader(b, shader_compiler_exe, "sprite.frag", optimize);
+    installShader(b, shader_compiler_exe, "entity.vert", optimize);
+    installShader(b, shader_compiler_exe, "entity.frag", optimize);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.setCwd(.{ .cwd_relative = std.fs.path.dirname(b.getInstallPath(

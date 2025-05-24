@@ -103,18 +103,18 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         .name = "Color Images",
     }) catch |err| @panic(@errorName(err));
 
-    const sprite_vert_spv = initSpv(gpa, "data/shaders/sprite.vert.spv");
+    const sprite_vert_spv = initSpv(gpa, "data/shaders/entity.vert.spv");
     defer gpa.free(sprite_vert_spv);
     const sprite_vert_module: gpu.ShaderModule = .init(&gx, .{
-        .name = .{ .str = "sprite.vert.spv" },
+        .name = .{ .str = "entity.vert.spv" },
         .ir = sprite_vert_spv,
     });
     defer sprite_vert_module.deinit(&gx);
 
-    const sprite_frag_spv = initSpv(gpa, "data/shaders/sprite.frag.spv");
+    const sprite_frag_spv = initSpv(gpa, "data/shaders/entity.frag.spv");
     defer gpa.free(sprite_frag_spv);
     const sprite_frag_module: gpu.ShaderModule = .init(&gx, .{
-        .name = .{ .str = "sprite.frag.spv" },
+        .name = .{ .str = "entity.frag.spv" },
         .ir = sprite_frag_spv,
     });
     defer sprite_frag_module.deinit(&gx);

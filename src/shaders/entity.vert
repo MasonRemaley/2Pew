@@ -3,7 +3,7 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_ARB_shading_language_include : require
 
-#include "sprite.glsl"
+#include "entity.glsl"
 
 
 layout(scalar, binding = 0) readonly buffer SceneUbo {

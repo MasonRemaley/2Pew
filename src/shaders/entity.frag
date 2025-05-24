@@ -3,7 +3,7 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_ARB_shading_language_include : require
 
-#include "sprite.glsl"
+#include "entity.glsl"
 #include "unpack.glsl"
 #include "color.glsl"
 
@@ -19,7 +19,7 @@ layout(location = 1) in flat Instance instance;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    ivec2 diffuse_recolor = unpackUintToIVec2(instance.diffuse_recolor);
+    uvec2 diffuse_recolor = unpackUintToUvec2(instance.diffuse_recolor);
     uint diffuse_idx = diffuse_recolor.x;
     uint recolor_idx = diffuse_recolor.y;
 
@@ -33,6 +33,6 @@ void main() {
         recolor *= texture(textures[nonuniformEXT(recolor_idx)], texcoord).r;
     }
 
-    vec4 color = unpackUnormToVec4(instance.color);
+    vec4 color = colorUnormToFloat(unpackUintToUvec4(instance.color));
     out_color = mix(diffuse, diffuse * color, recolor);
 }
