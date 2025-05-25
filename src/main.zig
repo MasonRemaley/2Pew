@@ -1883,7 +1883,6 @@ const Game = struct {
         });
         thruster.add(cb, Animation.Playback, .{ .index = .none });
         thruster.add(cb, PlayerIndex, player_index);
-        thruster.add(cb, TeamIndex, team_index);
         cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
     }
 
@@ -1949,7 +1948,6 @@ const Game = struct {
         });
         thruster.add(cb, Animation.Playback, .{ .index = .none });
         thruster.add(cb, PlayerIndex, player_index);
-        thruster.add(cb, TeamIndex, team_index);
         cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
     }
 
@@ -2016,7 +2014,6 @@ const Game = struct {
         });
         thruster.add(cb, Animation.Playback, .{ .index = .none });
         thruster.add(cb, PlayerIndex, player_index);
-        thruster.add(cb, TeamIndex, team_index);
         cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
     }
 
@@ -2093,7 +2090,6 @@ const Game = struct {
         });
         thruster.add(cb, Animation.Playback, .{ .index = .none });
         thruster.add(cb, PlayerIndex, player_index);
-        thruster.add(cb, TeamIndex, team_index);
     }
 
     fn createWendy(
@@ -2160,7 +2156,6 @@ const Game = struct {
             });
             thruster.add(cb, Animation.Playback, .{ .index = .none });
             thruster.add(cb, PlayerIndex, player_index);
-            thruster.add(cb, TeamIndex, team_index);
         }
 
         {
@@ -2179,7 +2174,6 @@ const Game = struct {
             });
             thruster.add(cb, Animation.Playback, .{ .index = .none });
             thruster.add(cb, PlayerIndex, player_index);
-            thruster.add(cb, TeamIndex, team_index);
         }
 
         {
@@ -2198,7 +2192,6 @@ const Game = struct {
             });
             thruster.add(cb, Animation.Playback, .{ .index = .none });
             thruster.add(cb, PlayerIndex, player_index);
-            thruster.add(cb, TeamIndex, team_index);
         }
 
         {
@@ -2217,7 +2210,6 @@ const Game = struct {
             });
             thruster.add(cb, Animation.Playback, .{ .index = .none });
             thruster.add(cb, PlayerIndex, player_index);
-            thruster.add(cb, TeamIndex, team_index);
         }
     }
 
