@@ -3139,11 +3139,28 @@ const Assets = struct {
         texture: ubo.Texture,
     };
 
+    const TextureFormat = enum(i32) {
+        r8g8b8a8_srgb = @intFromEnum(gpu.ImageFormat.r8g8b8a8_srgb),
+        r8_unorm = @intFromEnum(gpu.ImageFormat.r8_unorm),
+
+        pub fn asGpuFormat(self: @This()) gpu.ImageFormat {
+            return @enumFromInt(@intFromEnum(self));
+        }
+
+        pub fn channels(self: @This()) u8 {
+            return switch (self) {
+                .r8g8b8a8_srgb => 4,
+                .r8_unorm => 1,
+            };
+        }
+    };
+
     fn loadTexture(
         a: *Assets,
         vk: *VkRenderer,
         cb: gpu.CmdBuf,
         up: *ImageUploadQueue,
+        format: TextureFormat,
         name: [:0]const u8,
     ) !LoadTextureResult {
         assert(a.textures.items.len < @intFromEnum(ubo.Texture.none));
@@ -3154,22 +3171,21 @@ const Assets = struct {
 
         var width: c_int = undefined;
         var height: c_int = undefined;
-        const channel_count = 4;
         const c_pixels = c.stbi_load_from_memory(
             diffuse_png.ptr,
             @intCast(diffuse_png.len),
             &width,
             &height,
             null,
-            channel_count,
+            format.channels(),
         );
         defer c.stbi_image_free(c_pixels);
-        const pixels = c_pixels[0..@intCast(width * height * channel_count)];
+        const pixels = c_pixels[0..@intCast(width * height * format.channels())];
 
         try a.textures.append(a.gpa, up.beginWrite(&vk.gx, cb, &vk.color_images, .{
             .name = .{ .str = name },
             .image = .{
-                .format = .r8g8b8a8_srgb,
+                .format = format.asGpuFormat(),
                 .extent = .{
                     .width = @intCast(width),
                     .height = @intCast(height),
@@ -3212,9 +3228,9 @@ const Assets = struct {
                 return handle;
             },
             .vk => |*vk| {
-                const diffuse = try a.loadTexture(vk, cb, up, diffuse_name);
+                const diffuse = try a.loadTexture(vk, cb, up, .r8g8b8a8_srgb, diffuse_name);
                 const recolor = if (recolor_name) |name| b: {
-                    const recolor = try a.loadTexture(vk, cb, up, name);
+                    const recolor = try a.loadTexture(vk, cb, up, .r8_unorm, name);
                     assert(recolor.width == diffuse.width);
                     assert(recolor.height == diffuse.height);
                     break :b recolor.texture;
