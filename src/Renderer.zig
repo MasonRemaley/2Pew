@@ -3,6 +3,7 @@ const std = @import("std");
 const gpu = @import("gpu");
 const geom = @import("zcs").ext.geom;
 const tracy = @import("tracy");
+const c = @import("c.zig");
 
 const DeleteQueue = gpu.ext.DeleteQueue;
 const ImageBumpAllocator = gpu.ext.ImageBumpAllocator;
@@ -11,14 +12,19 @@ const bufPart = gpu.ext.bufPart;
 const Gx = gpu.Gx;
 const Memory = gpu.Memory;
 const UploadBuf = gpu.UploadBuf;
+const ImageUploadQueue = gpu.ext.ImageUploadQueue;
 const Mat2x3 = geom.Mat2x3;
 const Zone = tracy.Zone;
 
 const Allocator = std.mem.Allocator;
 
+const assert = std.debug.assert;
+
 delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue(8),
 
-color_images: ImageBumpAllocator(.color),
+color_image_allocator: ImageBumpAllocator(.color),
+
+textures: std.ArrayListUnmanaged(gpu.Image(.color)),
 
 pipeline: gpu.Pipeline,
 pipeline_layout: gpu.Pipeline.Layout,
@@ -32,8 +38,11 @@ texture_sampler: gpu.Sampler,
 sprites: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 
-pub const max_textures = @intFromEnum(ubo.Texture.none);
-pub const max_sprites = 16384;
+pub const max_textures = b: {
+    const n = 16384;
+    assert(n < @intFromEnum(ubo.Texture.none));
+    break :b n;
+};
 pub const image_mibs = 16;
 
 pub const mib = std.math.pow(u64, 2, 20);
@@ -93,7 +102,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
     const zone: Zone = .begin(.{ .src = @src() });
     defer zone.end();
 
-    const color_images = ImageBumpAllocator(.color).init(gpa, gx, .{
+    const color_image_allocator = ImageBumpAllocator(.color).init(gpa, gx, .{
         .name = "Color Images",
     }) catch |err| @panic(@errorName(err));
 
@@ -158,7 +167,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         },
         .frame = &.{
             .init(ubo.Scene, &scene),
-            .init([max_sprites]ubo.Instance, &sprites),
+            .init([max_textures]ubo.Instance, &sprites),
         },
     });
 
@@ -175,20 +184,21 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         .border_color = .int_transparent_black,
     });
 
+    const textures = std.ArrayListUnmanaged(gpu.Image(.color)).initCapacity(
+        gpa,
+        max_textures,
+    ) catch @panic("OOM");
+
     return .{
         .delete_queues = @splat(.{}),
-
-        .color_images = color_images,
-
+        .color_image_allocator = color_image_allocator,
+        .textures = textures,
         .pipeline = pipeline,
         .pipeline_layout = pipeline_layout,
         .desc_sets = desc_sets,
         .desc_pool = desc_pool,
-
         .storage_buf = storage_buf,
-
         .texture_sampler = texture_sampler,
-
         .scene = scene,
         .sprites = sprites,
     };
@@ -200,6 +210,9 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
 
     for (&self.delete_queues) |*dq| dq.reset(gx);
 
+    for (self.textures.items) |*t| t.deinit(gx);
+    self.textures.deinit(gpa);
+
     self.pipeline_layout.deinit(gx);
     self.pipeline.deinit(gx);
 
@@ -207,7 +220,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     self.storage_buf.deinit(gx);
     self.texture_sampler.deinit(gx);
 
-    self.color_images.deinit(gpa, gx);
+    self.color_image_allocator.deinit(gpa, gx);
     self.* = undefined;
 }
 
@@ -231,4 +244,81 @@ fn initSpv(gpa: Allocator, path: []const u8) []const u32 {
 pub fn beginFrame(self: *@This(), gx: *Gx) void {
     gx.beginFrame();
     self.delete_queues[gx.frame].reset(gx);
+}
+
+const LoadTextureResult = struct {
+    width: u16,
+    height: u16,
+    texture: ubo.Texture,
+};
+
+const TextureFormat = enum(i32) {
+    r8g8b8a8_srgb = @intFromEnum(gpu.ImageFormat.r8g8b8a8_srgb),
+    r8_unorm = @intFromEnum(gpu.ImageFormat.r8_unorm),
+
+    pub fn asGpuFormat(self: @This()) gpu.ImageFormat {
+        return @enumFromInt(@intFromEnum(self));
+    }
+
+    pub fn channels(self: @This()) u8 {
+        return switch (self) {
+            .r8g8b8a8_srgb => 4,
+            .r8_unorm => 1,
+        };
+    }
+};
+
+pub fn loadTexture(
+    self: *@This(),
+    gpa: Allocator,
+    gx: *Gx,
+    cb: gpu.CmdBuf,
+    up: *ImageUploadQueue,
+    format: TextureFormat,
+    dir: std.fs.Dir,
+    name: [:0]const u8,
+) LoadTextureResult {
+    assert(self.textures.items.len < @intFromEnum(ubo.Texture.none));
+    const handle: ubo.Texture = @enumFromInt(self.textures.items.len);
+
+    const diffuse_png = dir.readFileAlloc(gpa, name, 50 * 1024 * 1024) catch |err|
+        @panic(@errorName(err));
+    defer gpa.free(diffuse_png);
+
+    var width: c_int = undefined;
+    var height: c_int = undefined;
+    const c_pixels = c.stbi_load_from_memory(
+        diffuse_png.ptr,
+        @intCast(diffuse_png.len),
+        &width,
+        &height,
+        null,
+        format.channels(),
+    );
+    defer c.stbi_image_free(c_pixels);
+    const pixels = c_pixels[0..@intCast(width * height * format.channels())];
+
+    self.textures.appendAssumeCapacity(up.beginWrite(gx, cb, &self.color_image_allocator, .{
+        .name = .{ .str = name },
+        .image = .{
+            .format = format.asGpuFormat(),
+            .extent = .{
+                .width = @intCast(width),
+                .height = @intCast(height),
+                .depth = 1,
+            },
+            .usage = .{
+                .transfer_dst = true,
+                .sampled = true,
+            },
+        },
+    }));
+
+    up.writer.writeAll(pixels);
+
+    return .{
+        .texture = handle,
+        .width = @intCast(width),
+        .height = @intCast(height),
+    };
 }
