@@ -16,7 +16,7 @@ const Zone = tracy.Zone;
 
 const Allocator = std.mem.Allocator;
 
-gx: Gx,
+gx: *Gx,
 
 delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue(8),
 
@@ -91,38 +91,34 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
     },
 };
 
-pub fn init(gpa: Allocator, ctx: Gx) @This() {
+pub fn init(gpa: Allocator, gx: *Gx) @This() {
     const zone: Zone = .begin(.{ .src = @src() });
     defer zone.end();
 
-    // Eventually we'll take this by reference, but it's more convenient to own it while we're
-    // maintaining both the SDL and Vulkan renderer simultaneously through the transition
-    var gx = ctx;
-
-    const color_images = ImageBumpAllocator(.color).init(gpa, &gx, .{
+    const color_images = ImageBumpAllocator(.color).init(gpa, gx, .{
         .name = "Color Images",
     }) catch |err| @panic(@errorName(err));
 
     const sprite_vert_spv = initSpv(gpa, "data/shaders/entity.vert.spv");
     defer gpa.free(sprite_vert_spv);
-    const sprite_vert_module: gpu.ShaderModule = .init(&gx, .{
+    const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
         .name = .{ .str = "entity.vert.spv" },
         .ir = sprite_vert_spv,
     });
-    defer sprite_vert_module.deinit(&gx);
+    defer sprite_vert_module.deinit(gx);
 
     const sprite_frag_spv = initSpv(gpa, "data/shaders/entity.frag.spv");
     defer gpa.free(sprite_frag_spv);
-    const sprite_frag_module: gpu.ShaderModule = .init(&gx, .{
+    const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
         .name = .{ .str = "entity.frag.spv" },
         .ir = sprite_frag_spv,
     });
-    defer sprite_frag_module.deinit(&gx);
+    defer sprite_frag_module.deinit(gx);
 
-    const pipeline_layout: gpu.Pipeline.Layout = .init(&gx, pipeline_layout_options);
+    const pipeline_layout: gpu.Pipeline.Layout = .init(gx, pipeline_layout_options);
 
     var pipeline: gpu.Pipeline = undefined;
-    gpu.Pipeline.initGraphics(&gx, &.{
+    gpu.Pipeline.initGraphics(gx, &.{
         .{
             .name = .{ .str = "Sprites" },
             .stages = .{
@@ -150,14 +146,14 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
             .layout_options = &pipeline_layout_options,
         });
     }
-    const desc_pool: gpu.DescPool = .init(&gx, .{
+    const desc_pool: gpu.DescPool = .init(gx, .{
         .name = .{ .str = "Game" },
         .cmds = create_descs.constSlice(),
     });
 
     var scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
     var sprites: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
-    const storage_buf = bufPart(&gx, UploadBuf(.{ .storage = true }), .{
+    const storage_buf = bufPart(gx, UploadBuf(.{ .storage = true }), .{
         .buf = .{
             .name = .{ .str = "Storage" },
             .prefer_device_local = false,
@@ -168,7 +164,7 @@ pub fn init(gpa: Allocator, ctx: Gx) @This() {
         },
     });
 
-    const texture_sampler: gpu.Sampler = .init(&gx, .{ .str = "Texture" }, .{
+    const texture_sampler: gpu.Sampler = .init(gx, .{ .str = "Texture" }, .{
         .mag_filter = .linear,
         .min_filter = .linear,
         .mipmap_mode = .linear,
@@ -206,16 +202,16 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     const zone: Zone = .begin(.{ .src = @src() });
     defer zone.end();
 
-    for (&self.delete_queues) |*dq| dq.reset(&self.gx);
+    for (&self.delete_queues) |*dq| dq.reset(self.gx);
 
-    self.pipeline_layout.deinit(&self.gx);
-    self.pipeline.deinit(&self.gx);
+    self.pipeline_layout.deinit(self.gx);
+    self.pipeline.deinit(self.gx);
 
-    self.desc_pool.deinit(&self.gx);
-    self.storage_buf.deinit(&self.gx);
-    self.texture_sampler.deinit(&self.gx);
+    self.desc_pool.deinit(self.gx);
+    self.storage_buf.deinit(self.gx);
+    self.texture_sampler.deinit(self.gx);
 
-    self.color_images.deinit(gpa, &self.gx);
+    self.color_images.deinit(gpa, self.gx);
     self.gx.deinit(gpa);
     self.* = undefined;
 }
@@ -239,5 +235,5 @@ fn initSpv(gpa: Allocator, path: []const u8) []const u32 {
 
 pub fn beginFrame(self: *@This()) void {
     self.gx.beginFrame();
-    self.delete_queues[self.gx.frame].reset(&self.gx);
+    self.delete_queues[self.gx.frame].reset(self.gx);
 }

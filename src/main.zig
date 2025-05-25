@@ -31,10 +31,10 @@ const Command = structopt.Command;
 const NamedArg = structopt.NamedArg;
 const log = std.log.scoped(build.name);
 const ImageUploadQueue = gpu.ext.ImageUploadQueue;
-const VkRenderer = @import("Renderer.zig");
+const Renderer = @import("Renderer.zig");
 const colors = gpu.ext.colors;
-const ubo = VkRenderer.ubo;
-const SpriteRenderer = VkRenderer.SpriteRenderer;
+const ubo = Renderer.ubo;
+const SpriteRenderer = Renderer.SpriteRenderer;
 
 const tracy = @import("tracy");
 const Zone = tracy.Zone;
@@ -52,10 +52,6 @@ const command: Command = .{
         NamedArg.init(Gx.Options.DebugMode, .{
             .long = "gpu-debug",
             .default = .{ .value = if (builtin.mode == .Debug) .validate else .none },
-        }),
-        NamedArg.init(bool, .{
-            .long = "gx",
-            .default = .{ .value = false },
         }),
     },
 };
@@ -90,11 +86,6 @@ const profile = false;
 pub const gpu_options: gpu.Options = .{
     .Backend = VkBackend,
     .update_desc_sets_buf_len = 1000,
-};
-
-const Renderer = union(enum) {
-    sdl: *c.SDL_Renderer,
-    vk: VkRenderer,
 };
 
 pub fn main() !void {
@@ -138,7 +129,7 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyWindow(screen);
 
-    var renderer: Renderer = if (args.named.gx) b: {
+    var gx: Gx = b: {
         const app_version = comptime std.SemanticVersion.parse(build.version) catch unreachable;
         var instance_ext_count: u32 = 0;
         if (c.SDL_Vulkan_GetInstanceExtensions(screen, &instance_ext_count, null) != c.SDL_TRUE) {
@@ -150,7 +141,7 @@ pub fn main() !void {
             return error.SdlVkGetInstanceExtensionsError;
         }
 
-        const gx: Gx = .init(allocator, .{
+        break :b .init(allocator, .{
             .app_name = @tagName(build.name),
             .app_version = .{
                 .major = app_version.major,
@@ -173,20 +164,12 @@ pub fn main() !void {
             },
             .debug = args.named.@"gpu-debug",
         });
-        break :b .{ .vk = .init(allocator, gx) };
-    } else b: {
-        const renderer_flags: u32 = if (profile) 0 else c.SDL_RENDERER_PRESENTVSYNC;
-        break :b .{ .sdl = c.SDL_CreateRenderer(screen, -1, renderer_flags) orelse {
-            panic("SDL_CreateRenderer failed: {s}\n", .{c.SDL_GetError()});
-        } };
     };
-    defer switch (renderer) {
-        .sdl => |sr| c.SDL_DestroyRenderer(sr),
-        .vk => |*vk| {
-            vk.gx.waitIdle();
-            vk.deinit(allocator);
-        },
-    };
+    var renderer: Renderer = .init(allocator, &gx);
+    defer {
+        renderer.gx.waitIdle();
+        renderer.deinit(allocator);
+    }
 
     // Load assets
     var assets = try Assets.init(allocator, &renderer);
@@ -1034,284 +1017,169 @@ fn render(
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
-    switch (game.assets.renderer.*) {
-        .sdl => |sdl| {
-            // This was added for the flash effect and then not used since it already requires a timer
-            // state. We'll be wanting it later and I don't feel like deleting and retyping the explanation
-            // for it.
-            _ = fx_loop_s;
+    // This was added for the flash effect and then not used since it already requires a timer
+    // state. We'll be wanting it later and I don't feel like deleting and retyping the explanation
+    // for it.
+    _ = fx_loop_s;
 
-            // Clear screen
-            {
-                const clear_zone = Zone.begin(.{ .src = @src(), .name = "clear" });
-                defer clear_zone.end();
-                sdlAssertZero(c.SDL_SetRenderDrawColor(sdl, 0x00, 0x00, 0x00, 0xff));
-                sdlAssertZero(c.SDL_RenderClear(sdl));
-            }
+    // Get this frame's storage writers
+    game.assets.renderer.beginFrame();
 
-            // Draw stars
-            {
-                const stars_zone = Zone.begin(.{ .src = @src(), .name = "stars" });
-                defer stars_zone.end();
+    var scene_writer = game.assets.renderer.scene[game.assets.renderer.gx.frame].writer().typed(ubo.Scene);
+    scene_writer.write(.{
+        .view_from_world = Mat2x3.ortho(.{
+            .left = 0,
+            .right = display_size.x,
+            .bottom = 0,
+            .top = display_size.y,
+        }).times(.translation(game.camera.negated())),
+    });
 
-                for (game.stars) |star| {
-                    const sprite = game.assets.sprite(switch (star.kind) {
-                        .small => game.star_small,
-                        .large => game.star_large,
-                        .planet_red => game.planet_red,
-                    });
-                    renderCopy(.{
-                        .renderer = sdl,
-                        .tex = sprite.tints[0],
-                        .rad = 0.0,
-                        .pos = .{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) },
-                        .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
-                    });
-                }
-            }
+    var instances = game.assets.renderer.sprites[game.assets.renderer.gx.frame].writer().typed(ubo.Instance);
 
-            // Draw ring
-            {
-                const ring_zone = Zone.begin(.{ .src = @src(), .name = "ring" });
-                defer ring_zone.end();
-
-                const sprite = game.assets.sprite(game.ring_bg);
-                renderCopy(.{
-                    .renderer = sdl,
-                    .tex = sprite.tints[0],
-                    .rad = 0.0,
-                    .pos = display_center,
-                    .size = .{ .x = @floatFromInt(sprite.rect.w), .y = @floatFromInt(sprite.rect.h) },
-                });
-            }
-
-            es.forEach("renderAnimations", renderAnimationsSdl, .{
-                .assets = game.assets,
-                .es = es,
-                .delta_s = delta_s,
-                .renderer = sdl,
-            });
-            es.forEach("renderHealthBar", renderHealthBarSdl, .{
-                .renderer = sdl,
-            });
-            es.forEach("renderSprite", renderSpriteSdl, .{
-                .game = game,
-                .renderer = sdl,
-            });
-            es.forEach("renderSpring", renderSpringSdl, .{
-                .es = es,
-                .renderer = sdl,
-            });
-
-            // Draw the ships in the bank.
-            {
-                const bank_zone = Zone.begin(.{ .src = @src(), .name = "bank" });
-                defer bank_zone.end();
-
-                const row_height = 64;
-                const col_width = 64;
-                const top_left: Vec2 = .splat(20);
-
-                for (game.teams, 0..) |team, team_index| {
-                    {
-                        const sprite = game.assets.sprite(game.particle);
-                        const pos = top_left.plus(.{
-                            .x = col_width * @as(f32, @floatFromInt(team_index)),
-                            .y = 0,
-                        });
-                        renderCopy(.{
-                            .renderer = sdl,
-                            .tex = sprite.getTint(@enumFromInt(team_index)),
-                            .pos = pos,
-                            .size = sprite.size(),
-                        });
-                    }
-                    for (team.ship_progression, 0..) |class, display_prog_index| {
-                        const dead = team.ship_progression_index > display_prog_index;
-                        if (dead) continue;
-
-                        const sprite = game.assets.sprite(game.shipLifeSprite(class));
-                        const pos = top_left.plus(.{
-                            .x = col_width * @as(f32, @floatFromInt(team_index)),
-                            .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
-                        });
-                        renderCopy(.{
-                            .renderer = sdl,
-                            .tex = sprite.getTint(@enumFromInt(team_index)),
-                            .pos = pos,
-                            .size = sprite.size().scaled(0.5),
-                        });
-                    }
-                }
-            }
-
-            {
-                const present_zone = Zone.begin(.{ .src = @src(), .name = "present" });
-                defer present_zone.end();
-                c.SDL_RenderPresent(sdl);
-            }
-        },
-        .vk => |*vk| {
-            // Get this frame's storage writers
-            vk.beginFrame();
-
-            var scene_writer = vk.scene[vk.gx.frame].writer().typed(ubo.Scene);
-            scene_writer.write(.{
-                .view_from_world = Mat2x3.ortho(.{
-                    .left = 0,
-                    .right = display_size.x,
-                    .bottom = 0,
-                    .top = display_size.y,
-                }).times(.translation(game.camera.negated())),
-            });
-
-            var instances = vk.sprites[vk.gx.frame].writer().typed(ubo.Instance);
-
-            // Draw the stars
-            for (game.stars) |star| {
-                const sprite = game.assets.sprite(switch (star.kind) {
-                    .small => game.star_small,
-                    .large => game.star_large,
-                    .planet_red => game.planet_red,
-                });
-                instances.write(.{
-                    .world_from_model = Mat2x3.identity
-                        .translated(.splat(-0.5))
-                        .scaled(.{
-                            .x = @floatFromInt(sprite.rect.w),
-                            .y = @floatFromInt(sprite.rect.h),
-                        })
-                        .translated(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }),
-                    .diffuse = sprite.diffuse,
-                    .recolor = sprite.recolor,
-                });
-            }
-
-            // Draw the ring
-            {
-                const sprite = game.assets.sprite(game.ring_bg);
-                instances.write(.{
-                    .world_from_model = Mat2x3.identity
-                        .translated(.splat(-0.5))
-                        .scaled(.{
-                            .x = @floatFromInt(sprite.rect.w),
-                            .y = @floatFromInt(sprite.rect.h),
-                        })
-                        .translated(display_center),
-                    .diffuse = sprite.diffuse,
-                    .recolor = sprite.recolor,
-                });
-            }
-
-            es.forEach("renderAnimations", renderAnimations, .{
-                .assets = game.assets,
-                .es = es,
-                .delta_s = delta_s,
-                .instances = &instances,
-            });
-
-            es.forEach("renderHealthBar", renderHealthBar, .{
-                .instances = &instances,
-            });
-            es.forEach("renderSprite", renderSprite, .{
-                .game = game,
-                .instances = &instances,
-            });
-            es.forEach("renderSpring", renderSpring, .{
-                .es = es,
-            });
-
-            // Draw the ships in the bank.
-            {
-                const row_height = 64;
-                const col_width = 64;
-                const top_left: Vec2 = .splat(20);
-
-                for (game.teams, 0..) |team, team_index| {
-                    {
-                        const sprite = game.assets.sprite(game.particle);
-                        const pos = top_left.plus(.{
-                            .x = col_width * @as(f32, @floatFromInt(team_index)),
-                            .y = 0,
-                        });
-                        instances.write(.{
-                            .world_from_model = Mat2x3.identity
-                                .translated(.splat(-0.5))
-                                .scaled(sprite.size())
-                                .translated(pos),
-                            .diffuse = sprite.diffuse,
-                            .recolor = sprite.recolor,
-                            .color = team_colors[team_index],
-                        });
-                    }
-                    for (team.ship_progression, 0..) |class, display_prog_index| {
-                        const dead = team.ship_progression_index > display_prog_index;
-                        if (dead) continue;
-
-                        const sprite = game.assets.sprite(game.shipLifeSprite(class));
-                        const pos = top_left.plus(.{
-                            .x = col_width * @as(f32, @floatFromInt(team_index)),
-                            .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
-                        });
-                        instances.write(.{
-                            .world_from_model = Mat2x3.identity
-                                .translated(.splat(-0.5))
-                                .scaled(sprite.size().scaled(0.5))
-                                .translated(pos),
-                            .diffuse = sprite.diffuse,
-                            .recolor = sprite.recolor,
-                            .color = team_colors[team_index],
-                        });
-                    }
-                }
-            }
-
-            const framebuf = vk.gx.acquireNextImage(.{
-                .width = display_size.x,
-                .height = display_size.y,
-            });
-            const render_game: gpu.CmdBuf = .init(&vk.gx, .{
-                .name = "Render Game",
-                .src = @src(),
-            });
-            render_game.beginRendering(&vk.gx, .{
-                .color_attachments = &.{
-                    .init(.{
-                        .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
-                        .view = framebuf.view,
-                    }),
-                },
-                .viewport = .{
-                    .x = 0,
-                    .y = 0,
-                    .width = @floatFromInt(framebuf.extent.width),
-                    .height = @floatFromInt(framebuf.extent.height),
-                    .min_depth = 0.0,
-                    .max_depth = 1.0,
-                },
-                .scissor = .{
-                    .offset = .zero,
-                    .extent = framebuf.extent,
-                },
-                .area = .{
-                    .offset = .zero,
-                    .extent = framebuf.extent,
-                },
-            });
-            render_game.bindPipeline(&vk.gx, vk.pipeline);
-            render_game.bindDescSet(&vk.gx, vk.pipeline, vk.desc_sets[vk.gx.frame]);
-            render_game.draw(&vk.gx, .{
-                .vertex_count = 4,
-                .instance_count = @intCast(instances.len),
-                .first_vertex = 0,
-                .first_instance = 0,
-            });
-            render_game.endRendering(&vk.gx);
-            render_game.submit(&vk.gx);
-
-            vk.gx.endFrame(.{});
-        },
+    // Draw the stars
+    for (game.stars) |star| {
+        const sprite = game.assets.sprite(switch (star.kind) {
+            .small => game.star_small,
+            .large => game.star_large,
+            .planet_red => game.planet_red,
+        });
+        instances.write(.{
+            .world_from_model = Mat2x3.identity
+                .translated(.splat(-0.5))
+                .scaled(.{
+                    .x = @floatFromInt(sprite.rect.w),
+                    .y = @floatFromInt(sprite.rect.h),
+                })
+                .translated(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }),
+            .diffuse = sprite.diffuse,
+            .recolor = sprite.recolor,
+        });
     }
+
+    // Draw the ring
+    {
+        const sprite = game.assets.sprite(game.ring_bg);
+        instances.write(.{
+            .world_from_model = Mat2x3.identity
+                .translated(.splat(-0.5))
+                .scaled(.{
+                    .x = @floatFromInt(sprite.rect.w),
+                    .y = @floatFromInt(sprite.rect.h),
+                })
+                .translated(display_center),
+            .diffuse = sprite.diffuse,
+            .recolor = sprite.recolor,
+        });
+    }
+
+    es.forEach("renderAnimations", renderAnimations, .{
+        .assets = game.assets,
+        .es = es,
+        .delta_s = delta_s,
+        .instances = &instances,
+    });
+
+    es.forEach("renderHealthBar", renderHealthBar, .{
+        .instances = &instances,
+    });
+    es.forEach("renderSprite", renderSprite, .{
+        .game = game,
+        .instances = &instances,
+    });
+    es.forEach("renderSpring", renderSpring, .{
+        .es = es,
+    });
+
+    // Draw the ships in the bank.
+    {
+        const row_height = 64;
+        const col_width = 64;
+        const top_left: Vec2 = .splat(20);
+
+        for (game.teams, 0..) |team, team_index| {
+            {
+                const sprite = game.assets.sprite(game.particle);
+                const pos = top_left.plus(.{
+                    .x = col_width * @as(f32, @floatFromInt(team_index)),
+                    .y = 0,
+                });
+                instances.write(.{
+                    .world_from_model = Mat2x3.identity
+                        .translated(.splat(-0.5))
+                        .scaled(sprite.size())
+                        .translated(pos),
+                    .diffuse = sprite.diffuse,
+                    .recolor = sprite.recolor,
+                    .color = team_colors[team_index],
+                });
+            }
+            for (team.ship_progression, 0..) |class, display_prog_index| {
+                const dead = team.ship_progression_index > display_prog_index;
+                if (dead) continue;
+
+                const sprite = game.assets.sprite(game.shipLifeSprite(class));
+                const pos = top_left.plus(.{
+                    .x = col_width * @as(f32, @floatFromInt(team_index)),
+                    .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
+                });
+                instances.write(.{
+                    .world_from_model = Mat2x3.identity
+                        .translated(.splat(-0.5))
+                        .scaled(sprite.size().scaled(0.5))
+                        .translated(pos),
+                    .diffuse = sprite.diffuse,
+                    .recolor = sprite.recolor,
+                    .color = team_colors[team_index],
+                });
+            }
+        }
+    }
+
+    const framebuf = game.assets.renderer.gx.acquireNextImage(.{
+        .width = display_size.x,
+        .height = display_size.y,
+    });
+    const render_game: gpu.CmdBuf = .init(game.assets.renderer.gx, .{
+        .name = "Render Game",
+        .src = @src(),
+    });
+    render_game.beginRendering(game.assets.renderer.gx, .{
+        .color_attachments = &.{
+            .init(.{
+                .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
+                .view = framebuf.view,
+            }),
+        },
+        .viewport = .{
+            .x = 0,
+            .y = 0,
+            .width = @floatFromInt(framebuf.extent.width),
+            .height = @floatFromInt(framebuf.extent.height),
+            .min_depth = 0.0,
+            .max_depth = 1.0,
+        },
+        .scissor = .{
+            .offset = .zero,
+            .extent = framebuf.extent,
+        },
+        .area = .{
+            .offset = .zero,
+            .extent = framebuf.extent,
+        },
+    });
+    render_game.bindPipeline(game.assets.renderer.gx, game.assets.renderer.pipeline);
+    render_game.bindDescSet(game.assets.renderer.gx, game.assets.renderer.pipeline, game.assets.renderer.desc_sets[game.assets.renderer.gx.frame]);
+    render_game.draw(game.assets.renderer.gx, .{
+        .vertex_count = 4,
+        .instance_count = @intCast(instances.len),
+        .first_vertex = 0,
+        .first_instance = 0,
+    });
+    render_game.endRendering(game.assets.renderer.gx);
+    render_game.submit(game.assets.renderer.gx);
+
+    game.assets.renderer.gx.endFrame(.{});
 }
 
 fn renderAnimationsSdl(
@@ -1887,29 +1755,6 @@ const team_colors: [4]ubo.Color = .{
     }),
 };
 
-const team_tints_sdl = &.{
-    .{
-        16,
-        124,
-        196,
-    },
-    .{
-        237,
-        210,
-        64,
-    },
-    .{
-        224,
-        64,
-        237,
-    },
-    .{
-        83,
-        237,
-        64,
-    },
-};
-
 const Game = struct {
     assets: *Assets,
 
@@ -2379,43 +2224,34 @@ const Game = struct {
     fn init(assets: *Assets) !Game {
         const image_zone = Zone.begin(.{ .src = @src() });
 
-        var up: ImageUploadQueue = undefined;
-        var cb: gpu.CmdBuf = undefined;
-        switch (assets.renderer.*) {
-            .vk => |*vk| {
-                vk.beginFrame();
-                cb = .init(&vk.gx, .{
-                    .name = "Color Image Upload",
-                    .src = @src(),
-                });
-                const image_staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(&vk.gx, .{
-                    .name = .{ .str = "Upload Queue" },
-                    .size = VkRenderer.image_mibs * VkRenderer.mib,
-                    .prefer_device_local = false,
-                });
-                up = .init(image_staging.view());
-                vk.delete_queues[vk.gx.frame].append(image_staging);
-            },
-            .sdl => {},
-        }
+        assets.renderer.beginFrame();
+        var cb: gpu.CmdBuf = .init(assets.renderer.gx, .{
+            .name = "Color Image Upload",
+            .src = @src(),
+        });
+        const image_staging: gpu.UploadBuf(.{ .transfer_src = true }) = .init(assets.renderer.gx, .{
+            .name = .{ .str = "Upload Queue" },
+            .size = Renderer.image_mibs * Renderer.mib,
+            .prefer_device_local = false,
+        });
+        var up: ImageUploadQueue = .init(image_staging.view());
+        assets.renderer.delete_queues[assets.renderer.gx.frame].append(image_staging);
 
-        const no_tint = &.{};
-
-        const ring_bg = try assets.loadSprite(cb, &up, "img/ring.png", null, no_tint);
-        const star_small = try assets.loadSprite(cb, &up, "img/star/small.png", null, no_tint);
-        const star_large = try assets.loadSprite(cb, &up, "img/star/large.png", null, no_tint);
-        const planet_red = try assets.loadSprite(cb, &up, "img/planet-red.png", null, no_tint);
-        const bullet_small = try assets.loadSprite(cb, &up, "img/bullet/small.png", null, no_tint);
-        const bullet_shiny = try assets.loadSprite(cb, &up, "img/bullet/shiny.png", null, no_tint);
+        const ring_bg = try assets.loadSprite(cb, &up, "img/ring.png", null);
+        const star_small = try assets.loadSprite(cb, &up, "img/star/small.png", null);
+        const star_large = try assets.loadSprite(cb, &up, "img/star/large.png", null);
+        const planet_red = try assets.loadSprite(cb, &up, "img/planet-red.png", null);
+        const bullet_small = try assets.loadSprite(cb, &up, "img/bullet/small.png", null);
+        const bullet_shiny = try assets.loadSprite(cb, &up, "img/bullet/shiny.png", null);
 
         var shrapnel_sprites: [shrapnel_sprite_names.len]Sprite.Index = undefined;
         for (&shrapnel_sprites, shrapnel_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(cb, &up, name, null, no_tint);
+            s.* = try assets.loadSprite(cb, &up, name, null);
         }
 
         var rock_sprites: [rock_sprite_names.len]Sprite.Index = undefined;
         for (&rock_sprites, rock_sprite_names) |*s, name| {
-            s.* = try assets.loadSprite(cb, &up, name, null, no_tint);
+            s.* = try assets.loadSprite(cb, &up, name, null);
         }
 
         const shrapnel_animations: [shrapnel_sprites.len]Animation.Index = .{
@@ -2425,10 +2261,10 @@ const Game = struct {
         };
 
         const ranger_sprites = .{
-            try assets.loadSprite(cb, &up, "img/ship/ranger/diffuse.png", "img/ship/ranger/recolor.png", team_tints_sdl),
-            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/ranger/diffuse.png", "img/ship/ranger/recolor.png"),
+            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/0.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/1.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/ranger/thrusters/2.png", null),
         };
         const ranger_still = try assets.addAnimation(&.{
             ranger_sprites[0],
@@ -2442,10 +2278,10 @@ const Game = struct {
         }, ranger_steady_thrust, 10, 0.0);
 
         const militia_sprites = .{
-            try assets.loadSprite(cb, &up, "img/ship/militia/diffuse.png", "img/ship/militia/recolor.png", team_tints_sdl),
-            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/militia/diffuse.png", "img/ship/militia/recolor.png"),
+            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/0.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/1.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/militia/thrusters/2.png", null),
         };
         const militia_still = try assets.addAnimation(&.{
             militia_sprites[0],
@@ -2459,25 +2295,25 @@ const Game = struct {
         }, militia_steady_thrust, 10, 0.0);
 
         const explosion_animation = try assets.addAnimation(&.{
-            try assets.loadSprite(cb, &up, "img/explosion/01.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/02.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/03.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/04.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/05.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/06.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/07.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/08.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/09.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/10.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/11.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/explosion/12.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/explosion/01.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/02.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/03.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/04.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/05.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/06.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/07.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/08.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/09.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/10.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/11.png", null),
+            try assets.loadSprite(cb, &up, "img/explosion/12.png", null),
         }, .none, 30, 0.0);
 
         const triangle_sprites = .{
-            try assets.loadSprite(cb, &up, "img/ship/triangle/diffuse.png", "img/ship/triangle/recolor.png", team_tints_sdl),
-            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/triangle/diffuse.png", "img/ship/triangle/recolor.png"),
+            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/0.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/1.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/triangle/thrusters/2.png", null),
         };
         const triangle_still = try assets.addAnimation(&.{
             triangle_sprites[0],
@@ -2491,10 +2327,10 @@ const Game = struct {
         }, triangle_steady_thrust, 10, 0.0);
 
         const kevin_sprites = .{
-            try assets.loadSprite(cb, &up, "img/ship/kevin/diffuse.png", "img/ship/kevin/recolor.png", team_tints_sdl),
-            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/0.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/1.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/kevin/diffuse.png", "img/ship/kevin/recolor.png"),
+            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/0.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/1.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/kevin/thrusters/2.png", null),
         };
         const kevin_still = try assets.addAnimation(&.{
             kevin_sprites[0],
@@ -2507,26 +2343,26 @@ const Game = struct {
             kevin_sprites[1],
         }, kevin_steady_thrust, 10, 0.0);
 
-        const wendy_sprite = try assets.loadSprite(cb, &up, "img/ship/wendy/diffuse.png", "img/ship/wendy/recolor.png", team_tints_sdl);
+        const wendy_sprite = try assets.loadSprite(cb, &up, "img/ship/wendy/diffuse.png", "img/ship/wendy/recolor.png");
         const wendy_thrusters_left = .{
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/0.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/1.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/0.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/1.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/left/2.png", null),
         };
         const wendy_thrusters_right = .{
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/0.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/1.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/0.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/1.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/right/2.png", null),
         };
         const wendy_thrusters_top = .{
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/0.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/1.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/0.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/1.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/top/2.png", null),
         };
         const wendy_thrusters_bottom = .{
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/0.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/1.png", null, no_tint),
-            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/2.png", null, no_tint),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/0.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/1.png", null),
+            try assets.loadSprite(cb, &up, "img/ship/wendy/thrusters/bottom/2.png", null),
         };
         const wendy_still = try assets.addAnimation(&.{
             wendy_sprite,
@@ -2566,7 +2402,7 @@ const Game = struct {
         const kevin_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
         const wendy_radius = @as(f32, @floatFromInt(assets.sprite(triangle_sprites[0]).rect.w)) / 2.0;
 
-        const particle = try assets.loadSprite(cb, &up, "img/particle.png", null, team_tints_sdl);
+        const particle = try assets.loadSprite(cb, &up, "img/particle.png", null);
 
         const controller_default = input_system.ControlScheme.Controller{
             .turn = .{
@@ -2656,68 +2492,63 @@ const Game = struct {
             break :s @bitCast(buf);
         };
 
-        switch (assets.renderer.*) {
-            .vk => |*vk| {
-                const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
-                defer zone.end();
+        const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
+        defer zone.end();
 
-                var image_barriers: std.BoundedArray(
-                    gpu.ImageBarrier,
-                    VkRenderer.max_textures,
-                ) = .{};
-                for (assets.textures.items) |texture| {
-                    image_barriers.appendAssumeCapacity(.transferDstToReadOnly(.{
-                        .handle = texture.handle,
-                        .range = .first,
-                        .dst_stage = .{ .fragment_shader = true },
-                        .aspect = .{ .color = true },
-                    }));
-                }
-                cb.barriers(&vk.gx, .{ .image = image_barriers.constSlice() });
-
-                cb.submit(&vk.gx);
-                vk.gx.endFrame(.{ .present = false });
-
-                var desc_set_updates: std.BoundedArray(
-                    gpu.DescSet.Update,
-                    vk.desc_sets.len * (2 + @as(usize, VkRenderer.max_textures)),
-                ) = .{};
-                for (vk.desc_sets, 0..) |set, frame| {
-                    desc_set_updates.appendAssumeCapacity(.{
-                        .set = set,
-                        .binding = 0,
-                        .value = .{
-                            .storage_buf = vk.scene[frame].asBuf(.{ .storage = true }),
-                        },
-                    });
-                    desc_set_updates.appendAssumeCapacity(.{
-                        .set = set,
-                        .binding = 1,
-                        .value = .{
-                            .storage_buf = vk.sprites[frame].asBuf(.{ .storage = true }),
-                        },
-                    });
-
-                    for (assets.textures.items, 0..) |texture, texture_index| {
-                        if (texture_index > VkRenderer.max_textures) @panic("textures oob");
-                        desc_set_updates.appendAssumeCapacity(.{
-                            .set = set,
-                            .binding = 2,
-                            .index = @intCast(texture_index),
-                            .value = .{
-                                .combined_image_sampler = .{
-                                    .view = texture.view,
-                                    .sampler = vk.texture_sampler,
-                                    .layout = .read_only,
-                                },
-                            },
-                        });
-                    }
-                }
-                gpu.DescSet.update(&vk.gx, desc_set_updates.constSlice());
-            },
-            else => {},
+        var image_barriers: std.BoundedArray(
+            gpu.ImageBarrier,
+            Renderer.max_textures,
+        ) = .{};
+        for (assets.textures.items) |texture| {
+            image_barriers.appendAssumeCapacity(.transferDstToReadOnly(.{
+                .handle = texture.handle,
+                .range = .first,
+                .dst_stage = .{ .fragment_shader = true },
+                .aspect = .{ .color = true },
+            }));
         }
+        cb.barriers(assets.renderer.gx, .{ .image = image_barriers.constSlice() });
+
+        cb.submit(assets.renderer.gx);
+        assets.renderer.gx.endFrame(.{ .present = false });
+
+        var desc_set_updates: std.BoundedArray(
+            gpu.DescSet.Update,
+            assets.renderer.desc_sets.len * (2 + @as(usize, Renderer.max_textures)),
+        ) = .{};
+        for (assets.renderer.desc_sets, 0..) |set, frame| {
+            desc_set_updates.appendAssumeCapacity(.{
+                .set = set,
+                .binding = 0,
+                .value = .{
+                    .storage_buf = assets.renderer.scene[frame].asBuf(.{ .storage = true }),
+                },
+            });
+            desc_set_updates.appendAssumeCapacity(.{
+                .set = set,
+                .binding = 1,
+                .value = .{
+                    .storage_buf = assets.renderer.sprites[frame].asBuf(.{ .storage = true }),
+                },
+            });
+
+            for (assets.textures.items, 0..) |texture, texture_index| {
+                if (texture_index > Renderer.max_textures) @panic("textures oob");
+                desc_set_updates.appendAssumeCapacity(.{
+                    .set = set,
+                    .binding = 2,
+                    .index = @intCast(texture_index),
+                    .value = .{
+                        .combined_image_sampler = .{
+                            .view = texture.view,
+                            .sampler = assets.renderer.texture_sampler,
+                            .layout = .read_only,
+                        },
+                    },
+                });
+            }
+        }
+        gpu.DescSet.update(assets.renderer.gx, desc_set_updates.constSlice());
         image_zone.end();
 
         return .{
@@ -3072,16 +2903,8 @@ const Assets = struct {
         a.dir.close();
         a.frames.deinit(a.gpa);
         a.animations.deinit(a.gpa);
-        switch (a.renderer.*) {
-            .vk => |*vk| vk.gx.waitIdle(),
-            .sdl => {},
-        }
-        switch (a.renderer.*) {
-            .vk => |*vk| for (a.textures.items) |*t| {
-                t.deinit(&vk.gx);
-            },
-            .sdl => {},
-        }
+        a.renderer.gx.waitIdle();
+        for (a.textures.items) |*t| t.deinit(a.renderer.gx);
         a.textures.deinit(a.gpa);
         a.sprites.deinit(a.gpa);
         a.* = undefined;
@@ -3157,7 +2980,6 @@ const Assets = struct {
 
     fn loadTexture(
         a: *Assets,
-        vk: *VkRenderer,
         cb: gpu.CmdBuf,
         up: *ImageUploadQueue,
         format: TextureFormat,
@@ -3182,7 +3004,7 @@ const Assets = struct {
         defer c.stbi_image_free(c_pixels);
         const pixels = c_pixels[0..@intCast(width * height * format.channels())];
 
-        try a.textures.append(a.gpa, up.beginWrite(&vk.gx, cb, &vk.color_images, .{
+        try a.textures.append(a.gpa, up.beginWrite(a.renderer.gx, cb, &a.renderer.color_images, .{
             .name = .{ .str = name },
             .image = .{
                 .format = format.asGpuFormat(),
@@ -3213,37 +3035,24 @@ const Assets = struct {
         up: *ImageUploadQueue,
         diffuse_name: [:0]const u8,
         recolor_name: ?[:0]const u8,
-        tints: []const [3]u8,
     ) !Sprite.Index {
         assert(a.sprites.items.len < @intFromEnum(Sprite.Index.none));
         const handle: Sprite.Index = @enumFromInt(a.sprites.items.len);
 
-        switch (a.renderer.*) {
-            .sdl => |sdl| {
-                const diffuse_png = try a.dir.readFileAlloc(a.gpa, diffuse_name, 50 * 1024 * 1024);
-                defer a.gpa.free(diffuse_png);
-                const recolor = if (recolor_name != null) try a.dir.readFileAlloc(a.gpa, recolor_name.?, 50 * 1024 * 1024) else null;
-                defer if (recolor != null) a.gpa.free(recolor.?);
-                try a.sprites.append(a.gpa, try spriteFromBytes(a.gpa, diffuse_png, recolor, sdl, tints));
-                return handle;
-            },
-            .vk => |*vk| {
-                const diffuse = try a.loadTexture(vk, cb, up, .r8g8b8a8_srgb, diffuse_name);
-                const recolor = if (recolor_name) |name| b: {
-                    const recolor = try a.loadTexture(vk, cb, up, .r8_unorm, name);
-                    assert(recolor.width == diffuse.width);
-                    assert(recolor.height == diffuse.height);
-                    break :b recolor.texture;
-                } else .none;
-                try a.sprites.append(a.gpa, .{
-                    .tints = &.{},
-                    .rect = .{ .x = 0, .y = 0, .w = diffuse.width, .h = diffuse.height },
-                    .diffuse = diffuse.texture,
-                    .recolor = recolor,
-                });
-                return handle;
-            },
-        }
+        const diffuse = try a.loadTexture(cb, up, .r8g8b8a8_srgb, diffuse_name);
+        const recolor = if (recolor_name) |name| b: {
+            const recolor = try a.loadTexture(cb, up, .r8_unorm, name);
+            assert(recolor.width == diffuse.width);
+            assert(recolor.height == diffuse.height);
+            break :b recolor.texture;
+        } else .none;
+        try a.sprites.append(a.gpa, .{
+            .tints = &.{},
+            .rect = .{ .x = 0, .y = 0, .w = diffuse.width, .h = diffuse.height },
+            .diffuse = diffuse.texture,
+            .recolor = recolor,
+        });
+        return handle;
     }
 
     fn spriteFromBytes(
