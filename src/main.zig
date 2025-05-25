@@ -104,10 +104,10 @@ pub fn main() !void {
         c.SDL_HINT_NO_SIGNAL_HANDLERS,
         "1",
         c.SDL_HINT_OVERRIDE,
-    ) != c.SDL_FALSE)) {
+    ))) {
         panic("failed to disable sdl signal handlers\n", .{});
     }
-    if (c.SDL_Init(c.SDL_INIT_VIDEO | c.SDL_INIT_GAMECONTROLLER) != 0) {
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO | c.SDL_INIT_GAMEPAD)) {
         panic("SDL_Init failed: {s}\n", .{c.SDL_GetError()});
     }
     defer c.SDL_Quit();
@@ -119,8 +119,6 @@ pub fn main() !void {
 
     const screen = c.SDL_CreateWindow(
         @tagName(build.name),
-        c.SDL_WINDOWPOS_UNDEFINED,
-        c.SDL_WINDOWPOS_UNDEFINED,
         display_size.x,
         display_size.y,
         window_mode | c.SDL_WINDOW_VULKAN,
@@ -132,15 +130,10 @@ pub fn main() !void {
     var gx: Gx = b: {
         const app_version = comptime std.SemanticVersion.parse(build.version) catch unreachable;
         var instance_ext_count: u32 = 0;
-        if (c.SDL_Vulkan_GetInstanceExtensions(screen, &instance_ext_count, null) != c.SDL_TRUE) {
+        const instance_ext_names_raw = c.SDL_Vulkan_GetInstanceExtensions(&instance_ext_count) orelse {
             return error.SdlVkGetInstanceExtensionsError;
-        }
-        const instance_ext_names: [][*:0]const u8 = try allocator.alloc([*:0]const u8, instance_ext_count);
-        defer allocator.free(instance_ext_names);
-        if (c.SDL_Vulkan_GetInstanceExtensions(screen, &instance_ext_count, @ptrCast(instance_ext_names)) != c.SDL_TRUE) {
-            return error.SdlVkGetInstanceExtensionsError;
-        }
-
+        };
+        const instance_ext_names: []const [*:0]const u8 = @ptrCast(instance_ext_names_raw[0..instance_ext_count]);
         break :b .init(allocator, .{
             .app_name = @tagName(build.name),
             .app_version = .{
@@ -236,10 +229,10 @@ pub fn main() !void {
 
 fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
     var event: c.SDL_Event = undefined;
-    while (c.SDL_PollEvent(&event) != 0) {
+    while (c.SDL_PollEvent(&event)) {
         switch (event.type) {
-            c.SDL_QUIT => return true,
-            c.SDL_KEYDOWN => switch (event.key.keysym.scancode) {
+            c.SDL_EVENT_QUIT => return true,
+            c.SDL_EVENT_KEY_DOWN => switch (event.key.scancode) {
                 c.SDL_SCANCODE_ESCAPE => return true,
                 c.SDL_SCANCODE_RETURN => {
                     // Clear invulnerability so you don't have to wait when testing
@@ -1760,7 +1753,7 @@ const Game = struct {
 
     ease_t: f32 = 0.0,
 
-    controllers: [4]?*c.SDL_GameController = .{ null, null, null, null },
+    controllers: [4]?*c.SDL_Gamepad = .{ null, null, null, null },
     control_schemes: [4]input_system.ControlScheme,
     input_state: [4]input_system.InputState,
     teams_buffer: [4]Team,
@@ -2399,30 +2392,30 @@ const Game = struct {
         const controller_default = input_system.ControlScheme.Controller{
             .turn = .{
                 .axis = .{
-                    .axis = c.SDL_CONTROLLER_AXIS_LEFTX,
+                    .axis = c.SDL_GAMEPAD_AXIS_LEFTX,
                     .dead_zone = dead_zone,
                 },
             },
             .thrust_forward = .{
-                .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_B },
+                .buttons = .{ .positive = c.SDL_GAMEPAD_BUTTON_EAST },
             },
             .thrust_x = .{
                 .axis = .{
-                    .axis = c.SDL_CONTROLLER_AXIS_LEFTX,
+                    .axis = c.SDL_GAMEPAD_AXIS_LEFTX,
                     .dead_zone = dead_zone,
                 },
             },
             .thrust_y = .{
                 .axis = .{
-                    .axis = c.SDL_CONTROLLER_AXIS_LEFTY,
+                    .axis = c.SDL_GAMEPAD_AXIS_LEFTY,
                     .dead_zone = dead_zone,
                 },
             },
             .fire = .{
-                .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_A },
+                .buttons = .{ .positive = c.SDL_GAMEPAD_BUTTON_SOUTH },
             },
             .start = .{
-                .buttons = .{ .positive = c.SDL_CONTROLLER_BUTTON_START },
+                .buttons = .{ .positive = c.SDL_GAMEPAD_BUTTON_START },
             },
         };
         const keyboard_wasd = input_system.ControlScheme.Keyboard{
@@ -2748,22 +2741,23 @@ const Game = struct {
 
         // Set up players
         {
-            {
+            b: {
                 var player_index: u32 = 0;
-                for (0..@as(usize, @intCast(c.SDL_NumJoysticks()))) |i_usize| {
-                    const i: u31 = @intCast(i_usize);
-                    if (c.SDL_IsGameController(i) != c.SDL_FALSE) {
-                        const sdl_controller = c.SDL_GameControllerOpen(i) orelse {
-                            panic("SDL_GameControllerOpen failed: {s}\n", .{c.SDL_GetError()});
-                        };
-                        if (c.SDL_GameControllerGetAttached(sdl_controller) != c.SDL_FALSE) {
-                            game.controllers[i] = sdl_controller;
-                            player_index += 1;
-                            if (player_index >= game.controllers.len) break;
-                        } else {
-                            c.SDL_GameControllerClose(sdl_controller);
-                        }
-                    }
+                var gamepads_len: c_int = 0;
+                const gamepads = c.SDL_GetGamepads(&gamepads_len) orelse {
+                    log.err("SDL_GetGamepads failed: {?s}", .{c.SDL_GetError()});
+                    break :b;
+                };
+                defer c.SDL_free(gamepads);
+                for (gamepads[0..@intCast(gamepads_len)]) |id| {
+                    const gamepad = c.SDL_OpenGamepad(id) orelse {
+                        log.err("SDL_GamepadOpen({}) failed: {?s}\n", .{ id, c.SDL_GetError() });
+                        continue;
+                    };
+                    game.controllers[player_index] = gamepad;
+                    log.info("Player 1: {?s}", .{c.SDL_GetGamepadName(gamepad)});
+                    player_index += 1;
+                    if (player_index >= game.controllers.len) break;
                 }
             }
 
@@ -3243,14 +3237,14 @@ fn createVulkanSurface(
     context: ?*anyopaque,
     allocation_callbacks: ?*const VkBackend.vk.AllocationCallbacks,
 ) VkBackend.vk.SurfaceKHR {
-    assert(allocation_callbacks == null);
     const screen: *c.SDL_Window = @ptrCast(@alignCast(context));
     var surface: c.VkSurfaceKHR = undefined;
-    if (c.SDL_Vulkan_CreateSurface(
+    if (!c.SDL_Vulkan_CreateSurface(
         screen,
         @ptrFromInt(@intFromEnum(instance)),
+        @ptrCast(allocation_callbacks),
         &surface,
-    ) != c.SDL_TRUE) {
+    )) {
         return .null_handle;
     }
     return @enumFromInt(@intFromPtr(surface));

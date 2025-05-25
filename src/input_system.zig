@@ -45,7 +45,7 @@ pub fn init(comptime ActionT: type) type {
                 }
             }
 
-            pub fn applyControlScheme(self: *@This(), control_scheme: *const ControlScheme, controllers: []?*c.SDL_GameController) void {
+            pub fn applyControlScheme(self: *@This(), control_scheme: *const ControlScheme, controllers: []?*c.SDL_Gamepad) void {
                 inline for (comptime std.meta.tags(Action)) |action| {
                     inline for (@typeInfo(Direction).@"enum".fields) |field| {
                         const direction: Direction = @enumFromInt(field.value);
@@ -53,7 +53,7 @@ pub fn init(comptime ActionT: type) type {
                         // Check if the keyboard or controller control is activated
                         const keyboard_action = @field(control_scheme.keyboard_scheme, @tagName(action));
                         const key = if (@field(keyboard_action, @tagName(direction))) |key|
-                            c.SDL_GetKeyboardState(null)[key] == 1
+                            c.SDL_GetKeyboardState(null)[key]
                         else
                             false;
 
@@ -63,13 +63,13 @@ pub fn init(comptime ActionT: type) type {
                             const controller_action = @field(control_scheme.controller_scheme, @tagName(action));
 
                             if (@field(controller_action.buttons, @tagName(direction))) |button_control| {
-                                button = c.SDL_GameControllerGetButton(controllers[controller_index], button_control) != 0;
+                                button = c.SDL_GetGamepadButton(controllers[controller_index], button_control);
                             }
 
                             if (controller_action.axis) |axis_control| {
-                                var value = c.SDL_GameControllerGetAxis(controllers[controller_index], axis_control.axis);
-                                if (axis_control.axis == c.SDL_CONTROLLER_AXIS_LEFTY or axis_control.axis == c.SDL_CONTROLLER_AXIS_RIGHTY) {
-                                    value *= -1.0;
+                                var value = c.SDL_GetGamepadAxis(controllers[controller_index], axis_control.axis);
+                                if (axis_control.axis == c.SDL_GAMEPAD_AXIS_LEFTY or axis_control.axis == c.SDL_GAMEPAD_AXIS_RIGHTY) {
+                                    value *|= -1;
                                 }
                                 switch (direction) {
                                     .positive => axis = value > axis_control.dead_zone,
@@ -166,15 +166,15 @@ pub fn init(comptime ActionT: type) type {
             });
 
             pub const Axis = struct {
-                axis: c.SDL_GameControllerAxis,
+                axis: c.SDL_GamepadAxis,
                 dead_zone: i16 = 10000,
             };
 
             pub const Controller = ActionMap(struct {
                 axis: ?Axis = null,
                 buttons: struct {
-                    positive: ?c.SDL_GameControllerButton = null,
-                    negative: ?c.SDL_GameControllerButton = null,
+                    positive: ?c.SDL_GamepadButton = null,
+                    negative: ?c.SDL_GamepadButton = null,
                 } = .{},
             });
 

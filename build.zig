@@ -81,13 +81,10 @@ pub fn build(b: *std.Build) void {
     // https://github.com/MasonRemaley/2Pew/issues/2
     exe.want_lto = false;
 
+    // Linking to the system package until I sort out bindings to the build system
     if (target.query.isNativeOs()) {
-        // The SDL package doesn't work for Linux yet, so we rely on system
-        // packages for now.
-        exe.linkSystemLibrary("SDL2");
+        exe.linkSystemLibrary("SDL3");
         exe.linkLibC();
-    } else {
-        @panic("unimplemented");
     }
 
     // TODO extract this into a proper zig package

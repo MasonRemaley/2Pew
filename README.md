@@ -16,5 +16,5 @@ Mainly experiments but there's a playable demo.
 2. Obtain [Zig](https://ziglang.org/). The latest version from the download
    page should suffice. The `build.zig.zon` file tracks the minimum required
    version.
-3. If you're on Linux, install the system SDL2 package.
+3. Install the system SDL3 package.
 4. `zig build run`
