@@ -16,8 +16,6 @@ const Zone = tracy.Zone;
 
 const Allocator = std.mem.Allocator;
 
-gx: *Gx,
-
 delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue(8),
 
 color_images: ImageBumpAllocator(.color),
@@ -178,8 +176,6 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
     });
 
     return .{
-        .gx = gx,
-
         .delete_queues = @splat(.{}),
 
         .color_images = color_images,
@@ -198,21 +194,20 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
     };
 }
 
-pub fn deinit(self: *@This(), gpa: Allocator) void {
+pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     const zone: Zone = .begin(.{ .src = @src() });
     defer zone.end();
 
-    for (&self.delete_queues) |*dq| dq.reset(self.gx);
+    for (&self.delete_queues) |*dq| dq.reset(gx);
 
-    self.pipeline_layout.deinit(self.gx);
-    self.pipeline.deinit(self.gx);
+    self.pipeline_layout.deinit(gx);
+    self.pipeline.deinit(gx);
 
-    self.desc_pool.deinit(self.gx);
-    self.storage_buf.deinit(self.gx);
-    self.texture_sampler.deinit(self.gx);
+    self.desc_pool.deinit(gx);
+    self.storage_buf.deinit(gx);
+    self.texture_sampler.deinit(gx);
 
-    self.color_images.deinit(gpa, self.gx);
-    self.gx.deinit(gpa);
+    self.color_images.deinit(gpa, gx);
     self.* = undefined;
 }
 
@@ -233,7 +228,7 @@ fn initSpv(gpa: Allocator, path: []const u8) []const u32 {
     return u32s;
 }
 
-pub fn beginFrame(self: *@This()) void {
-    self.gx.beginFrame();
-    self.delete_queues[self.gx.frame].reset(self.gx);
+pub fn beginFrame(self: *@This(), gx: *Gx) void {
+    gx.beginFrame();
+    self.delete_queues[gx.frame].reset(gx);
 }
