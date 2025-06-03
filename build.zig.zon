@@ -34,7 +34,7 @@
         },
         .sdl = .{
             .url = "git+https://github.com/Games-By-Mason/sdl_zig#f9d0c078ae6e0beb7f5b7939efed82352cb5f51f",
-            .hash = "sdl-0.0.0-i4QD0fxfqAAABefui2yknNMLFKmFW9ABcFS8OTlIiWhZ",
+            .hash = "sdl-0.0.0-i4QD0atfqAC9XqQ9a8uDwpBCstgIdTGoyeVI9nL1qia_",
         },
     },
     .paths = .{
