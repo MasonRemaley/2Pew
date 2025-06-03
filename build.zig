@@ -81,11 +81,11 @@ pub fn build(b: *std.Build) void {
     // https://github.com/MasonRemaley/2Pew/issues/2
     exe.want_lto = false;
 
-    // Linking to the system package until I sort out bindings to the build system
-    if (target.query.isNativeOs()) {
-        exe.linkSystemLibrary("SDL3");
-        exe.linkLibC();
-    }
+    const sdl = b.dependency("sdl", .{
+        .optimize = optimize,
+        .target = target,
+    });
+    exe.linkLibrary(sdl.artifact("SDL3"));
 
     // TODO extract this into a proper zig package
     exe.addCSourceFile(.{
