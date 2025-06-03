@@ -315,7 +315,8 @@ fn renderAnimations(
     // We should probably make the sprites half opacity instead of turning them off when
     // flashing for a less jarring effect, but that is difficult right now w/ SDL as our
     // renderer.
-    {
+    var flash = false;
+    b: {
         var curr = entity;
         while (true) {
             if (curr.get(es, Health)) |health| {
@@ -325,7 +326,8 @@ fn renderAnimations(
                         flashes_ps = 4;
                     }
                     if (@sin(flashes_ps * std.math.tau * health.invulnerable_s) > 0.0) {
-                        return;
+                        flash = true;
+                        break :b;
                     }
                 }
             }
@@ -337,11 +339,13 @@ fn renderAnimations(
                 }
             }
 
-            break;
+            break :b;
         }
     }
 
     if (animation.index != .none) {
+        var color: ubo.Color = if (team_index) |ti| team_colors[@intFromEnum(ti.*)] else .white;
+        if (flash) color.a = 0;
         const frame = animation.advance(assets, delta_s);
         const sprite = assets.sprite(frame.sprite);
         const unscaled_sprite_size = sprite.size;
@@ -356,7 +360,7 @@ fn renderAnimations(
                 .applied(transform.world_from_model),
             .diffuse = sprite.diffuse,
             .recolor = sprite.recolor,
-            .color = if (team_index) |ti| team_colors[@intFromEnum(ti.*)] else .white,
+            .color = color,
         });
     }
 }
