@@ -18,6 +18,7 @@ const Allocator = std.mem.Allocator;
 const Zone = tracy.Zone;
 const ImageUploadQueue = gpu.ext.ImageUploadQueue;
 const Gx = gpu.Gx;
+const Random = std.Random;
 
 const log = std.log;
 const math = std.math;
@@ -76,7 +77,7 @@ stars: [150]Star,
 
 particle: Sprite.Index,
 
-rng: std.Random.DefaultPrng,
+rng: std.Random,
 
 camera: Vec2 = .zero,
 
@@ -492,7 +493,7 @@ fn createWendy(
     }
 }
 
-pub fn init(gpa: Allocator, assets: *Assets, renderer: *Renderer, gx: *Gx) !Game {
+pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, gx: *Gx) !Game {
     const image_zone = Zone.begin(.{ .src = @src() });
 
     renderer.beginFrame(gx);
@@ -508,15 +509,11 @@ pub fn init(gpa: Allocator, assets: *Assets, renderer: *Renderer, gx: *Gx) !Game
     var up: ImageUploadQueue = .init(image_staging.view());
     renderer.delete_queues[gx.frame].append(image_staging);
 
-    const self_exe_dir_path = try std.fs.selfExeDirPathAlloc(gpa);
-    defer gpa.free(self_exe_dir_path);
-    const assets_dir_path = try std.fs.path.join(gpa, &.{ self_exe_dir_path, "data" });
-    defer gpa.free(assets_dir_path);
-    var dir = std.fs.openDirAbsolute(assets_dir_path, .{}) catch |err| {
-        std.debug.panic("unable to open assets directory '{s}': {s}", .{
-            assets_dir_path, @errorName(err),
-        });
-    };
+    // On most of the platforms we care about we could just use `selfExeDirPathAlloc`, but the SDL
+    // call works under wine
+    const path = try std.fs.path.join(gpa, &.{ std.mem.span(c.SDL_GetBasePath()), "data" });
+    defer gpa.free(path);
+    var dir = try std.fs.openDirAbsolute(path, .{});
     defer dir.close();
 
     const ring_bg = assets.loadSprite(gpa, gx, renderer, cb, &up, dir, "img/ring.png", null);
@@ -768,12 +765,6 @@ pub fn init(gpa: Allocator, assets: *Assets, renderer: *Renderer, gx: *Gx) !Game
         .start = .{},
     };
 
-    const random_seed: u64 = s: {
-        var buf: [8]u8 = undefined;
-        std.options.cryptoRandomSeed(&buf);
-        break :s @bitCast(buf);
-    };
-
     const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
     defer zone.end();
 
@@ -864,7 +855,7 @@ pub fn init(gpa: Allocator, assets: *Assets, renderer: *Renderer, gx: *Gx) !Game
             },
         },
         .input_state = .{input_system.InputState.init()} ** 4,
-        .rng = std.Random.DefaultPrng.init(random_seed),
+        .rng = rng,
 
         .ring_bg = ring_bg,
         .star_small = star_small,
@@ -965,7 +956,6 @@ const Scenario = enum {
 };
 
 pub fn setupScenario(game: *Game, es: *Entities, cb: *CmdBuf, scenario: Scenario) void {
-    const rng = game.rng.random();
     cb.clear(es); // TODO: if we didn't clear here es could be const
 
     var player_teams: []const u2 = undefined;
@@ -1079,10 +1069,10 @@ pub fn setupScenario(game: *Game, es: *Entities, cb: *CmdBuf, scenario: Scenario
     };
     // TODO: random in circle biased doesn't need to be scaled, audit other calls to this
     for (0..rock_amt) |_| {
-        const speed = 20 + rng.float(f32) * 300;
-        const radius = 25 + rng.float(f32) * 110;
-        const sprite = game.rock_sprites[rng.uintLessThanBiased(usize, game.rock_sprites.len)];
-        const pos = randomInCircleBiased(rng, lerp(display_radius, display_radius * 1.1, rng.float(f32)))
+        const speed = 20 + game.rng.float(f32) * 300;
+        const radius = 25 + game.rng.float(f32) * 110;
+        const sprite = game.rock_sprites[game.rng.uintLessThanBiased(usize, game.rock_sprites.len)];
+        const pos = randomInCircleBiased(game.rng, lerp(display_radius, display_radius * 1.1, game.rng.float(f32)))
             .plus(display_center);
 
         const e = Entity.reserve(cb);
@@ -1091,8 +1081,8 @@ pub fn setupScenario(game: *Game, es: *Entities, cb: *CmdBuf, scenario: Scenario
             .pos = pos,
         });
         e.add(cb, RigidBody, .{
-            .vel = randomOnCircle(rng, speed),
-            .rotation_vel = lerp(-1.0, 1.0, rng.float(f32)),
+            .vel = randomOnCircle(game.rng, speed),
+            .rotation_vel = lerp(-1.0, 1.0, game.rng.float(f32)),
             .radius = radius,
             .density = 0.10,
         });
@@ -1103,24 +1093,23 @@ pub fn setupScenario(game: *Game, es: *Entities, cb: *CmdBuf, scenario: Scenario
     }
 
     // Create stars
-    generateStars(&game.stars, rng);
+    generateStars(&game.stars, game.rng);
 }
 
 pub fn spawnTeamVictory(game: *Game, cb: *CmdBuf, pos: Vec2, team_index: TeamIndex) void {
-    const rng = game.rng.random();
     for (0..500) |_| {
-        const random_vel = randomOnCircle(rng, 300);
+        const random_vel = randomOnCircle(game.rng, 300);
         const e = Entity.reserve(cb);
         e.add(cb, Lifetime, .{
             .seconds = 1000,
         });
         e.add(cb, Transform, .{
             .pos = pos,
-            .rot = .fromAngle(math.tau * rng.float(f32)),
+            .rot = .fromAngle(math.tau * game.rng.float(f32)),
         });
         e.add(cb, RigidBody, .{
             .vel = random_vel,
-            .rotation_vel = math.tau * rng.float(f32),
+            .rotation_vel = math.tau * game.rng.float(f32),
             .radius = 16,
             .density = 0.001,
         });
@@ -1147,12 +1136,12 @@ pub fn over(game: Game) bool {
     return game.aliveTeamCount() <= 1;
 }
 
-fn generateStars(stars: []Star, rng: std.Random) void {
+fn generateStars(stars: []Star, random: std.Random) void {
     for (stars) |*star| {
         star.* = .{
-            .x = rng.uintLessThanBiased(u31, display_size.x),
-            .y = rng.uintLessThanBiased(u31, display_size.y),
-            .kind = @enumFromInt(rng.uintLessThanBiased(u8, 2)),
+            .x = random.uintLessThanBiased(u31, display_size.x),
+            .y = random.uintLessThanBiased(u31, display_size.y),
+            .kind = @enumFromInt(random.uintLessThanBiased(u8, 2)),
         };
     }
     // Overwrite the last one so it shows up on top
@@ -1167,12 +1156,12 @@ pub fn clearInvulnerability(es: *Entities) void {
     }
 }
 
-pub fn randomOnCircle(rng: std.Random, radius: f32) Vec2 {
-    return Vec2.unit(rng.float(f32) * math.tau).scaled(radius);
+pub fn randomOnCircle(random: std.Random, radius: f32) Vec2 {
+    return Vec2.unit(random.float(f32) * math.tau).scaled(radius);
 }
 
-pub fn randomInCircleBiased(rng: std.Random, radius: f32) Vec2 {
-    return randomOnCircle(rng, radius * rng.float(f32));
+pub fn randomInCircleBiased(random: std.Random, radius: f32) Vec2 {
+    return randomOnCircle(random, radius * random.float(f32));
 }
 
 pub const input_system = @import("input_system.zig").init(enum {

@@ -144,7 +144,6 @@ fn updateHealth(
 ) void {
     const cb = ctx.cb;
     const game = ctx.game;
-    const rng = game.rng.random();
     const delta_s = ctx.delta_s;
 
     if (health.hp <= 0) {
@@ -183,7 +182,7 @@ fn updateHealth(
                         game.spawnTeamVictory(cb, display_center, happy_team);
                     }
                 } else {
-                    const new_angle = math.tau * rng.float(f32);
+                    const new_angle = math.tau * game.rng.float(f32);
                     const new_pos = display_center.plus(Vec2.unit(new_angle).scaled(display_radius));
                     const facing_angle = new_angle + math.pi;
                     game.createShip(cb, player_index.*, team_index.*, new_pos, facing_angle);
@@ -243,7 +242,6 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
-    const rng = game.rng.random();
     var it = es.iterator(struct {
         rb: *RigidBody,
         transform: *const Transform,
@@ -323,24 +321,24 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
             const avg_vel = vw.rb.vel.plus(other.rb.vel).scaled(0.5);
             for (0..shrapnel_amt) |_| {
                 const shrapnel_animation = game.shrapnel_animations[
-                    rng.uintLessThanBiased(usize, game.shrapnel_animations.len)
+                    game.rng.uintLessThanBiased(usize, game.shrapnel_animations.len)
                 ];
                 // Spawn slightly off center from collision point.
-                const random_offset = randomInCircleBiased(rng, 10.0);
+                const random_offset = randomInCircleBiased(game.rng, 10.0);
                 // Give them random velocities.
-                const base_vel = if (rng.boolean()) vw.rb.vel else other.rb.vel;
-                const random_vel = randomInCircleBiased(rng, base_vel.mag() * 2);
+                const base_vel = if (game.rng.boolean()) vw.rb.vel else other.rb.vel;
+                const random_vel = randomInCircleBiased(game.rng, base_vel.mag() * 2);
                 const piece = Entity.reserve(cb);
                 piece.add(cb, Lifetime, .{
-                    .seconds = 1.5 + rng.float(f32) * 1.0,
+                    .seconds = 1.5 + game.rng.float(f32) * 1.0,
                 });
                 piece.add(cb, Transform, .{
                     .pos = shrapnel_center.plus(random_offset),
-                    .rot = .fromAngle(math.tau * rng.float(f32)),
+                    .rot = .fromAngle(math.tau * game.rng.float(f32)),
                 });
                 piece.add(cb, RigidBody, .{
                     .vel = avg_vel.plus(random_vel),
-                    .rotation_vel = math.tau * rng.float(f32),
+                    .rotation_vel = math.tau * game.rng.float(f32),
                     .radius = game.animationRadius(shrapnel_animation),
                     .density = 0.001,
                 });
@@ -449,7 +447,6 @@ fn updateDamage(
     transform: *Transform,
     entity: Entity,
 ) void {
-    const rng = ctx.game.rng.random();
     var health_it = ctx.es.iterator(struct {
         health: *Health,
         rb: *const RigidBody,
@@ -462,20 +459,20 @@ fn updateDamage(
             if (health_vw.health.damage(damage.hp) > 0.0) {
                 // spawn shrapnel here
                 const shrapnel_animation = ctx.game.shrapnel_animations[
-                    rng.uintLessThanBiased(usize, ctx.game.shrapnel_animations.len)
+                    ctx.game.rng.uintLessThanBiased(usize, ctx.game.shrapnel_animations.len)
                 ];
-                const random_vector = randomOnCircle(rng, rb.vel.mag() * 0.2);
+                const random_vector = randomOnCircle(ctx.game.rng, rb.vel.mag() * 0.2);
                 const e = Entity.reserve(ctx.cb);
                 e.add(ctx.cb, Lifetime, .{
-                    .seconds = 1.5 + rng.float(f32) * 1.0,
+                    .seconds = 1.5 + ctx.game.rng.float(f32) * 1.0,
                 });
                 e.add(ctx.cb, Transform, .{
                     .pos = health_vw.transform.getWorldPos(),
-                    .rot = .fromAngle(math.tau * rng.float(f32)),
+                    .rot = .fromAngle(math.tau * ctx.game.rng.float(f32)),
                 });
                 e.add(ctx.cb, RigidBody, .{
                     .vel = health_vw.rb.vel.plus(rb.vel.scaled(0.2)).plus(random_vector),
-                    .rotation_vel = math.tau * rng.float(f32),
+                    .rotation_vel = math.tau * ctx.game.rng.float(f32),
                     .radius = ctx.game.animationRadius(shrapnel_animation),
                     .density = 0.001,
                 });

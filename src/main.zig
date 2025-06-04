@@ -160,7 +160,15 @@ pub fn main() !void {
     var assets: Assets = .init(allocator);
     defer assets.deinit(allocator);
 
-    var game = try Game.init(allocator, &assets, &renderer, &gx);
+    const random_seed: u64 = s: {
+        var buf: [8]u8 = undefined;
+        std.options.cryptoRandomSeed(&buf);
+        break :s @bitCast(buf);
+    };
+    var rng = std.Random.DefaultPrng.init(random_seed);
+    const random: std.Random = rng.random();
+
+    var game = try Game.init(allocator, random, &assets, &renderer, &gx);
 
     // Create the entities
     var es: Entities = try .init(.{ .gpa = allocator });
