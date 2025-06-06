@@ -5,10 +5,6 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const build_step_target = b.resolveTargetQuery(.{});
-    const build_step_optimize = switch (optimize) {
-        .ReleaseFast, .ReleaseSmall => .ReleaseSafe,
-        else => optimize,
-    };
 
     const no_llvm = b.option(
         bool,
@@ -107,7 +103,7 @@ pub fn build(b: *std.Build) void {
 
     const shader_compiler = b.dependency("shader_compiler", .{
         .target = build_step_target,
-        .optimize = build_step_optimize,
+        .optimize = .ReleaseSafe,
     });
     const shader_compiler_exe = shader_compiler.artifact("shader_compiler");
 
