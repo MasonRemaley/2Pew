@@ -54,6 +54,11 @@ const command: Command = .{
             .long = "gpu-dbg",
             .default = .{ .value = if (builtin.mode == .Debug) .validate else .none },
         }),
+        // Just shaders for now
+        NamedArg.init(bool, .{
+            .long = "hot-swap",
+            .default = .{ .value = if (builtin.mode == .Debug) true else false },
+        }),
     },
 };
 
@@ -170,6 +175,8 @@ pub fn main() !void {
 
     var game = try Game.init(allocator, random, &assets, &renderer, &gx);
 
+    game.hot_swap = args.named.@"hot-swap";
+
     // Create the entities
     var es: Entities = try .init(.{ .gpa = allocator });
     defer es.deinit(allocator);
@@ -225,6 +232,17 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
     while (c.SDL_PollEvent(&event)) {
         switch (event.type) {
             c.SDL_EVENT_QUIT => return true,
+            c.SDL_EVENT_WINDOW_FOCUS_GAINED => if (game.hot_swap) {
+                log.info("hot swap", .{});
+                const pipeline = Renderer.initPipeline(
+                    game.debug_allocator,
+                    game.gx,
+                    game.renderer.pipeline_layout,
+                );
+                game.gx.waitIdle();
+                game.renderer.pipeline.deinit(game.gx);
+                game.renderer.pipeline = pipeline;
+            },
             c.SDL_EVENT_KEY_DOWN => switch (event.key.scancode) {
                 c.SDL_SCANCODE_ESCAPE => return true,
                 c.SDL_SCANCODE_RETURN => Game.clearInvulnerability(es),

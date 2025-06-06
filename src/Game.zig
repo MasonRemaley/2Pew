@@ -37,6 +37,9 @@ const Game = @This();
 gx: *Gx,
 assets: *Assets,
 renderer: *Renderer,
+// Only used for debug purposes.
+debug_allocator: Allocator,
+hot_swap: bool = false,
 
 ease_t: f32 = 0.0,
 
@@ -80,6 +83,7 @@ particle: Sprite.Index,
 rng: std.Random,
 
 camera: Vec2 = .zero,
+time: f32 = 0.0,
 
 const ShipAnimations = struct {
     still: Animation.Index,
@@ -826,6 +830,7 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
 
     return .{
         .gx = gx,
+        .debug_allocator = gpa,
         .renderer = renderer,
         .assets = assets,
         .teams = undefined,

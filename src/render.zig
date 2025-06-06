@@ -79,6 +79,7 @@ pub fn all(
             .bottom = 0,
             .top = display_size.y,
         }).times(.translation(game.camera.negated())),
+        .time = game.time,
     });
 
     var instances = game.renderer.sprites[game.gx.frame].writer().typed(ubo.Instance);

@@ -63,6 +63,7 @@ pub const ubo = struct {
 
     pub const Scene = extern struct {
         view_from_world: Mat2x3 = .identity,
+        time: f32,
     };
 
     pub const Instance = extern struct {
@@ -79,7 +80,7 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
         .{
             .name = "Scene",
             .kind = .storage_buffer,
-            .stages = .{ .vertex = true },
+            .stages = .{ .vertex = true, .fragment = true },
             .partially_bound = false,
         },
         .{
@@ -106,42 +107,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         .name = "Color Images",
     }) catch |err| @panic(@errorName(err));
 
-    const sprite_vert_spv = initSpv(gpa, "data/shaders/entity.vert.spv");
-    defer gpa.free(sprite_vert_spv);
-    const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
-        .name = .{ .str = "entity.vert.spv" },
-        .ir = sprite_vert_spv,
-    });
-    defer sprite_vert_module.deinit(gx);
-
-    const sprite_frag_spv = initSpv(gpa, "data/shaders/entity.frag.spv");
-    defer gpa.free(sprite_frag_spv);
-    const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
-        .name = .{ .str = "entity.frag.spv" },
-        .ir = sprite_frag_spv,
-    });
-    defer sprite_frag_module.deinit(gx);
-
     const pipeline_layout: gpu.Pipeline.Layout = .init(gx, pipeline_layout_options);
-
-    var pipeline: gpu.Pipeline = undefined;
-    gpu.Pipeline.initGraphics(gx, &.{
-        .{
-            .name = .{ .str = "Sprites" },
-            .stages = .{
-                .vertex = sprite_vert_module,
-                .fragment = sprite_frag_module,
-            },
-            .result = &pipeline,
-            .input_assembly = .{ .triangle_strip = .{} },
-            .layout = pipeline_layout,
-            .color_attachment_formats = &.{
-                gx.device.surface_format,
-            },
-            .depth_attachment_format = .undefined,
-            .stencil_attachment_format = .undefined,
-        },
-    });
 
     var desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
     var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, desc_sets.len) = .{};
@@ -189,6 +155,24 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         max_textures,
     ) catch @panic("OOM");
 
+    const sprite_vert_spv = initSpv(gpa, "data/shaders/entity.vert.spv");
+    defer gpa.free(sprite_vert_spv);
+    const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
+        .name = .{ .str = "entity.vert.spv" },
+        .ir = sprite_vert_spv,
+    });
+    defer sprite_vert_module.deinit(gx);
+
+    const sprite_frag_spv = initSpv(gpa, "data/shaders/entity.frag.spv");
+    defer gpa.free(sprite_frag_spv);
+    const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
+        .name = .{ .str = "entity.frag.spv" },
+        .ir = sprite_frag_spv,
+    });
+    defer sprite_frag_module.deinit(gx);
+
+    const pipeline = initPipeline(gpa, gx, pipeline_layout);
+
     return .{
         .delete_queues = @splat(.{}),
         .color_image_allocator = color_image_allocator,
@@ -224,8 +208,47 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     self.* = undefined;
 }
 
+pub fn initPipeline(gpa: Allocator, gx: *Gx, pipeline_layout: gpu.Pipeline.Layout) gpu.Pipeline {
+    const sprite_vert_spv = initSpv(gpa, "data/shaders/entity.vert.spv");
+    defer gpa.free(sprite_vert_spv);
+    const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
+        .name = .{ .str = "entity.vert.spv" },
+        .ir = sprite_vert_spv,
+    });
+    defer sprite_vert_module.deinit(gx);
+
+    const sprite_frag_spv = initSpv(gpa, "data/shaders/entity.frag.spv");
+    defer gpa.free(sprite_frag_spv);
+    const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
+        .name = .{ .str = "entity.frag.spv" },
+        .ir = sprite_frag_spv,
+    });
+    defer sprite_frag_module.deinit(gx);
+
+    var pipeline: gpu.Pipeline = undefined;
+    gpu.Pipeline.initGraphics(gx, &.{
+        .{
+            .name = .{ .str = "Sprites" },
+            .stages = .{
+                .vertex = sprite_vert_module,
+                .fragment = sprite_frag_module,
+            },
+            .result = &pipeline,
+            .input_assembly = .{ .triangle_strip = .{} },
+            .layout = pipeline_layout,
+            .color_attachment_formats = &.{
+                gx.device.surface_format,
+            },
+            .depth_attachment_format = .undefined,
+            .stencil_attachment_format = .undefined,
+        },
+    });
+
+    return pipeline;
+}
+
 fn initSpv(gpa: Allocator, path: []const u8) []const u32 {
-    const max_bytes = 80192;
+    const max_bytes = 160384;
     const size_hint = 4096;
     const spv = std.fs.cwd().readFileAllocOptions(
         gpa,

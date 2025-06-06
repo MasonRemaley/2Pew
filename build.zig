@@ -111,8 +111,12 @@ pub fn build(b: *std.Build) void {
     });
     const shader_compiler_exe = shader_compiler.artifact("shader_compiler");
 
-    installShader(b, shader_compiler_exe, "entity.vert", optimize);
-    installShader(b, shader_compiler_exe, "entity.frag", optimize);
+    const vert_spv = installShader(b, shader_compiler_exe, "entity.vert", optimize);
+    const frag_spv = installShader(b, shader_compiler_exe, "entity.frag", optimize);
+    const install_shaders_step = b.step("shaders", "Build and install the shaders");
+    install_shaders_step.dependOn(&vert_spv.step);
+    install_shaders_step.dependOn(&frag_spv.step);
+    b.getInstallStep().dependOn(install_shaders_step);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.setCwd(.{ .cwd_relative = std.fs.path.dirname(b.getInstallPath(
@@ -156,7 +160,7 @@ fn installShader(
     exe: *std.Build.Step.Compile,
     path: []const u8,
     optimize: std.builtin.OptimizeMode,
-) void {
+) *std.Build.Step.InstallFile {
     const compile_shader = b.addRunArtifact(exe);
 
     // We just always include debug info for now, it's useful to have when something goes wrong and
@@ -197,10 +201,9 @@ fn installShader(
 
     const spv = compile_shader.addOutputFileArg("compiled.spv");
 
-    const install_spv = b.addInstallFile(spv, b.pathJoin(&.{
+    return b.addInstallFile(spv, b.pathJoin(&.{
         "data",
         "shaders",
         b.fmt("{s}.spv", .{path}),
     }));
-    b.getInstallStep().dependOn(&install_spv.step);
 }
