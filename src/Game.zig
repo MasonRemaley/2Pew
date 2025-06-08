@@ -428,7 +428,7 @@ fn createWendy(
     {
         const thruster = Entity.reserve(cb);
         cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
-        thruster.add(cb, Transform, .{ .pos = .{ .x = 100, .y = 0 } });
+        thruster.add(cb, Transform, .{});
         thruster.add(cb, RigidBody, .{
             .radius = self.wendy_radius,
             .density = std.math.inf(f32),
