@@ -50,10 +50,10 @@ pub const mib = std.math.pow(u64, 2, 20);
 pub const ubo = struct {
     pub const Color = extern struct {
         pub const white: @This() = .{ .r = 0xff, .g = 0xff, .b = 0xff, .a = 0xff };
-        a: u8,
-        b: u8,
-        g: u8,
         r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
     };
 
     pub const Texture = enum(u16) {

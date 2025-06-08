@@ -19,6 +19,7 @@ const Zone = tracy.Zone;
 const ImageUploadQueue = gpu.ext.ImageUploadQueue;
 const Gx = gpu.Gx;
 const Random = std.Random;
+const ShaderTimer = gpu.ext.ShaderTimer;
 
 const log = std.log;
 const math = std.math;
@@ -83,7 +84,7 @@ particle: Sprite.Index,
 rng: std.Random,
 
 camera: Vec2 = .zero,
-time: f32 = 0.0,
+time: ShaderTimer = .{},
 
 const ShipAnimations = struct {
     still: Animation.Index,

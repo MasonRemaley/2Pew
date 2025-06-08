@@ -54,19 +54,9 @@ const team_colors: [4]ubo.Color = .{
 };
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-pub fn all(
-    es: *Entities,
-    game: *Game,
-    delta_s: f32,
-    fx_loop_s: f32,
-) void {
+pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
-
-    // This was added for the flash effect and then not used since it already requires a timer
-    // state. We'll be wanting it later and I don't feel like deleting and retyping the explanation
-    // for it.
-    _ = fx_loop_s;
 
     // Get this frame's storage writers
     game.renderer.beginFrame(game.gx);
@@ -79,7 +69,7 @@ pub fn all(
             .bottom = 0,
             .top = display_size.y,
         }).times(.translation(game.camera.negated())),
-        .time = game.time,
+        .time = game.time.seconds,
     });
 
     var instances = game.renderer.sprites[game.gx.frame].writer().typed(ubo.Instance);

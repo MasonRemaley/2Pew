@@ -190,12 +190,6 @@ pub fn main() !void {
     var delta_s: f32 = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
-    // We can use `fx_loop_s` as a time parameter for looping effects without needing extra
-    // state everywhere. We loop it at 1000 so that we don't lose precision as the game runs, 1000
-    // was chosen so that so long as our effect frequency per second can be any number with three or
-    // less digits after the decimal and still loop seemlessly when we reset back to zero.
-    var fx_loop_s: f32 = 0.0;
-    const max_fx_loop_s: f32 = 1000.0;
     // var warned_memory_usage = false;
 
     while (true) {
@@ -203,8 +197,10 @@ pub fn main() !void {
             std.process.cleanExit();
             return;
         }
+
+        game.time.update(delta_s);
         update.all(&es, &cb, &game, delta_s);
-        render.all(&es, &game, delta_s, fx_loop_s);
+        render.all(&es, &game, delta_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
         // results if it's too close to zero!
@@ -215,7 +211,6 @@ pub fn main() !void {
         const t: f32 = @floatFromInt(timer.lap());
         const last_delta_s = t / std.time.ns_per_s;
         delta_s = lerp(delta_s, @min(last_delta_s, max_frame_time), delta_rwa_bias);
-        fx_loop_s = @mod(fx_loop_s + delta_s, max_fx_loop_s);
 
         // TODO: ...
         // if (fba.end_index >= fba.buffer.len / 4 and !warned_memory_usage) {

@@ -51,8 +51,6 @@ pub fn all(
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
-    game.time += delta_s;
-
     updateInput(es, cb, game);
     updatePhysics(game, es, cb);
     es.forEach("updateGravity", updateGravity, .{

@@ -1,7 +1,6 @@
 #include "entity.glsl"
 
 #include <gbms/unpack.glsl>
-#include <gbms/color.glsl>
 
 layout(scalar, binding = 1) readonly buffer InstanceUbo {
     Instance instances[];
@@ -15,7 +14,7 @@ layout(location = 1) in flat Instance instance;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    uvec2 diffuse_recolor = unpackUintToUvec2(instance.diffuse_recolor);
+    uvec2 diffuse_recolor = unpackShort2x16(instance.diffuse_recolor);
     uint diffuse_idx = diffuse_recolor.x;
     uint recolor_idx = diffuse_recolor.y;
 
@@ -29,6 +28,6 @@ void main() {
         recolor *= texture(textures[nonuniform(recolor_idx)], texcoord).r;
     }
 
-    vec4 color = colorUnormToFloat(unpackUintToUvec4(instance.color));
+    vec4 color = unpackUnorm4x8(instance.color);
     out_color = mix(diffuse, diffuse * color, recolor);
 }
