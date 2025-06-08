@@ -1,4 +1,5 @@
 #include "entity.glsl"
+#include "scene.glsl"
 
 layout(scalar, binding = 0) readonly buffer SceneUbo {
     Scene scene;

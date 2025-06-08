@@ -1,7 +1,11 @@
 #include "entity.glsl"
+#include "scene.glsl"
 
 #include <gbms/unpack.glsl>
 
+layout(scalar, binding = 0) readonly buffer SceneUbo {
+    Scene scene;
+};
 layout(scalar, binding = 1) readonly buffer InstanceUbo {
     Instance instances[];
 };

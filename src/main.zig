@@ -198,7 +198,7 @@ pub fn main() !void {
             return;
         }
 
-        game.time.update(delta_s);
+        game.timer.update(delta_s);
         update.all(&es, &cb, &game, delta_s);
         render.all(&es, &game, delta_s);
 

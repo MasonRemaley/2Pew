@@ -8,6 +8,7 @@ const c = @import("c.zig");
 const DeleteQueue = gpu.ext.DeleteQueue;
 const ImageBumpAllocator = gpu.ext.ImageBumpAllocator;
 const bufPart = gpu.ext.bufPart;
+const ModTimer = gpu.ext.ModTimer;
 
 const Gx = gpu.Gx;
 const Memory = gpu.Memory;
@@ -63,7 +64,7 @@ pub const ubo = struct {
 
     pub const Scene = extern struct {
         view_from_world: Mat2x3 = .identity,
-        time: f32,
+        timer: ModTimer,
     };
 
     pub const Instance = extern struct {
