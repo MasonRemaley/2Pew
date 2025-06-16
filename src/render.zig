@@ -5,6 +5,7 @@ const gpu = @import("gpu");
 const Game = @import("Game.zig");
 const Renderer = @import("Renderer.zig");
 const Assets = @import("Assets.zig");
+const c = @import("c.zig");
 const Entities = zcs.Entities;
 
 const ubo = Renderer.ubo;
@@ -17,8 +18,13 @@ const Node = zcs.ext.Node;
 const Sprite = Assets.Sprite;
 const Animation = Assets.Animation;
 const Zone = tracy.Zone;
-const Mat2x3 = zcs.ext.geom.Mat2x3;
-const Vec2 = zcs.ext.geom.Vec2;
+const geom = zcs.ext.geom;
+const tween = geom.tween;
+const remap = tween.interp.remap;
+const Mat2x3 = geom.Mat2x3;
+const Vec2 = geom.Vec2;
+const Vec3 = geom.Vec3;
+const Vec4 = geom.Vec4;
 const Transform = zcs.ext.Transform2D;
 const CmdBuf = gpu.CmdBuf;
 const Health = Game.Health;
@@ -53,6 +59,56 @@ const team_colors: [4]ubo.Color = .{
     }),
 };
 
+fn screenShake(game: *const Game) Mat2x3 {
+    // Limits
+    const max_intensity = 0.025;
+    const max_rotation = std.math.tau * 0.3 * max_intensity;
+    const max_translation = 400.0 * max_intensity;
+
+    // Noise options
+    const speed: f32 = 7.0;
+    const hurst = 1.0;
+    const octaves = 3;
+
+    // Sample the noise
+    const t = game.timer.seconds * speed;
+    const period = game.timer.period * speed;
+    const translate_x_t = t;
+    const translate_y_t = t + 50;
+    const rotation_t = t + 100;
+    const offset: Vec2 = .{
+        .x = geom.noise.perlinFbm(translate_x_t, .{
+            .period = period,
+            .hurst = hurst,
+            .octaves = octaves,
+        }),
+        .y = geom.noise.perlinFbm(translate_y_t, .{
+            .period = period,
+            .hurst = hurst,
+            .octaves = octaves,
+        }),
+    };
+
+    // Rotation noise
+    const rotation = remap(
+        -1,
+        1,
+        -max_rotation * 0.5,
+        max_rotation * 0.5,
+        geom.noise.perlinFbm(rotation_t, .{
+            .period = period,
+            .hurst = hurst,
+            .octaves = octaves,
+        }),
+    );
+
+    // Return the screen shake matrix
+    const intensity = game.trauma.intensity();
+    return Mat2x3.identity
+        .translated(game.camera.plusScaled(offset, max_translation * intensity))
+        .rotated(.fromAngle(rotation * intensity));
+}
+
 // TODO(mason): allow passing in const for rendering to make sure no modifications
 pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     const zone = Zone.begin(.{ .src = @src() });
@@ -62,14 +118,20 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     game.renderer.beginFrame(game.gx);
 
     var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
+    var mouse: Vec2 = .zero;
+    _ = c.SDL_GetMouseState(&mouse.x, &mouse.y);
     scene_writer.write(.{
-        .view_from_world = Mat2x3.ortho(.{
-            .left = 0,
-            .right = display_size.x,
-            .bottom = 0,
-            .top = display_size.y,
-        }).times(.translation(game.camera.negated())),
+        .view_from_world = Mat2x3.identity
+            .translated(.{ .x = -display_size.x / 2, .y = -display_size.y / 2 })
+            .times(screenShake(game)),
+        .projection_from_view = Mat2x3.ortho(.{
+            .left = -display_size.x / 2,
+            .right = display_size.x / 2,
+            .bottom = -display_size.y / 2,
+            .top = display_size.y / 2,
+        }),
         .timer = game.timer,
+        .mouse = mouse,
     });
 
     var instances = game.renderer.sprites[game.gx.frame].writer().typed(ubo.Instance);

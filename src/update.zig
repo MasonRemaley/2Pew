@@ -51,11 +51,14 @@ pub fn all(
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
+    game.trauma.update(delta_s);
+
     updateInput(es, cb, game);
     updatePhysics(game, es, cb);
     es.forEach("updateGravity", updateGravity, .{
         .es = es,
         .cb = cb,
+        .game = game,
         .delta_s = delta_s,
     });
     es.forEach("updateSprings", updateSprings, .{});
@@ -109,6 +112,7 @@ fn updateGravity(
         delta_s: f32,
         es: *const Entities,
         cb: *CmdBuf,
+        game: *Game,
     },
     rb: *RigidBody,
     transform: *Transform,
@@ -120,7 +124,7 @@ fn updateGravity(
         const gravity_v = display_center.minus(transform.getWorldPos()).normalized().scaled(gravity * ctx.delta_s);
         rb.vel.add(gravity_v);
         // punishment for leaving the circle
-        if (health_opt) |health| _ = health.damage(ctx.delta_s * 4);
+        if (health_opt) |health| _ = health.damage(ctx.game, ctx.delta_s * 4);
     }
 
     // transform.move(ctx.es, ctx.cb, rb.vel.scaled(ctx.delta_s));
@@ -166,6 +170,7 @@ fn updateHealth(
                 .index = game.explosion_animation,
                 .destroys_entity = true,
             });
+            game.trauma.add(1);
         }
 
         // If this is a player controlled ship, spawn a new ship for the player using this
@@ -278,6 +283,7 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
             const impulse_mag = normal.scaled(j);
             const impulse = impulse_mag.scaled(1 / my_mass);
             const other_impulse = impulse_mag.scaled(1 / other_mass);
+            game.trauma.set(@min(0.025 * j, 0.7));
             vw.rb.vel.sub(impulse);
             other.rb.vel.add(other_impulse);
 
@@ -296,7 +302,7 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.mag());
                     if (damage >= 2) {
-                        total_damage += entity_health.damage(damage);
+                        total_damage += entity_health.damage(game, damage);
                     }
                 }
             }
@@ -309,7 +315,7 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.mag());
                     if (damage >= 2) {
-                        total_damage += other_health.damage(damage);
+                        total_damage += other_health.damage(game, damage);
                     }
                 }
             }
@@ -456,7 +462,7 @@ fn updateDamage(
         if (health_vw.transform.getWorldPos().distSq(transform.getWorldPos()) <
             health_vw.rb.radius * health_vw.rb.radius + rb.radius * rb.radius)
         {
-            if (health_vw.health.damage(damage.hp) > 0.0) {
+            if (health_vw.health.damage(ctx.game, damage.hp) > 0.0) {
                 // spawn shrapnel here
                 const shrapnel_animation = ctx.game.shrapnel_animations[
                     ctx.game.rng.uintLessThanBiased(usize, ctx.game.shrapnel_animations.len)
@@ -728,6 +734,7 @@ fn updateTurret(
     };
     const input_state = &game.input_state[@intFromEnum(player_index.*)];
     if (input_state.isAction(.fire, .positive, .active) and ready) {
+        game.trauma.set(0.3);
         switch (turret.cooldown) {
             .time => |*time| time.current_s = time.max_s,
             .distance => |*dist| dist.last_pos = fire_pos,

@@ -6,12 +6,6 @@ pub fn build(b: *std.Build) void {
 
     const build_step_target = b.resolveTargetQuery(.{});
 
-    const no_llvm = b.option(
-        bool,
-        "no-llvm",
-        "Don't use the LLVM backend.",
-    ) orelse false;
-
     // Allow the user to enable or disable Tracy support with a build flag
     const tracy_enabled = b.option(
         bool,
@@ -19,13 +13,22 @@ pub fn build(b: *std.Build) void {
         "Build with Tracy support.",
     ) orelse false;
 
+    const force_llvm = b.option(
+        bool,
+        "llvm",
+        "Force the LLVM backend.",
+    ) orelse tracy_enabled; // https://github.com/Games-by-Mason/tracy_zig/issues/12
+
     const exe = b.addExecutable(.{
         .name = "pew",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-        .use_llvm = !no_llvm,
     });
+    if (force_llvm) {
+        exe.use_llvm = true;
+        exe.use_lld = true;
+    }
 
     const zcs = b.dependency("zcs", .{
         .optimize = optimize,
@@ -69,10 +72,6 @@ pub fn build(b: *std.Build) void {
     } else {
         exe.root_module.addImport("tracy_impl", tracy.module("tracy_impl_disabled"));
     }
-
-    const use_llvm = b.option(bool, "use-llvm", "use zig's llvm backend");
-    exe.use_llvm = use_llvm;
-    exe.use_lld = use_llvm;
 
     // https://github.com/MasonRemaley/2Pew/issues/2
     exe.want_lto = false;
@@ -137,7 +136,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/bench.zig"),
         .target = target,
         .optimize = optimize,
-        .use_llvm = !no_llvm,
+        .use_llvm = !force_llvm,
     });
     const bench_step = b.step("bench", "Run benchmarks");
     const bench_cmd = b.addRunArtifact(bench_exe);

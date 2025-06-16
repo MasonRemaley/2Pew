@@ -5,6 +5,7 @@ const tracy = @import("tracy");
 const c = @import("c.zig");
 const Assets = @import("Assets.zig");
 const Renderer = @import("Renderer.zig");
+const Trauma = @import("Trauma.zig");
 
 const Animation = Assets.Animation;
 const Sprite = Assets.Sprite;
@@ -25,6 +26,7 @@ const log = std.log;
 const math = std.math;
 const tween = zcs.ext.geom.tween;
 const lerp = tween.interp.lerp;
+const remap = tween.interp.remap;
 
 pub const display_size: Vec2 = .{ .x = 1920, .y = 1080 };
 pub const display_center = display_size.scaled(0.5);
@@ -85,6 +87,8 @@ rng: std.Random,
 
 camera: Vec2 = .zero,
 timer: ModTimer = .{},
+
+trauma: Trauma = .{},
 
 const ShipAnimations = struct {
     still: Animation.Index,
@@ -499,7 +503,8 @@ fn createWendy(
 }
 
 pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, gx: *Gx) !Game {
-    const image_zone = Zone.begin(.{ .src = @src() });
+    const init_zone = Zone.begin(.{ .src = @src() });
+    defer init_zone.end();
 
     renderer.beginFrame(gx);
     var cb: gpu.CmdBuf = .init(gx, .{
@@ -827,7 +832,6 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
         }
     }
     gpu.DescSet.update(gx, desc_set_updates.constSlice());
-    image_zone.end();
 
     return .{
         .gx = gx,
@@ -1340,7 +1344,8 @@ pub const Health = struct {
     regen_s: f32 = 2.0,
     invulnerable_s: f32 = max_invulnerable_s,
 
-    pub fn damage(self: *@This(), amount: f32) f32 {
+    pub fn damage(self: *@This(), game: *Game, amount: f32) f32 {
+        game.trauma.set(remap(0.0, self.hp, 0.4, 0.7, amount));
         if (self.invulnerable_s <= 0.0) {
             self.hp -= amount;
             self.regen_cooldown_s = self.max_regen_cooldown_s;
