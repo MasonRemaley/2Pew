@@ -52,6 +52,13 @@ pub fn all(
     defer zone.end();
 
     game.trauma.update(delta_s);
+    game.rumble.update(
+        &game.controllers,
+        // Ideally we should be tracking intensity per player, but that's not high priority
+        // since the cabinet won't have rumble anyway
+        &@as([4]f32, @splat(game.trauma.intensity())),
+        delta_s,
+    );
 
     updateInput(es, cb, game);
     updatePhysics(game, es, cb);

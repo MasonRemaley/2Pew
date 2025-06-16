@@ -6,6 +6,7 @@ const c = @import("c.zig");
 const Assets = @import("Assets.zig");
 const Renderer = @import("Renderer.zig");
 const Trauma = @import("Trauma.zig");
+const Rumble = @import("Rumble.zig");
 
 const Animation = Assets.Animation;
 const Sprite = Assets.Sprite;
@@ -89,6 +90,7 @@ camera: Vec2 = .zero,
 timer: ModTimer = .{},
 
 trauma: Trauma = .{},
+rumble: Rumble = .{},
 
 const ShipAnimations = struct {
     still: Animation.Index,
