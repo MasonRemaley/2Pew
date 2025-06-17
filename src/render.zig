@@ -59,9 +59,14 @@ const team_colors: [4]ubo.Color = .{
     }),
 };
 
-fn screenShake(game: *const Game) Mat2x3 {
+const ScreenShakeOptions = struct {
+    intensity: f32 = 1.0,
+    rotation: bool = true,
+};
+
+fn screenShake(game: *const Game, options: ScreenShakeOptions) Mat2x3 {
     // Limits
-    const max_intensity = 0.025;
+    const max_intensity = 0.025 * options.intensity;
     const max_rotation = std.math.tau * 0.3 * max_intensity;
     const max_translation = 400.0 * max_intensity;
 
@@ -104,9 +109,59 @@ fn screenShake(game: *const Game) Mat2x3 {
 
     // Return the screen shake matrix
     const intensity = game.trauma.intensity();
+    var result: Mat2x3 = .identity;
+    if (options.rotation) result = result.rotated(.fromAngle(rotation * intensity));
+    result = result.translated(offset.scaled(max_translation * intensity));
+    return result;
+}
+
+fn handheld(game: *const Game) Mat2x3 {
+    // Limits
+    const max_intensity = 0.05;
+    const max_rotation = std.math.tau * 0.075 * max_intensity;
+    const max_translation = 400.0 * max_intensity;
+
+    // Noise options
+    const speed: f32 = 0.1;
+    const hurst = 1.0;
+    const octaves = 3;
+
+    // Sample the noise
+    const t = game.timer.seconds * speed;
+    const period = game.timer.period * speed;
+    const translate_x_t = t + 15;
+    const translate_y_t = t + 65;
+    const rotation_t = t + 115;
+    const offset: Vec2 = .{
+        .x = geom.noise.perlinFbm(translate_x_t, .{
+            .period = period,
+            .hurst = hurst,
+            .octaves = octaves,
+        }),
+        .y = geom.noise.perlinFbm(translate_y_t, .{
+            .period = period,
+            .hurst = hurst,
+            .octaves = octaves,
+        }),
+    };
+
+    // Rotation noise
+    const rotation = remap(
+        -1,
+        1,
+        -max_rotation * 0.5,
+        max_rotation * 0.5,
+        geom.noise.perlinFbm(rotation_t, .{
+            .period = period,
+            .hurst = hurst,
+            .octaves = octaves,
+        }),
+    );
+
+    // Return the screen shake matrix
     return Mat2x3.identity
-        .translated(game.camera.plusScaled(offset, max_translation * intensity))
-        .rotated(.fromAngle(rotation * intensity));
+        .translated(offset.scaled(max_translation))
+        .rotated(.fromAngle(rotation));
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
@@ -122,8 +177,9 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     _ = c.SDL_GetMouseState(&mouse.x, &mouse.y);
     scene_writer.write(.{
         .view_from_world = Mat2x3.identity
-            .translated(.{ .x = -display_size.x / 2, .y = -display_size.y / 2 })
-            .times(screenShake(game)),
+            .translated(game.camera)
+            .applied(screenShake(game, .{}))
+            .applied(handheld(game)),
         .projection_from_view = Mat2x3.ortho(.{
             .left = -display_size.x / 2,
             .right = display_size.x / 2,

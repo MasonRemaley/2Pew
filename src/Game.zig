@@ -86,7 +86,7 @@ particle: Sprite.Index,
 
 rng: std.Random,
 
-camera: Vec2 = .zero,
+camera: Vec2 = display_size.scaled(-0.5),
 timer: ModTimer = .{},
 
 trauma: Trauma = .{},
