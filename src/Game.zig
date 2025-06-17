@@ -89,7 +89,8 @@ rng: std.Random,
 camera: Vec2 = display_size.scaled(-0.5),
 timer: ModTimer = .{},
 
-trauma: Trauma = .{},
+global_trauma: Trauma = .{},
+player_trauma: [4]Trauma = @splat(.{}),
 rumble: Rumble = .{},
 
 const ShipAnimations = struct {
@@ -1346,9 +1347,23 @@ pub const Health = struct {
     regen_s: f32 = 2.0,
     invulnerable_s: f32 = max_invulnerable_s,
 
-    pub fn damage(self: *@This(), game: *Game, amount: f32) f32 {
-        game.trauma.set(remap(0.0, self.hp, 0.4, 0.7, amount));
+    pub fn damage(
+        self: *@This(),
+        game: *Game,
+        es: *const Entities,
+        amount: f32,
+        source_opt: Entity.Optional,
+    ) f32 {
         if (self.invulnerable_s <= 0.0) {
+            const trauma_intensity = remap(0.0, self.hp, 0.4, 0.7, amount);
+            if (es.getComp(self, PlayerIndex)) |pi| {
+                game.player_trauma[@intFromEnum(pi.*)].set(trauma_intensity);
+            }
+            if (source_opt.unwrap()) |source| {
+                if (source.get(es, PlayerIndex)) |pi| {
+                    game.player_trauma[@intFromEnum(pi.*)].set(trauma_intensity);
+                }
+            }
             self.hp -= amount;
             self.regen_cooldown_s = self.max_regen_cooldown_s;
             return amount;

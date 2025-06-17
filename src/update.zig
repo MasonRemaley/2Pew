@@ -51,12 +51,16 @@ pub fn all(
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
-    game.trauma.update(delta_s);
+    game.global_trauma.update(delta_s);
+    for (&game.player_trauma) |*trauma| trauma.update(delta_s);
     game.rumble.update(
         &game.controllers,
-        // Ideally we should be tracking intensity per player, but that's not high priority
-        // since the cabinet won't have rumble anyway
-        &@as([4]f32, @splat(game.trauma.intensity())),
+        &.{
+            game.player_trauma[0].intensity(),
+            game.player_trauma[1].intensity(),
+            game.player_trauma[2].intensity(),
+            game.player_trauma[3].intensity(),
+        },
         delta_s,
     );
 
@@ -131,7 +135,7 @@ fn updateGravity(
         const gravity_v = display_center.minus(transform.getWorldPos()).normalized().scaled(gravity * ctx.delta_s);
         rb.vel.add(gravity_v);
         // punishment for leaving the circle
-        if (health_opt) |health| _ = health.damage(ctx.game, ctx.delta_s * 4);
+        if (health_opt) |health| _ = health.damage(ctx.game, ctx.es, ctx.delta_s * 4, .none);
     }
 
     // transform.move(ctx.es, ctx.cb, rb.vel.scaled(ctx.delta_s));
@@ -177,7 +181,10 @@ fn updateHealth(
                 .index = game.explosion_animation,
                 .destroys_entity = true,
             });
-            game.trauma.add(1);
+            const trauma_intensity = 1;
+            for (&game.player_trauma) |*trauma| {
+                trauma.add(trauma_intensity);
+            }
         }
 
         // If this is a player controlled ship, spawn a new ship for the player using this
@@ -262,6 +269,7 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
         front_shield: ?*const FrontShield,
         hook: ?*const Hook,
         entity: Entity,
+        player_index: ?*PlayerIndex,
     });
     while (it.next(es)) |vw| {
         var other_it = it;
@@ -290,7 +298,10 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
             const impulse_mag = normal.scaled(j);
             const impulse = impulse_mag.scaled(1 / my_mass);
             const other_impulse = impulse_mag.scaled(1 / other_mass);
-            game.trauma.set(@min(0.025 * j, 0.7));
+            const trauma_intensity = @min(0.025 * j, 0.7);
+            if (vw.player_index) |pi| game.player_trauma[@intFromEnum(pi.*)].set(trauma_intensity);
+            if (other.player_index) |pi| game.player_trauma[@intFromEnum(pi.*)].set(trauma_intensity);
+            game.global_trauma.set(trauma_intensity);
             vw.rb.vel.sub(impulse);
             other.rb.vel.add(other_impulse);
 
@@ -309,7 +320,7 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.mag());
                     if (damage >= 2) {
-                        total_damage += entity_health.damage(game, damage);
+                        total_damage += entity_health.damage(game, es, damage, other.entity.toOptional());
                     }
                 }
             }
@@ -322,7 +333,7 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.mag());
                     if (damage >= 2) {
-                        total_damage += other_health.damage(game, damage);
+                        total_damage += other_health.damage(game, es, damage, vw.entity.toOptional());
                     }
                 }
             }
@@ -469,7 +480,7 @@ fn updateDamage(
         if (health_vw.transform.getWorldPos().distSq(transform.getWorldPos()) <
             health_vw.rb.radius * health_vw.rb.radius + rb.radius * rb.radius)
         {
-            if (health_vw.health.damage(ctx.game, damage.hp) > 0.0) {
+            if (health_vw.health.damage(ctx.game, ctx.es, damage.hp, entity.toOptional()) > 0.0) {
                 // spawn shrapnel here
                 const shrapnel_animation = ctx.game.shrapnel_animations[
                     ctx.game.rng.uintLessThanBiased(usize, ctx.game.shrapnel_animations.len)
@@ -741,7 +752,7 @@ fn updateTurret(
     };
     const input_state = &game.input_state[@intFromEnum(player_index.*)];
     if (input_state.isAction(.fire, .positive, .active) and ready) {
-        game.trauma.set(0.3);
+        game.player_trauma[@intFromEnum(player_index.*)].set(0.2);
         switch (turret.cooldown) {
             .time => |*time| time.current_s = time.max_s,
             .distance => |*dist| dist.last_pos = fire_pos,
@@ -751,6 +762,7 @@ fn updateTurret(
         e.add(cb, Damage, .{
             .hp = turret.projectile_damage,
         });
+        e.add(cb, PlayerIndex, player_index.*);
         e.add(cb, Transform, .{
             .pos = fire_pos,
             .rot = .look(vel.normalized()),

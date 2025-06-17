@@ -21,6 +21,7 @@ const Zone = tracy.Zone;
 const geom = zcs.ext.geom;
 const tween = geom.tween;
 const remap = tween.interp.remap;
+const ease = tween.ease;
 const Mat2x3 = geom.Mat2x3;
 const Vec2 = geom.Vec2;
 const Vec3 = geom.Vec3;
@@ -66,13 +67,13 @@ const ScreenShakeOptions = struct {
 
 fn screenShake(game: *const Game, options: ScreenShakeOptions) Mat2x3 {
     // Limits
-    const max_intensity = 0.025 * options.intensity;
+    const max_intensity = 0.05 * options.intensity;
     const max_rotation = std.math.tau * 0.3 * max_intensity;
     const max_translation = 400.0 * max_intensity;
 
     // Noise options
     const speed: f32 = 7.0;
-    const hurst = 1.0;
+    const hurst = 0.0;
     const octaves = 3;
 
     // Sample the noise
@@ -108,7 +109,10 @@ fn screenShake(game: *const Game, options: ScreenShakeOptions) Mat2x3 {
     );
 
     // Return the screen shake matrix
-    const intensity = game.trauma.intensity();
+    var intensity = game.global_trauma.intensity();
+    for (game.player_trauma) |trauma| {
+        intensity = @max(intensity, trauma.intensity());
+    }
     var result: Mat2x3 = .identity;
     if (options.rotation) result = result.rotated(.fromAngle(rotation * intensity));
     result = result.translated(offset.scaled(max_translation * intensity));
@@ -117,7 +121,7 @@ fn screenShake(game: *const Game, options: ScreenShakeOptions) Mat2x3 {
 
 fn handheld(game: *const Game) Mat2x3 {
     // Limits
-    const max_intensity = 0.05;
+    const max_intensity = 0.025;
     const max_rotation = std.math.tau * 0.075 * max_intensity;
     const max_translation = 400.0 * max_intensity;
 
