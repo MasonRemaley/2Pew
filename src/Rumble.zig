@@ -18,9 +18,9 @@ const c = @import("c.zig");
 /// The size of a packet of rumble data in seconds.
 ///
 /// I've tested 60hz and it appears to work fine, but I've set the default to a much more reasonable
-/// 10hz. It's unlikely you'll feel the latency or notice the quantization in the rumble curve at
+/// 30hz. It's unlikely you'll feel the latency or notice the quantization in the rumble curve at
 /// this rate since rumble is very chaotic and is a relatively "slow" effect perceptually.
-packet_s: f32 = 0.1,
+packet_s: f32 = 1.0 / 30.0,
 
 /// How much time elapsed since the last sync.
 last_sync_s: f32 = 0.0,

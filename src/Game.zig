@@ -705,6 +705,10 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
         },
         .thrust_forward = .{
             .buttons = .{ .positive = c.SDL_GAMEPAD_BUTTON_EAST },
+            .axis = .{
+                .axis = c.SDL_GAMEPAD_AXIS_LEFT_TRIGGER,
+                .dead_zone = dead_zone,
+            },
         },
         .thrust_x = .{
             .axis = .{
@@ -720,6 +724,10 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
         },
         .fire = .{
             .buttons = .{ .positive = c.SDL_GAMEPAD_BUTTON_SOUTH },
+            .axis = .{
+                .axis = c.SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,
+                .dead_zone = dead_zone,
+            },
         },
         .start = .{
             .buttons = .{ .positive = c.SDL_GAMEPAD_BUTTON_START },
