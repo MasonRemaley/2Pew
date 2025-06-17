@@ -56,10 +56,22 @@ pub fn all(
     game.rumble.update(
         &game.controllers,
         &.{
-            game.player_trauma[0].intensity(),
-            game.player_trauma[1].intensity(),
-            game.player_trauma[2].intensity(),
-            game.player_trauma[3].intensity(),
+            .{
+                .low = game.player_trauma[0].intensity(.low),
+                .high = game.player_trauma[0].intensity(.high),
+            },
+            .{
+                .low = game.player_trauma[1].intensity(.low),
+                .high = game.player_trauma[1].intensity(.high),
+            },
+            .{
+                .low = game.player_trauma[2].intensity(.low),
+                .high = game.player_trauma[2].intensity(.high),
+            },
+            .{
+                .low = game.player_trauma[3].intensity(.low),
+                .high = game.player_trauma[3].intensity(.high),
+            },
         },
         delta_s,
     );
@@ -181,9 +193,11 @@ fn updateHealth(
                 .index = game.explosion_animation,
                 .destroys_entity = true,
             });
-            const trauma_intensity = 1;
             for (&game.player_trauma) |*trauma| {
-                trauma.add(trauma_intensity);
+                trauma.addMajor(.low);
+            }
+            if (player_index_opt) |pi| {
+                game.player_trauma[@intFromEnum(pi.*)].addMajor(.high);
             }
         }
 
@@ -299,9 +313,9 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
             const impulse = impulse_mag.scaled(1 / my_mass);
             const other_impulse = impulse_mag.scaled(1 / other_mass);
             const trauma_intensity = @min(0.025 * j, 0.7);
-            if (vw.player_index) |pi| game.player_trauma[@intFromEnum(pi.*)].set(trauma_intensity);
-            if (other.player_index) |pi| game.player_trauma[@intFromEnum(pi.*)].set(trauma_intensity);
-            game.global_trauma.set(trauma_intensity);
+            if (vw.player_index) |pi| game.player_trauma[@intFromEnum(pi.*)].set(.low, trauma_intensity);
+            if (other.player_index) |pi| game.player_trauma[@intFromEnum(pi.*)].set(.low, trauma_intensity);
+            game.global_trauma.set(.low, trauma_intensity);
             vw.rb.vel.sub(impulse);
             other.rb.vel.add(other_impulse);
 
@@ -527,6 +541,9 @@ fn updateShip(
 ) void {
     const input_state = &ctx.game.input_state[@intFromEnum(player_index.*)];
     if (ship.omnithrusters) {
+        if (input_state.getAxis(.thrust_x) > 0 or input_state.getAxis(.thrust_y) > 0) {
+            ctx.game.player_trauma[@intFromEnum(player_index.*)].setMinor(.high);
+        }
         rb.vel.addScaled(.{
             .x = input_state.getAxis(.thrust_x),
             .y = input_state.getAxis(.thrust_y),
@@ -539,6 +556,9 @@ fn updateShip(
         );
 
         const thrust_input: f32 = @floatFromInt(@intFromBool(input_state.isAction(.thrust_forward, .positive, .active)));
+        if (thrust_input > 0.0) {
+            ctx.game.player_trauma[@intFromEnum(player_index.*)].setMinor(.high);
+        }
         const forward = transform.getForward();
         const thrust = forward.scaled(thrust_input * ship.thrust * ctx.delta_s);
         rb.vel.add(thrust);
@@ -752,7 +772,7 @@ fn updateTurret(
     };
     const input_state = &game.input_state[@intFromEnum(player_index.*)];
     if (input_state.isAction(.fire, .positive, .active) and ready) {
-        game.player_trauma[@intFromEnum(player_index.*)].set(0.2);
+        game.player_trauma[@intFromEnum(player_index.*)].set(.low, 0.2);
         switch (turret.cooldown) {
             .time => |*time| time.current_s = time.max_s,
             .distance => |*dist| dist.last_pos = fire_pos,

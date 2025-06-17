@@ -32,20 +32,25 @@ const State = struct {
     intensity: f32,
 };
 
+/// The rumble intensity.
+pub const Intensity = struct {
+    /// Low frequency rumble intensity, ranges from 0 to 1.
+    low: f32,
+    /// High frequency rumble intensity, ranges from 0 to 1.
+    high: f32,
+};
+
 pub fn update(
     self: *@This(),
-    gamepads: []?*c.SDL_Gamepad,
-    intensities: []const f32,
+    gamepads: []const ?*c.SDL_Gamepad,
+    intensities: []const Intensity,
     delta_s: f32,
 ) void {
     if (self.last_sync_s > self.packet_s) {
         for (gamepads, intensities) |maybe_gamepad, intensity| {
             if (maybe_gamepad) |gamepad| {
-                // We opt to always emit the high frequency at 1/8th the magnitude of the low
-                // frequency. This feels good on a recent Xbox controller, but we could opt to
-                // expose both fields separately if desired.
-                const low_freq: u16 = @intFromFloat(intensity * @as(f32, @floatFromInt(0xFFFF)));
-                const high_freq: u16 = low_freq / 8;
+                const low: u16 = @intFromFloat(intensity.low * @as(f32, @floatFromInt(0xFFFF)));
+                const high: u16 = @intFromFloat(intensity.high * @as(f32, @floatFromInt(0xFFFF)));
 
                 // We make the packet twice as long as it needs to be to give us extra buffer. Our
                 // next packet will cancel this one if it's received in time.
@@ -54,8 +59,8 @@ pub fn update(
                 // Emit the rumble packet.
                 _ = c.SDL_RumbleGamepad(
                     gamepad,
-                    low_freq,
-                    high_freq,
+                    low,
+                    high,
                     @intFromFloat(length_s * 1000),
                 );
             }

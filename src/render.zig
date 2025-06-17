@@ -109,9 +109,9 @@ fn screenShake(game: *const Game, options: ScreenShakeOptions) Mat2x3 {
     );
 
     // Return the screen shake matrix
-    var intensity = game.global_trauma.intensity();
+    var intensity = game.global_trauma.intensity(null);
     for (game.player_trauma) |trauma| {
-        intensity = @max(intensity, trauma.intensity());
+        intensity = @max(intensity, trauma.intensity(null));
     }
     var result: Mat2x3 = .identity;
     if (options.rotation) result = result.rotated(.fromAngle(rotation * intensity));
