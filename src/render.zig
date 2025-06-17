@@ -82,7 +82,7 @@ fn screenShake(game: *const Game, options: ScreenShakeOptions) Mat2x3 {
     const translate_x_t = t;
     const translate_y_t = t + 50;
     const rotation_t = t + 100;
-    const offset: Vec2 = .{
+    const offset_square: Vec2 = .{
         .x = geom.noise.perlinFbm(translate_x_t, .{
             .period = period,
             .hurst = hurst,
@@ -93,6 +93,13 @@ fn screenShake(game: *const Game, options: ScreenShakeOptions) Mat2x3 {
             .hurst = hurst,
             .octaves = octaves,
         }),
+    };
+
+    // Map the offset from a square to a circle. Pretty minor difference, but I think it feels
+    // slightly nicer.
+    const offset: Vec2 = .{
+        .x = offset_square.x * @sqrt(1 - 0.5 * offset_square.y * offset_square.y),
+        .y = offset_square.y * @sqrt(1 - 0.5 * offset_square.x * offset_square.x),
     };
 
     // Rotation noise
