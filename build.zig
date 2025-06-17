@@ -114,10 +114,6 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(install_shaders_step);
 
     const run_cmd = b.addRunArtifact(exe);
-    run_cmd.setCwd(.{ .cwd_relative = std.fs.path.dirname(b.getInstallPath(
-        install_exe.dest_dir.?,
-        install_exe.dest_sub_path,
-    )).? });
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
         run_cmd.addArgs(args);

@@ -159,22 +159,6 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         max_textures,
     ) catch @panic("OOM");
 
-    const sprite_vert_spv = initSpv(gpa, "data/shaders/entity.vert.spv");
-    defer gpa.free(sprite_vert_spv);
-    const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
-        .name = .{ .str = "entity.vert.spv" },
-        .ir = sprite_vert_spv,
-    });
-    defer sprite_vert_module.deinit(gx);
-
-    const sprite_frag_spv = initSpv(gpa, "data/shaders/entity.frag.spv");
-    defer gpa.free(sprite_frag_spv);
-    const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
-        .name = .{ .str = "entity.frag.spv" },
-        .ir = sprite_frag_spv,
-    });
-    defer sprite_frag_module.deinit(gx);
-
     const pipeline = initPipeline(gpa, gx, pipeline_layout);
 
     return .{
@@ -213,7 +197,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
 }
 
 pub fn initPipeline(gpa: Allocator, gx: *Gx, pipeline_layout: gpu.Pipeline.Layout) gpu.Pipeline {
-    const sprite_vert_spv = initSpv(gpa, "data/shaders/entity.vert.spv");
+    const sprite_vert_spv = initSpv(gpa, "shaders/entity.vert.spv");
     defer gpa.free(sprite_vert_spv);
     const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
         .name = .{ .str = "entity.vert.spv" },
@@ -221,7 +205,7 @@ pub fn initPipeline(gpa: Allocator, gx: *Gx, pipeline_layout: gpu.Pipeline.Layou
     });
     defer sprite_vert_module.deinit(gx);
 
-    const sprite_frag_spv = initSpv(gpa, "data/shaders/entity.frag.spv");
+    const sprite_frag_spv = initSpv(gpa, "shaders/entity.frag.spv");
     defer gpa.free(sprite_frag_spv);
     const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
         .name = .{ .str = "entity.frag.spv" },
@@ -251,17 +235,26 @@ pub fn initPipeline(gpa: Allocator, gx: *Gx, pipeline_layout: gpu.Pipeline.Layou
     return pipeline;
 }
 
-fn initSpv(gpa: Allocator, path: []const u8) []const u32 {
+fn initSpv(gpa: Allocator, subpath: []const u8) []const u32 {
+    // On most of the platforms we care about we could just use `selfExeDirPathAlloc`, but the SDL
+    // call works under wine
+    const path = std.fs.path.join(gpa, &.{ std.mem.span(c.SDL_GetBasePath()), "data" }) catch |err|
+        @panic(@errorName(err));
+    defer gpa.free(path);
+    var dir = std.fs.openDirAbsolute(path, .{}) catch |err|
+        @panic(@errorName(err));
+    defer dir.close();
+
     const max_bytes = 160384;
     const size_hint = 4096;
-    const spv = std.fs.cwd().readFileAllocOptions(
+    const spv = dir.readFileAllocOptions(
         gpa,
-        path,
+        subpath,
         max_bytes,
         size_hint,
         .of(u32),
         null,
-    ) catch |err| std.debug.panic("{s}: {}", .{ path, err });
+    ) catch |err| std.debug.panic("{s}: {}", .{ subpath, err });
     var u32s: []const u32 = undefined;
     u32s.ptr = @ptrCast(spv.ptr);
     u32s.len = spv.len / 4;
