@@ -147,6 +147,7 @@ pub fn main() !void {
             .surface_context = screen,
             .createSurface = &createSurface,
         },
+        .surface_format = .unorm4x8,
         .debug = args.named.@"gpu-dbg",
     });
     defer {
@@ -229,14 +230,14 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
             c.SDL_EVENT_QUIT => return true,
             c.SDL_EVENT_WINDOW_FOCUS_GAINED => if (game.hot_swap) {
                 log.info("hot swap", .{});
-                const pipeline = Renderer.initPipeline(
+                const pipelines: Renderer.Pipelines = .init(
                     game.debug_allocator,
                     game.gx,
                     game.renderer.pipeline_layout,
                 );
                 game.gx.waitIdle();
-                game.renderer.pipeline.deinit(game.gx);
-                game.renderer.pipeline = pipeline;
+                game.renderer.pipelines.deinit(game.gx);
+                game.renderer.pipelines = pipelines;
             },
             c.SDL_EVENT_KEY_DOWN => switch (event.key.scancode) {
                 c.SDL_SCANCODE_ESCAPE => return true,

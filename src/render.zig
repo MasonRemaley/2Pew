@@ -179,165 +179,221 @@ fn handheld(game: *const Game) Mat2x3 {
 pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
-
-    // Get this frame's storage writers
     game.renderer.beginFrame(game.gx);
 
-    var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
-    var mouse: Vec2 = .zero;
-    _ = c.SDL_GetMouseState(&mouse.x, &mouse.y);
-    scene_writer.write(.{
-        .view_from_world = Mat2x3.identity
-            .translated(game.camera)
-            .applied(screenShake(game, .{}))
-            .applied(handheld(game)),
-        .projection_from_view = Mat2x3.ortho(.{
-            .left = -display_size.x / 2,
-            .right = display_size.x / 2,
-            .bottom = -display_size.y / 2,
-            .top = display_size.y / 2,
-        }),
-        .timer = game.timer,
-        .mouse = mouse,
-    });
-
-    var instances = game.renderer.sprites[game.gx.frame].writer().typed(ubo.Instance);
-
-    // Draw the stars
-    for (game.stars) |star| {
-        const sprite = game.assets.sprite(switch (star.kind) {
-            .small => game.star_small,
-            .large => game.star_large,
-            .planet_red => game.planet_red,
-        });
-        instances.write(.{
-            .world_from_model = Mat2x3.identity
-                .translated(.splat(-0.5))
-                .scaled(sprite.size)
-                .translated(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }),
-            .diffuse = sprite.diffuse,
-            .recolor = sprite.recolor,
-        });
-    }
-
-    // Draw the ring
+    const rt = game.rt.getSizedView(&game.renderer.rtp);
     {
-        const sprite = game.assets.sprite(game.ring_bg);
-        instances.write(.{
-            .world_from_model = Mat2x3.identity
-                .translated(.splat(-0.5))
-                .scaled(sprite.size)
-                .translated(display_center),
-            .diffuse = sprite.diffuse,
-            .recolor = sprite.recolor,
+        var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
+        var mouse: Vec2 = .zero;
+        _ = c.SDL_GetMouseState(&mouse.x, &mouse.y);
+        scene_writer.write(.{
+            .view_from_world = Mat2x3.identity
+                .translated(game.camera)
+                .applied(screenShake(game, .{}))
+                .applied(handheld(game)),
+            .projection_from_view = Mat2x3.ortho(.{
+                .left = -display_size.x / 2,
+                .right = display_size.x / 2,
+                .bottom = -display_size.y / 2,
+                .top = display_size.y / 2,
+            }),
+            .timer = game.timer,
+            .mouse = mouse,
         });
-    }
 
-    es.forEach("renderAnimations", renderAnimations, .{
-        .assets = game.assets,
-        .es = es,
-        .delta_s = delta_s,
-        .instances = &instances,
-    });
+        var instances = game.renderer.sprites[game.gx.frame].writer().typed(ubo.Instance);
 
-    es.forEach("renderHealthBar", renderHealthBar, .{
-        .instances = &instances,
-    });
-    es.forEach("renderSprite", renderSprite, .{
-        .game = game,
-        .instances = &instances,
-    });
-    es.forEach("renderSpring", renderSpring, .{
-        .es = es,
-    });
+        // Draw the stars
+        for (game.stars) |star| {
+            const sprite = game.assets.sprite(switch (star.kind) {
+                .small => game.star_small,
+                .large => game.star_large,
+                .planet_red => game.planet_red,
+            });
+            instances.write(.{
+                .world_from_model = Mat2x3.identity
+                    .translated(.splat(-0.5))
+                    .scaled(sprite.size)
+                    .translated(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }),
+                .diffuse = sprite.diffuse,
+                .recolor = sprite.recolor,
+            });
+        }
 
-    // Draw the ships in the bank.
-    {
-        const row_height = 64;
-        const col_width = 64;
-        const top_left: Vec2 = .splat(20);
+        // Draw the ring
+        {
+            const sprite = game.assets.sprite(game.ring_bg);
+            instances.write(.{
+                .world_from_model = Mat2x3.identity
+                    .translated(.splat(-0.5))
+                    .scaled(sprite.size)
+                    .translated(display_center),
+                .diffuse = sprite.diffuse,
+                .recolor = sprite.recolor,
+            });
+        }
 
-        for (game.teams, 0..) |team, team_index| {
-            {
-                const sprite = game.assets.sprite(game.particle);
-                const pos = top_left.plus(.{
-                    .x = col_width * @as(f32, @floatFromInt(team_index)),
-                    .y = 0,
-                });
-                instances.write(.{
-                    .world_from_model = Mat2x3.identity
-                        .translated(.splat(-0.5))
-                        .scaled(sprite.size)
-                        .translated(pos),
-                    .diffuse = sprite.diffuse,
-                    .recolor = sprite.recolor,
-                    .color = team_colors[team_index],
-                });
-            }
-            for (team.ship_progression, 0..) |class, display_prog_index| {
-                const dead = team.ship_progression_index > display_prog_index;
-                if (dead) continue;
+        es.forEach("renderAnimations", renderAnimations, .{
+            .assets = game.assets,
+            .es = es,
+            .delta_s = delta_s,
+            .instances = &instances,
+        });
 
-                const sprite = game.assets.sprite(game.shipLifeSprite(class));
-                const pos = top_left.plus(.{
-                    .x = col_width * @as(f32, @floatFromInt(team_index)),
-                    .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
-                });
-                instances.write(.{
-                    .world_from_model = Mat2x3.identity
-                        .translated(.splat(-0.5))
-                        .scaled(sprite.size.scaled(0.5))
-                        .translated(pos),
-                    .diffuse = sprite.diffuse,
-                    .recolor = sprite.recolor,
-                    .color = team_colors[team_index],
-                });
+        es.forEach("renderHealthBar", renderHealthBar, .{
+            .instances = &instances,
+        });
+        es.forEach("renderSprite", renderSprite, .{
+            .game = game,
+            .instances = &instances,
+        });
+        es.forEach("renderSpring", renderSpring, .{
+            .es = es,
+        });
+
+        // Draw the ships in the bank.
+        {
+            const row_height = 64;
+            const col_width = 64;
+            const top_left: Vec2 = .splat(20);
+
+            for (game.teams, 0..) |team, team_index| {
+                {
+                    const sprite = game.assets.sprite(game.particle);
+                    const pos = top_left.plus(.{
+                        .x = col_width * @as(f32, @floatFromInt(team_index)),
+                        .y = 0,
+                    });
+                    instances.write(.{
+                        .world_from_model = Mat2x3.identity
+                            .translated(.splat(-0.5))
+                            .scaled(sprite.size)
+                            .translated(pos),
+                        .diffuse = sprite.diffuse,
+                        .recolor = sprite.recolor,
+                        .color = team_colors[team_index],
+                    });
+                }
+                for (team.ship_progression, 0..) |class, display_prog_index| {
+                    const dead = team.ship_progression_index > display_prog_index;
+                    if (dead) continue;
+
+                    const sprite = game.assets.sprite(game.shipLifeSprite(class));
+                    const pos = top_left.plus(.{
+                        .x = col_width * @as(f32, @floatFromInt(team_index)),
+                        .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
+                    });
+                    instances.write(.{
+                        .world_from_model = Mat2x3.identity
+                            .translated(.splat(-0.5))
+                            .scaled(sprite.size.scaled(0.5))
+                            .translated(pos),
+                        .diffuse = sprite.diffuse,
+                        .recolor = sprite.recolor,
+                        .color = team_colors[team_index],
+                    });
+                }
             }
         }
+
+        const render_game: CmdBuf = .init(game.gx, .{
+            .name = "Render Game",
+            .src = @src(),
+        });
+        render_game.barriers(game.gx, .{ .image = &.{
+            .undefinedToColorAttachment(.{
+                .handle = game.rt.get(&game.renderer.rtp).handle,
+                .range = .first,
+            }),
+        } });
+        render_game.beginRendering(game.gx, .{
+            .color_attachments = &.{
+                .init(.{
+                    .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
+                    .view = rt.view,
+                }),
+            },
+            .viewport = .{
+                .x = 0,
+                .y = 0,
+                .width = @floatFromInt(rt.extent.width),
+                .height = @floatFromInt(rt.extent.height),
+                .min_depth = 0.0,
+                .max_depth = 1.0,
+            },
+            .scissor = .{
+                .offset = .zero,
+                .extent = rt.extent,
+            },
+            .area = .{
+                .offset = .zero,
+                .extent = rt.extent,
+            },
+        });
+        render_game.bindPipeline(game.gx, game.renderer.pipelines.game);
+        render_game.bindDescSet(game.gx, game.renderer.pipelines.game, game.renderer.desc_sets[game.gx.frame]);
+        render_game.draw(game.gx, .{
+            .vertex_count = 4,
+            .instance_count = @intCast(instances.len),
+            .first_vertex = 0,
+            .first_instance = 0,
+        });
+        render_game.endRendering(game.gx);
+        render_game.submit(game.gx);
     }
 
-    const framebuf = game.gx.acquireNextImage(.{
-        .width = display_size.x,
-        .height = display_size.y,
-    });
-    const render_game: CmdBuf = .init(game.gx, .{
-        .name = "Render Game",
-        .src = @src(),
-    });
-    render_game.beginRendering(game.gx, .{
-        .color_attachments = &.{
-            .init(.{
-                .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
-                .view = framebuf.view,
+    {
+        const post: CmdBuf = .init(game.gx, .{
+            .name = "Post",
+            .src = @src(),
+        });
+
+        const framebuf = game.gx.acquireNextImage(.{
+            .width = display_size.x,
+            .height = display_size.y,
+        });
+        post.barriers(game.gx, .{ .image = &.{
+            .colorAttachmentToCompute(.{
+                .dst_access = .{ .read = true },
+                .handle = game.rt.get(&game.renderer.rtp).handle,
+                .range = .first,
             }),
-        },
-        .viewport = .{
-            .x = 0,
-            .y = 0,
-            .width = @floatFromInt(framebuf.extent.width),
-            .height = @floatFromInt(framebuf.extent.height),
-            .min_depth = 0.0,
-            .max_depth = 1.0,
-        },
-        .scissor = .{
-            .offset = .zero,
-            .extent = framebuf.extent,
-        },
-        .area = .{
-            .offset = .zero,
-            .extent = framebuf.extent,
-        },
-    });
-    render_game.bindPipeline(game.gx, game.renderer.pipeline);
-    render_game.bindDescSet(game.gx, game.renderer.pipeline, game.renderer.desc_sets[game.gx.frame]);
-    render_game.draw(game.gx, .{
-        .vertex_count = 4,
-        .instance_count = @intCast(instances.len),
-        .first_vertex = 0,
-        .first_instance = 0,
-    });
-    render_game.endRendering(game.gx);
-    render_game.submit(game.gx);
+        } });
+        post.beginRendering(game.gx, .{
+            .color_attachments = &.{
+                .init(.{
+                    .load_op = .dont_care,
+                    .view = framebuf.view,
+                }),
+            },
+            .viewport = .{
+                .x = 0,
+                .y = 0,
+                .width = @floatFromInt(framebuf.extent.width),
+                .height = @floatFromInt(framebuf.extent.height),
+                .min_depth = 0.0,
+                .max_depth = 1.0,
+            },
+            .scissor = .{
+                .offset = .zero,
+                .extent = framebuf.extent,
+            },
+            .area = .{
+                .offset = .zero,
+                .extent = framebuf.extent,
+            },
+        });
+        post.bindPipeline(game.gx, game.renderer.pipelines.post);
+        post.bindDescSet(game.gx, game.renderer.pipelines.post, game.renderer.desc_sets[game.gx.frame]);
+        post.draw(game.gx, .{
+            .vertex_count = 3,
+            .instance_count = 1,
+            .first_vertex = 0,
+            .first_instance = 0,
+        });
+        post.endRendering(game.gx);
+        post.submit(game.gx);
+    }
 
     game.gx.endFrame(.{});
 }

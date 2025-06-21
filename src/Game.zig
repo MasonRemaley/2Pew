@@ -93,6 +93,8 @@ global_trauma: Trauma = .init(.{}),
 player_trauma: [4]Trauma = @splat(.init(.{})),
 rumble: Rumble = .{},
 
+rt: gpu.ext.RenderTargetPool(.color).Handle,
+
 const ShipAnimations = struct {
     still: Animation.Index,
     accel: Animation.Index,
@@ -806,21 +808,38 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
     cb.submit(gx);
     gx.endFrame(.{ .present = false });
 
-    var desc_set_updates: std.BoundedArray(
-        gpu.DescSet.Update,
-        renderer.desc_sets.len * (2 + @as(usize, Renderer.max_textures)),
-    ) = .{};
+    var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 128);
+    defer desc_set_updates.deinit();
+
+    const rt = renderer.rtp.alloc(gx, &desc_set_updates, .{
+        .name = .{ .str = "Render Target" },
+        .image = .{
+            .format = Renderer.Pipelines.color_attachment_format,
+            .extent = .{
+                .width = 1920,
+                .height = 1080,
+                .depth = 1,
+            },
+            .usage = .{
+                .color_attachment = true,
+                .storage = true,
+            },
+        },
+    });
+
     for (renderer.desc_sets, 0..) |set, frame| {
-        desc_set_updates.appendAssumeCapacity(.{
+        if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
+        try desc_set_updates.append(.{
             .set = set,
-            .binding = 0,
+            .binding = Renderer.pipeline_layout_options.binding("scene"),
             .value = .{
                 .storage_buf = renderer.scene[frame].asBuf(.{ .storage = true }),
             },
         });
-        desc_set_updates.appendAssumeCapacity(.{
+        if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
+        try desc_set_updates.append(.{
             .set = set,
-            .binding = 1,
+            .binding = Renderer.pipeline_layout_options.binding("entities"),
             .value = .{
                 .storage_buf = renderer.sprites[frame].asBuf(.{ .storage = true }),
             },
@@ -828,21 +847,21 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
 
         for (renderer.textures.items, 0..) |texture, texture_index| {
             if (texture_index > Renderer.max_textures) @panic("textures oob");
-            desc_set_updates.appendAssumeCapacity(.{
+            if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
+            try desc_set_updates.append(.{
                 .set = set,
-                .binding = 2,
+                .binding = Renderer.pipeline_layout_options.binding("textures"),
                 .index = @intCast(texture_index),
-                .value = .{
-                    .combined_image_sampler = .{
-                        .view = texture.view,
-                        .sampler = renderer.texture_sampler,
-                        .layout = .read_only,
-                    },
-                },
+                .value = .{ .sampled_image = texture.view },
             });
         }
+        try desc_set_updates.append(.{
+            .set = set,
+            .binding = Renderer.pipeline_layout_options.binding("texture_sampler"),
+            .value = .{ .sampler = renderer.texture_sampler },
+        });
     }
-    gpu.DescSet.update(gx, desc_set_updates.constSlice());
+    gpu.DescSet.update(gx, desc_set_updates.items);
 
     return .{
         .gx = gx,
@@ -923,6 +942,8 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
         .stars = undefined,
 
         .particle = particle,
+
+        .rt = rt,
     };
 }
 

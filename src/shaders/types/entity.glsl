@@ -6,7 +6,8 @@ const uint MatSolid = 1;
 
 const uint TexNone = 0xFFFF;
 
-struct Instance {
+// Part of descs/entities.glsl
+struct Entity {
     mat2x3 model_to_world;
     uint diffuse_recolor;
     uint color;

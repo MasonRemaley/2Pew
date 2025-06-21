@@ -1,15 +1,10 @@
-#include "entity.glsl"
-#include "scene.glsl"
+#include "types/scene.glsl"
 
-layout(scalar, binding = 0) readonly buffer SceneUbo {
-    Scene scene;
-};
-layout(scalar, binding = 1) readonly buffer InstanceUbo {
-    Instance instances[];
-};
+#include "descs/scene.glsl"
+#include "descs/entities.glsl"
 
 layout(location = 0) out vec2 out_texcoord;
-layout(location = 1) out flat Instance out_instance;
+layout(location = 1) out flat Entity out_entity;
 
 const vec2 vertices[4] = vec2[](
     vec2(0, 0),
@@ -26,7 +21,7 @@ const vec2 texcoords[4] = vec2[](
 );
 
 void main() {
-    Instance instance = instances[gl_InstanceIndex];
+    Entity instance = entities[gl_InstanceIndex];
     vec2 model = vertices[gl_VertexIndex];
     vec2 world = vec3(model, 1.0) * instance.model_to_world;
     vec2 view = vec3(world, 1.0) * scene.world_to_view;
@@ -34,5 +29,5 @@ void main() {
 
     gl_Position = vec4(projection, 0.0, 1.0);
     out_texcoord = texcoords[gl_VertexIndex];
-    out_instance = instance;
+    out_entity = instance;
 }

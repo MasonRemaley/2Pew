@@ -4,6 +4,7 @@ const gpu = @import("gpu");
 const geom = @import("zcs").ext.geom;
 const tracy = @import("tracy");
 const c = @import("c.zig");
+const Game = @import("Game.zig");
 
 const DeleteQueue = gpu.ext.DeleteQueue;
 const ImageBumpAllocator = gpu.ext.ImageBumpAllocator;
@@ -14,6 +15,7 @@ const Gx = gpu.Gx;
 const Memory = gpu.Memory;
 const UploadBuf = gpu.UploadBuf;
 const ImageUploadQueue = gpu.ext.ImageUploadQueue;
+const RenderTargetPool = gpu.ext.RenderTargetPool;
 const Mat2x3 = geom.Mat2x3;
 const Vec2 = geom.Vec2;
 const Zone = tracy.Zone;
@@ -28,10 +30,11 @@ color_image_allocator: ImageBumpAllocator(.color),
 
 textures: std.ArrayListUnmanaged(gpu.Image(.color)),
 
-pipeline: gpu.Pipeline,
+pipelines: Pipelines,
 pipeline_layout: gpu.Pipeline.Layout,
 desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
+rtp: RenderTargetPool(.color),
 
 storage_buf: UploadBuf(.{ .storage = true }),
 
@@ -46,6 +49,8 @@ pub const max_textures = b: {
     break :b n;
 };
 pub const image_mibs = 16;
+
+pub const max_render_targets = 16;
 
 pub const mib = std.math.pow(u64, 2, 20);
 
@@ -82,21 +87,34 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
     .name = .{ .str = "Game" },
     .descs = &.{
         .{
-            .name = "Scene",
+            .name = "scene",
             .kind = .storage_buffer,
             .stages = .{ .vertex = true, .fragment = true },
             .partially_bound = false,
         },
         .{
-            .name = "Instance",
+            .name = "entities",
             .kind = .storage_buffer,
             .stages = .{ .vertex = true },
             .partially_bound = false,
         },
         .{
-            .name = "Textures",
-            .kind = .combined_image_sampler,
+            .name = "textures",
+            .kind = .sampled_image,
             .count = max_textures,
+            .stages = .{ .fragment = true },
+            .partially_bound = true,
+        },
+        .{
+            .name = "texture_sampler",
+            .kind = .sampler,
+            .stages = .{ .fragment = true },
+            .partially_bound = false,
+        },
+        .{
+            .name = "render_targets",
+            .kind = .storage_image,
+            .count = max_render_targets,
             .stages = .{ .fragment = true },
             .partially_bound = true,
         },
@@ -159,13 +177,29 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         max_textures,
     ) catch @panic("OOM");
 
-    const pipeline = initPipeline(gpa, gx, pipeline_layout);
+    const pipelines: Pipelines = .init(gpa, gx, pipeline_layout);
+
+    const rtp = RenderTargetPool(.color).init(gpa, gx, .{
+        .virtual_extent = .{
+            .width = 1920,
+            .height = 1080,
+        },
+        .physical_extent = .{
+            .width = Game.display_size.x,
+            .height = Game.display_size.y,
+        },
+        .capacity = max_render_targets,
+        .allocator = .{ .name = "Render Targets" },
+        .desc_sets = desc_sets,
+        .storage_binding = pipeline_layout_options.binding("render_targets"),
+        .sampled_binding = null,
+    }) catch |err| @panic(@errorName(err));
 
     return .{
         .delete_queues = @splat(.{}),
         .color_image_allocator = color_image_allocator,
         .textures = textures,
-        .pipeline = pipeline,
+        .pipelines = pipelines,
         .pipeline_layout = pipeline_layout,
         .desc_sets = desc_sets,
         .desc_pool = desc_pool,
@@ -173,6 +207,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         .texture_sampler = texture_sampler,
         .scene = scene,
         .sprites = sprites,
+        .rtp = rtp,
     };
 }
 
@@ -186,54 +221,103 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     self.textures.deinit(gpa);
 
     self.pipeline_layout.deinit(gx);
-    self.pipeline.deinit(gx);
+    self.pipelines.deinit(gx);
 
     self.desc_pool.deinit(gx);
     self.storage_buf.deinit(gx);
     self.texture_sampler.deinit(gx);
 
     self.color_image_allocator.deinit(gpa, gx);
+
+    self.rtp.deinit(gpa, gx);
+
     self.* = undefined;
 }
 
-pub fn initPipeline(gpa: Allocator, gx: *Gx, pipeline_layout: gpu.Pipeline.Layout) gpu.Pipeline {
-    const sprite_vert_spv = initSpv(gpa, "shaders/entity.vert.spv");
-    defer gpa.free(sprite_vert_spv);
-    const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
-        .name = .{ .str = "entity.vert.spv" },
-        .ir = sprite_vert_spv,
-    });
-    defer sprite_vert_module.deinit(gx);
+pub const Pipelines = struct {
+    game: gpu.Pipeline,
+    post: gpu.Pipeline,
 
-    const sprite_frag_spv = initSpv(gpa, "shaders/entity.frag.spv");
-    defer gpa.free(sprite_frag_spv);
-    const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
-        .name = .{ .str = "entity.frag.spv" },
-        .ir = sprite_frag_spv,
-    });
-    defer sprite_frag_module.deinit(gx);
+    pub const color_attachment_format: gpu.ImageFormat = .r8g8b8a8_unorm;
 
-    var pipeline: gpu.Pipeline = undefined;
-    gpu.Pipeline.initGraphics(gx, &.{
-        .{
-            .name = .{ .str = "Sprites" },
-            .stages = .{
-                .vertex = sprite_vert_module,
-                .fragment = sprite_frag_module,
+    pub fn init(gpa: Allocator, gx: *Gx, pipeline_layout: gpu.Pipeline.Layout) Pipelines {
+        const sprite_vert_spv = initSpv(gpa, "shaders/entity.vert.spv");
+        defer gpa.free(sprite_vert_spv);
+        const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "entity.vert.spv" },
+            .ir = sprite_vert_spv,
+        });
+        defer sprite_vert_module.deinit(gx);
+
+        const sprite_frag_spv = initSpv(gpa, "shaders/entity.frag.spv");
+        defer gpa.free(sprite_frag_spv);
+        const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "entity.frag.spv" },
+            .ir = sprite_frag_spv,
+        });
+        defer sprite_frag_module.deinit(gx);
+
+        const post_vert_spv = initSpv(gpa, "shaders/post.vert.spv");
+        defer gpa.free(post_vert_spv);
+        const post_vert_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "entity.vert.spv" },
+            .ir = post_vert_spv,
+        });
+        defer post_vert_module.deinit(gx);
+
+        const post_frag_spv = initSpv(gpa, "shaders/post.frag.spv");
+        defer gpa.free(post_frag_spv);
+        const post_frag_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "post.frag.spv" },
+            .ir = post_frag_spv,
+        });
+        defer post_frag_module.deinit(gx);
+
+        var game: gpu.Pipeline = undefined;
+        var post: gpu.Pipeline = undefined;
+        gpu.Pipeline.initGraphics(gx, &.{
+            .{
+                .name = .{ .str = "Game" },
+                .stages = .{
+                    .vertex = sprite_vert_module,
+                    .fragment = sprite_frag_module,
+                },
+                .result = &game,
+                .input_assembly = .{ .triangle_strip = .{} },
+                .layout = pipeline_layout,
+                .color_attachment_formats = &.{
+                    color_attachment_format,
+                },
+                .depth_attachment_format = .undefined,
+                .stencil_attachment_format = .undefined,
             },
-            .result = &pipeline,
-            .input_assembly = .{ .triangle_strip = .{} },
-            .layout = pipeline_layout,
-            .color_attachment_formats = &.{
-                gx.device.surface_format,
+            .{
+                .name = .{ .str = "Post" },
+                .stages = .{
+                    .vertex = post_vert_module,
+                    .fragment = post_frag_module,
+                },
+                .result = &post,
+                .input_assembly = .{ .triangle_strip = .{} },
+                .layout = pipeline_layout,
+                .color_attachment_formats = &.{gx.device.surface_format},
+                .depth_attachment_format = .undefined,
+                .stencil_attachment_format = .undefined,
             },
-            .depth_attachment_format = .undefined,
-            .stencil_attachment_format = .undefined,
-        },
-    });
+        });
 
-    return pipeline;
-}
+        return .{
+            .game = game,
+            .post = post,
+        };
+    }
+
+    pub fn deinit(self: *@This(), gx: *Gx) void {
+        self.game.deinit(gx);
+        self.post.deinit(gx);
+        self.* = undefined;
+    }
+};
 
 fn initSpv(gpa: Allocator, subpath: []const u8) []const u32 {
     // On most of the platforms we care about we could just use `selfExeDirPathAlloc`, but the SDL
