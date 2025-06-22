@@ -40,9 +40,10 @@ storage_buf: UploadBuf(.{ .storage = true }),
 
 texture_sampler: gpu.Sampler,
 
-sprites: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
+entities: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 
+pub const max_render_entities = 100000;
 pub const max_textures = b: {
     const n = 16384;
     assert(n < @intFromEnum(ubo.Texture.none));
@@ -75,7 +76,7 @@ pub const ubo = struct {
         mouse: Vec2,
     };
 
-    pub const Instance = extern struct {
+    pub const Entity = extern struct {
         world_from_model: Mat2x3,
         diffuse: Texture = .none,
         recolor: Texture = .none,
@@ -119,6 +120,12 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
             .partially_bound = true,
         },
     },
+    .push_constant_ranges = &.{
+        .{
+            .size = 4,
+            .stages = .{ .fragment = true },
+        },
+    },
 };
 
 pub fn init(gpa: Allocator, gx: *Gx) @This() {
@@ -147,7 +154,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
     });
 
     var scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
-    var sprites: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
+    var entities: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
     const storage_buf = bufPart(gx, UploadBuf(.{ .storage = true }), .{
         .buf = .{
             .name = .{ .str = "Storage" },
@@ -155,7 +162,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         },
         .frame = &.{
             .init(ubo.Scene, &scene),
-            .init([1000000]ubo.Instance, &sprites),
+            .init([max_render_entities]ubo.Entity, &entities),
         },
     });
 
@@ -206,7 +213,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         .storage_buf = storage_buf,
         .texture_sampler = texture_sampler,
         .scene = scene,
-        .sprites = sprites,
+        .entities = entities,
         .rtp = rtp,
     };
 }

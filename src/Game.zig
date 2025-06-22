@@ -841,7 +841,7 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
             .set = set,
             .binding = Renderer.pipeline_layout_options.binding("entities"),
             .value = .{
-                .storage_buf = renderer.sprites[frame].asBuf(.{ .storage = true }),
+                .storage_buf = renderer.entities[frame].asBuf(.{ .storage = true }),
             },
         });
 

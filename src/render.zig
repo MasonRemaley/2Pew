@@ -201,7 +201,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
             .mouse = mouse,
         });
 
-        var instances = game.renderer.sprites[game.gx.frame].writer().typed(ubo.Instance);
+        var entity_writer = game.renderer.entities[game.gx.frame].writer().typed(ubo.Entity);
 
         // Draw the stars
         for (game.stars) |star| {
@@ -210,7 +210,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
                 .large => game.star_large,
                 .planet_red => game.planet_red,
             });
-            instances.write(.{
+            entity_writer.write(.{
                 .world_from_model = Mat2x3.identity
                     .translated(.splat(-0.5))
                     .scaled(sprite.size)
@@ -223,7 +223,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
         // Draw the ring
         {
             const sprite = game.assets.sprite(game.ring_bg);
-            instances.write(.{
+            entity_writer.write(.{
                 .world_from_model = Mat2x3.identity
                     .translated(.splat(-0.5))
                     .scaled(sprite.size)
@@ -237,15 +237,15 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
             .assets = game.assets,
             .es = es,
             .delta_s = delta_s,
-            .instances = &instances,
+            .entity_writer = &entity_writer,
         });
 
         es.forEach("renderHealthBar", renderHealthBar, .{
-            .instances = &instances,
+            .entity_writer = &entity_writer,
         });
         es.forEach("renderSprite", renderSprite, .{
             .game = game,
-            .instances = &instances,
+            .entity_writer = &entity_writer,
         });
         es.forEach("renderSpring", renderSpring, .{
             .es = es,
@@ -264,7 +264,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
                         .x = col_width * @as(f32, @floatFromInt(team_index)),
                         .y = 0,
                     });
-                    instances.write(.{
+                    entity_writer.write(.{
                         .world_from_model = Mat2x3.identity
                             .translated(.splat(-0.5))
                             .scaled(sprite.size)
@@ -283,7 +283,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
                         .x = col_width * @as(f32, @floatFromInt(team_index)),
                         .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
                     });
-                    instances.write(.{
+                    entity_writer.write(.{
                         .world_from_model = Mat2x3.identity
                             .translated(.splat(-0.5))
                             .scaled(sprite.size.scaled(0.5))
@@ -334,7 +334,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
         render_game.bindDescSet(game.gx, game.renderer.pipelines.game, game.renderer.desc_sets[game.gx.frame]);
         render_game.draw(game.gx, .{
             .vertex_count = 4,
-            .instance_count = @intCast(instances.len),
+            .instance_count = @intCast(entity_writer.len),
             .first_vertex = 0,
             .first_instance = 0,
         });
@@ -384,6 +384,12 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
             },
         });
         post.bindPipeline(game.gx, game.renderer.pipelines.post);
+        post.pushConstantSlice(game.gx, .{
+            .pipeline_layout = game.renderer.pipeline_layout.handle,
+            .stages = .{ .fragment = true },
+            .offset = 0,
+            .data = &.{@intFromEnum(game.rt)},
+        });
         post.bindDescSet(game.gx, game.renderer.pipelines.post, game.renderer.desc_sets[game.gx.frame]);
         post.draw(game.gx, .{
             .vertex_count = 3,
@@ -399,7 +405,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
 }
 
 fn renderHealthBar(
-    ctx: struct { instances: *gpu.Writer.Typed(ubo.Instance) },
+    ctx: struct { entity_writer: *gpu.Writer.Typed(ubo.Entity) },
     health: *const Health,
     rb: *const RigidBody,
     transform: *const Transform,
@@ -410,7 +416,7 @@ fn renderHealthBar(
     var start = transform.getWorldPos().minus(health_bar_size.scaled(0.5)).floored();
     start.y += rb.radius + health_bar_size.y;
 
-    ctx.instances.write(.{
+    ctx.entity_writer.write(.{
         .world_from_model = Mat2x3.identity
             .scaled(health_bar_size.plus(.splat(2)))
             .translated(start.minus(.splat(1))),
@@ -423,7 +429,7 @@ fn renderHealthBar(
         colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{ 0.886, 0.000, 0.012, 1 })
     else
         colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{ 1.000, 0.490, 0.012, 1 });
-    ctx.instances.write(.{
+    ctx.entity_writer.write(.{
         .world_from_model = Mat2x3.identity
             .scaled(health_bar_size.compProd(.{ .x = hp_percent, .y = 1.0 }))
             .translated(start),
@@ -434,7 +440,7 @@ fn renderHealthBar(
 fn renderSprite(
     ctx: struct {
         game: *const Game,
-        instances: *gpu.Writer.Typed(ubo.Instance),
+        entity_writer: *gpu.Writer.Typed(ubo.Entity),
     },
     sprite_index: *const Sprite.Index,
     rb_opt: ?*const RigidBody,
@@ -448,7 +454,7 @@ fn renderSprite(
     const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
     const size_coefficient = if (rb_opt) |rb| rb.radius / sprite_radius else 1.0;
     const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-    ctx.instances.write(.{
+    ctx.entity_writer.write(.{
         .world_from_model = Mat2x3.identity
             .translated(.splat(-0.5))
             .scaled(sprite_size)
@@ -474,7 +480,7 @@ fn renderAnimations(
         assets: *const Assets,
         es: *Entities,
         delta_s: f32,
-        instances: *gpu.Writer.Typed(ubo.Instance),
+        entity_writer: *gpu.Writer.Typed(ubo.Entity),
     },
     entity: Entity,
     rb: *const RigidBody,
@@ -528,7 +534,7 @@ fn renderAnimations(
         const sprite_radius = (unscaled_sprite_size.x + unscaled_sprite_size.y) / 4.0;
         const size_coefficient = rb.radius / sprite_radius;
         const sprite_size = unscaled_sprite_size.scaled(size_coefficient);
-        ctx.instances.write(.{
+        ctx.entity_writer.write(.{
             .world_from_model = Mat2x3.identity
                 .translated(.splat(-0.5))
                 .rotated(.fromAngle(frame.angle))
