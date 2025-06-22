@@ -6,7 +6,7 @@
 #include "types/scene.glsl"
 
 #include "descs/scene.glsl"
-#include "descs/render_targets.glsl"
+#include "descs/rt.glsl"
 
 layout(push_constant) uniform TestPushConstants {
     uint source;
@@ -17,11 +17,11 @@ layout(location = 0) out vec4 out_color;
 
 void main() {
     // Render target info
-    ivec2 rt_size = imageSize(render_targets[source]);
+    ivec2 rt_size = imageSize(rt_r_rgba8[source]);
     float rt_ar = float(rt_size.x) / float(rt_size.y);
 
     // Take a sample at the center of the pixel
-    vec3 center = srgbToLinear(imageLoad(render_targets[source], ivec2(texcoord * rt_size)).rgb);
+    vec3 center = srgbToLinear(imageLoad(rt_r_rgba8[source], ivec2(texcoord * rt_size)).rgb);
 
     // Terrible bloom implementation, just using it to test out post processing
     vec3 bloom = center;
@@ -31,7 +31,7 @@ void main() {
             if (x != 0 || y != 0) {
                 ivec2 coord = ivec2(ivec2(texcoord * rt_size) + ivec2(x, y));
                 coord = clamp(coord, ivec2(0, 0), rt_size);
-                bloom += srgbToLinear(imageLoad(render_targets[source], coord).rgb) * mix(1, 0, length(vec2(x, y)) / length(vec2(size)));
+                bloom += srgbToLinear(imageLoad(rt_r_rgba8[source], coord).rgb) * mix(1, 0, length(vec2(x, y)) / length(vec2(size)));
             }
         }
     }

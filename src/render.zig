@@ -181,7 +181,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     defer zone.end();
 
     game.renderer.beginFrame(game.gx);
-    defer game.gx.endFrame(.{});
+    defer game.gx.endFrame();
 
     const rt = game.rt.getSizedView(&game.renderer.rtp);
 
@@ -355,56 +355,74 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
                 cb.beginZone(game.gx, .{ .name = "Post Processing", .src = @src() });
                 defer cb.endZone(game.gx);
 
-                const framebuf = game.gx.acquireNextImage(.{
+                const swapchain_image_index = game.gx.acquireNextImage(.{
                     .width = display_size.x,
                     .height = display_size.y,
                 });
+                const swapchain_image = game.gx.swapchainImages()[swapchain_image_index];
+                const swapchain_extent = game.gx.swapchainExtent();
+
                 cb.barriers(game.gx, .{
-                    .image = &.{.colorAttachmentToReadOnly(.{
-                        .dst_stages = .{ .fragment = true },
-                        .handle = game.rt.get(&game.renderer.rtp).handle,
-                        .range = .first,
-                    })},
-                });
-                cb.beginRendering(game.gx, .{
-                    .color_attachments = &.{
-                        .init(.{
-                            .load_op = .dont_care,
-                            .view = framebuf.view,
+                    .image = &.{
+                        .colorAttachmentToReadOnly(.{
+                            .dst_stages = .{ .fragment = true },
+                            .handle = game.rt.get(&game.renderer.rtp).handle,
+                            .range = .first,
+                        }),
+                        .undefinedToColorAttachment(.{
+                            .handle = swapchain_image.handle,
+                            .range = .first,
                         }),
                     },
-                    .viewport = .{
-                        .x = 0,
-                        .y = 0,
-                        .width = @floatFromInt(framebuf.extent.width),
-                        .height = @floatFromInt(framebuf.extent.height),
-                        .min_depth = 0.0,
-                        .max_depth = 1.0,
-                    },
-                    .scissor = .{
-                        .offset = .zero,
-                        .extent = framebuf.extent,
-                    },
-                    .area = .{
-                        .offset = .zero,
-                        .extent = framebuf.extent,
-                    },
                 });
-                defer cb.endRendering(game.gx);
-                cb.bindPipeline(game.gx, game.renderer.pipelines.post);
-                cb.pushConstant(gpu.ext.RenderTargetPool(.color).Handle, game.gx, .{
-                    .pipeline_layout = game.renderer.pipeline_layout.handle,
-                    .stages = .{ .fragment = true },
-                    .offset = 0,
-                    .data = &game.rt,
-                });
-                cb.bindDescSet(game.gx, game.renderer.pipelines.post, game.renderer.desc_sets[game.gx.frame]);
-                cb.draw(game.gx, .{
-                    .vertex_count = 3,
-                    .instance_count = 1,
-                    .first_vertex = 0,
-                    .first_instance = 0,
-                });
+
+                {
+                    cb.beginRendering(game.gx, .{
+                        .color_attachments = &.{
+                            .init(.{
+                                .load_op = .dont_care,
+                                .view = swapchain_image.view,
+                            }),
+                        },
+                        .viewport = .{
+                            .x = 0,
+                            .y = 0,
+                            .width = @floatFromInt(swapchain_extent.width),
+                            .height = @floatFromInt(swapchain_extent.height),
+                            .min_depth = 0.0,
+                            .max_depth = 1.0,
+                        },
+                        .scissor = .{
+                            .offset = .zero,
+                            .extent = swapchain_extent,
+                        },
+                        .area = .{
+                            .offset = .zero,
+                            .extent = swapchain_extent,
+                        },
+                    });
+                    defer cb.endRendering(game.gx);
+                    cb.bindPipeline(game.gx, game.renderer.pipelines.post);
+                    cb.pushConstant(gpu.ext.RenderTargetPool(.color).Handle, game.gx, .{
+                        .pipeline_layout = game.renderer.pipeline_layout.handle,
+                        .stages = .{ .fragment = true },
+                        .offset = 0,
+                        .data = &game.rt,
+                    });
+                    cb.bindDescSet(game.gx, game.renderer.pipelines.post, game.renderer.desc_sets[game.gx.frame]);
+                    cb.draw(game.gx, .{
+                        .vertex_count = 3,
+                        .instance_count = 1,
+                        .first_vertex = 0,
+                        .first_instance = 0,
+                    });
+                }
+
+                cb.barriers(game.gx, .{ .image = &.{
+                    .colorAttachmentToPresent(.{
+                        .handle = swapchain_image.handle,
+                    }),
+                } });
             }
         }
     }

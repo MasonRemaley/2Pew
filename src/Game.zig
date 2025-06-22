@@ -806,7 +806,7 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
     cb.barriers(gx, .{ .image = image_barriers.constSlice() });
 
     cb.submit(gx);
-    gx.endFrame(.{ .present = false });
+    gx.endFrame();
 
     var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 128);
     defer desc_set_updates.deinit();
