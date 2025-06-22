@@ -179,9 +179,13 @@ fn handheld(game: *const Game) Mat2x3 {
 pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
+
     game.renderer.beginFrame(game.gx);
+    defer game.gx.endFrame(.{});
 
     const rt = game.rt.getSizedView(&game.renderer.rtp);
+
+    // Write the entity data
     {
         var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
         var mouse: Vec2 = .zero;
@@ -296,112 +300,114 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
             }
         }
 
-        const render_game: CmdBuf = .init(game.gx, .{
-            .name = "Render Game",
-            .src = @src(),
-        });
-        render_game.barriers(game.gx, .{ .image = &.{
-            .undefinedToColorAttachment(.{
-                .handle = game.rt.get(&game.renderer.rtp).handle,
-                .range = .first,
-            }),
-        } });
-        render_game.beginRendering(game.gx, .{
-            .color_attachments = &.{
-                .init(.{
-                    .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
-                    .view = rt.view,
-                }),
-            },
-            .viewport = .{
-                .x = 0,
-                .y = 0,
-                .width = @floatFromInt(rt.extent.width),
-                .height = @floatFromInt(rt.extent.height),
-                .min_depth = 0.0,
-                .max_depth = 1.0,
-            },
-            .scissor = .{
-                .offset = .zero,
-                .extent = rt.extent,
-            },
-            .area = .{
-                .offset = .zero,
-                .extent = rt.extent,
-            },
-        });
-        render_game.bindPipeline(game.gx, game.renderer.pipelines.game);
-        render_game.bindDescSet(game.gx, game.renderer.pipelines.game, game.renderer.desc_sets[game.gx.frame]);
-        render_game.draw(game.gx, .{
-            .vertex_count = 4,
-            .instance_count = @intCast(entity_writer.len),
-            .first_vertex = 0,
-            .first_instance = 0,
-        });
-        render_game.endRendering(game.gx);
-        render_game.submit(game.gx);
+        const cb: CmdBuf = .init(game.gx, .{ .name = "Render Game", .src = @src() });
+        defer cb.submit(game.gx);
+
+        {
+            // Render the entities
+            {
+                cb.beginZone(game.gx, .{ .name = "Render Entities", .src = @src() });
+                defer cb.endZone(game.gx);
+
+                cb.barriers(game.gx, .{ .image = &.{
+                    .undefinedToColorAttachment(.{
+                        .handle = game.rt.get(&game.renderer.rtp).handle,
+                        .range = .first,
+                    }),
+                } });
+                cb.beginRendering(game.gx, .{
+                    .color_attachments = &.{
+                        .init(.{
+                            .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
+                            .view = rt.view,
+                        }),
+                    },
+                    .viewport = .{
+                        .x = 0,
+                        .y = 0,
+                        .width = @floatFromInt(rt.extent.width),
+                        .height = @floatFromInt(rt.extent.height),
+                        .min_depth = 0.0,
+                        .max_depth = 1.0,
+                    },
+                    .scissor = .{
+                        .offset = .zero,
+                        .extent = rt.extent,
+                    },
+                    .area = .{
+                        .offset = .zero,
+                        .extent = rt.extent,
+                    },
+                });
+                defer cb.endRendering(game.gx);
+
+                cb.bindPipeline(game.gx, game.renderer.pipelines.game);
+                cb.bindDescSet(game.gx, game.renderer.pipelines.game, game.renderer.desc_sets[game.gx.frame]);
+                cb.draw(game.gx, .{
+                    .vertex_count = 4,
+                    .instance_count = @intCast(entity_writer.len),
+                    .first_vertex = 0,
+                    .first_instance = 0,
+                });
+            }
+
+            {
+                cb.beginZone(game.gx, .{ .name = "Post Processing", .src = @src() });
+                defer cb.endZone(game.gx);
+
+                const framebuf = game.gx.acquireNextImage(.{
+                    .width = display_size.x,
+                    .height = display_size.y,
+                });
+                cb.barriers(game.gx, .{
+                    .image = &.{.colorAttachmentToReadOnly(.{
+                        .dst_stages = .{ .fragment = true },
+                        .handle = game.rt.get(&game.renderer.rtp).handle,
+                        .range = .first,
+                    })},
+                });
+                cb.beginRendering(game.gx, .{
+                    .color_attachments = &.{
+                        .init(.{
+                            .load_op = .dont_care,
+                            .view = framebuf.view,
+                        }),
+                    },
+                    .viewport = .{
+                        .x = 0,
+                        .y = 0,
+                        .width = @floatFromInt(framebuf.extent.width),
+                        .height = @floatFromInt(framebuf.extent.height),
+                        .min_depth = 0.0,
+                        .max_depth = 1.0,
+                    },
+                    .scissor = .{
+                        .offset = .zero,
+                        .extent = framebuf.extent,
+                    },
+                    .area = .{
+                        .offset = .zero,
+                        .extent = framebuf.extent,
+                    },
+                });
+                defer cb.endRendering(game.gx);
+                cb.bindPipeline(game.gx, game.renderer.pipelines.post);
+                cb.pushConstant(gpu.ext.RenderTargetPool(.color).Handle, game.gx, .{
+                    .pipeline_layout = game.renderer.pipeline_layout.handle,
+                    .stages = .{ .fragment = true },
+                    .offset = 0,
+                    .data = &game.rt,
+                });
+                cb.bindDescSet(game.gx, game.renderer.pipelines.post, game.renderer.desc_sets[game.gx.frame]);
+                cb.draw(game.gx, .{
+                    .vertex_count = 3,
+                    .instance_count = 1,
+                    .first_vertex = 0,
+                    .first_instance = 0,
+                });
+            }
+        }
     }
-
-    {
-        const post: CmdBuf = .init(game.gx, .{
-            .name = "Post",
-            .src = @src(),
-        });
-
-        const framebuf = game.gx.acquireNextImage(.{
-            .width = display_size.x,
-            .height = display_size.y,
-        });
-        post.barriers(game.gx, .{ .image = &.{
-            .colorAttachmentToCompute(.{
-                .dst_access = .{ .read = true },
-                .handle = game.rt.get(&game.renderer.rtp).handle,
-                .range = .first,
-            }),
-        } });
-        post.beginRendering(game.gx, .{
-            .color_attachments = &.{
-                .init(.{
-                    .load_op = .dont_care,
-                    .view = framebuf.view,
-                }),
-            },
-            .viewport = .{
-                .x = 0,
-                .y = 0,
-                .width = @floatFromInt(framebuf.extent.width),
-                .height = @floatFromInt(framebuf.extent.height),
-                .min_depth = 0.0,
-                .max_depth = 1.0,
-            },
-            .scissor = .{
-                .offset = .zero,
-                .extent = framebuf.extent,
-            },
-            .area = .{
-                .offset = .zero,
-                .extent = framebuf.extent,
-            },
-        });
-        post.bindPipeline(game.gx, game.renderer.pipelines.post);
-        post.pushConstantSlice(game.gx, .{
-            .pipeline_layout = game.renderer.pipeline_layout.handle,
-            .stages = .{ .fragment = true },
-            .offset = 0,
-            .data = &.{@intFromEnum(game.rt)},
-        });
-        post.bindDescSet(game.gx, game.renderer.pipelines.post, game.renderer.desc_sets[game.gx.frame]);
-        post.draw(game.gx, .{
-            .vertex_count = 3,
-            .instance_count = 1,
-            .first_vertex = 0,
-            .first_instance = 0,
-        });
-        post.endRendering(game.gx);
-        post.submit(game.gx);
-    }
-
-    game.gx.endFrame(.{});
 }
 
 fn renderHealthBar(

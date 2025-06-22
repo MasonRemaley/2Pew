@@ -799,7 +799,7 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
         image_barriers.appendAssumeCapacity(.transferDstToReadOnly(.{
             .handle = texture.handle,
             .range = .first,
-            .dst_stage = .{ .fragment_shader = true },
+            .dst_stages = .{ .fragment = true },
             .aspect = .{ .color = true },
         }));
     }
