@@ -174,7 +174,15 @@ pub fn main() !void {
     var rng = std.Random.DefaultPrng.init(random_seed);
     const random: std.Random = rng.random();
 
-    var game = try Game.init(allocator, random, &assets, &renderer, &gx);
+    const init_window_extent: gpu.Extent2D = b: {
+        var width: c_int = 0;
+        var height: c_int = 0;
+        if (!c.SDL_GetWindowSizeInPixels(screen, &width, &height)) {
+            std.debug.panic("SDL_GetWindowSizeInPixels failed: {?s}\n", .{c.SDL_GetError()});
+        }
+        break :b .{ .width = @intCast(width), .height = @intCast(height) };
+    };
+    var game = try Game.init(allocator, random, &assets, &renderer, &gx, init_window_extent);
 
     game.hot_swap = args.named.@"hot-swap";
 
@@ -194,7 +202,7 @@ pub fn main() !void {
     // var warned_memory_usage = false;
 
     while (true) {
-        if (poll(&es, &cb, &game)) {
+        if (poll(&es, &cb, &game, delta_s)) {
             std.process.cleanExit();
             return;
         }
@@ -223,7 +231,8 @@ pub fn main() !void {
     }
 }
 
-fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
+fn poll(es: *Entities, cb: *CmdBuf, game: *Game, delta_s: f32) bool {
+    game.seconds_since_resize += delta_s;
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event)) {
         switch (event.type) {
@@ -261,6 +270,13 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
                     game.setupScenario(es, cb, .royale_4p);
                 },
                 else => {},
+            },
+            c.SDL_EVENT_WINDOW_RESIZED => {
+                game.window_extent = .{
+                    .width = @intCast(event.window.data1),
+                    .height = @intCast(event.window.data2),
+                };
+                game.seconds_since_resize = 0.0;
             },
             else => {},
         }

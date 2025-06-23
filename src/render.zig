@@ -180,6 +180,8 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
+    if (game.window_extent.width == 0 or game.window_extent.height == 0) return;
+
     game.renderer.beginFrame(game.gx);
     defer game.gx.endFrame();
 
@@ -355,12 +357,11 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
                 cb.beginZone(game.gx, .{ .name = "Post Processing", .src = @src() });
                 defer cb.endZone(game.gx);
 
-                const swapchain_image_index = game.gx.acquireNextImage(.{
-                    .width = display_size.x,
-                    .height = display_size.y,
+                const acquire_result = game.gx.acquireNextImage(.{
+                    .recreate_if_suboptimal = game.seconds_since_resize > 0.05,
+                    .window_extent = game.window_extent,
                 });
-                const swapchain_image = game.gx.swapchainImages()[swapchain_image_index];
-                const swapchain_extent = game.gx.swapchainExtent();
+                const swapchain_image = game.gx.swapchain.images.get(acquire_result.index);
 
                 cb.barriers(game.gx, .{
                     .image = &.{
@@ -387,18 +388,18 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
                         .viewport = .{
                             .x = 0,
                             .y = 0,
-                            .width = @floatFromInt(swapchain_extent.width),
-                            .height = @floatFromInt(swapchain_extent.height),
+                            .width = @floatFromInt(game.gx.swapchain.extent.width),
+                            .height = @floatFromInt(game.gx.swapchain.extent.height),
                             .min_depth = 0.0,
                             .max_depth = 1.0,
                         },
                         .scissor = .{
                             .offset = .zero,
-                            .extent = swapchain_extent,
+                            .extent = game.gx.swapchain.extent,
                         },
                         .area = .{
                             .offset = .zero,
-                            .extent = swapchain_extent,
+                            .extent = game.gx.swapchain.extent,
                         },
                     });
                     defer cb.endRendering(game.gx);

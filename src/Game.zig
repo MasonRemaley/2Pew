@@ -93,7 +93,10 @@ global_trauma: Trauma = .init(.{}),
 player_trauma: [4]Trauma = @splat(.init(.{})),
 rumble: Rumble = .{},
 
+seconds_since_resize: f32 = 0.0,
+
 rt: gpu.ext.RenderTargetPool(.color).Handle,
+window_extent: gpu.Extent2D,
 
 const ShipAnimations = struct {
     still: Animation.Index,
@@ -507,7 +510,14 @@ fn createWendy(
     }
 }
 
-pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, gx: *Gx) !Game {
+pub fn init(
+    gpa: Allocator,
+    rng: Random,
+    assets: *Assets,
+    renderer: *Renderer,
+    gx: *Gx,
+    window_extent: gpu.Extent2D,
+) !Game {
     const init_zone = Zone.begin(.{ .src = @src() });
     defer init_zone.end();
 
@@ -944,6 +954,7 @@ pub fn init(gpa: Allocator, rng: Random, assets: *Assets, renderer: *Renderer, g
         .particle = particle,
 
         .rt = rt,
+        .window_extent = window_extent,
     };
 }
 
