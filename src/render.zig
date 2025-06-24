@@ -344,7 +344,11 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
                 defer cb.endRendering(game.gx);
 
                 cb.bindPipeline(game.gx, game.renderer.pipelines.game);
-                cb.bindDescSet(game.gx, game.renderer.pipelines.game, game.renderer.desc_sets[game.gx.frame]);
+                cb.bindDescSet(
+                    game.gx,
+                    game.renderer.pipelines.game,
+                    game.renderer.ecs_desc_sets[game.gx.frame],
+                );
                 cb.draw(game.gx, .{
                     .vertex_count = 4,
                     .instance_count = @intCast(entity_writer.len),
@@ -405,12 +409,16 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
                     defer cb.endRendering(game.gx);
                     cb.bindPipeline(game.gx, game.renderer.pipelines.post);
                     cb.pushConstant(gpu.ext.RenderTargetPool(.color).Handle, game.gx, .{
-                        .pipeline_layout = game.renderer.pipeline_layout.handle,
+                        .pipeline_layout = game.renderer.post_pipeline_layout.handle,
                         .stages = .{ .fragment = true },
                         .offset = 0,
                         .data = &game.rt,
                     });
-                    cb.bindDescSet(game.gx, game.renderer.pipelines.post, game.renderer.desc_sets[game.gx.frame]);
+                    cb.bindDescSet(
+                        game.gx,
+                        game.renderer.pipelines.post,
+                        game.renderer.post_desc_sets[game.gx.frame],
+                    );
                     cb.draw(game.gx, .{
                         .vertex_count = 3,
                         .instance_count = 1,

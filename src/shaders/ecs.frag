@@ -2,10 +2,7 @@
 #include <gbms/srgb.glsl>
 #include <gbms/sd.glsl>
 
-#include "types/entity.glsl"
-
-#include "descs/textures.glsl"
-#include "descs/texture_sampler.glsl"
+#include "descs/ecs.glsl"
 
 layout(location = 0) in vec2 texcoord;
 layout(location = 1) in flat Entity entity;

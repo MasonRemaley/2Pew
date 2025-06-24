@@ -1,7 +1,4 @@
-#include "types/scene.glsl"
-
-#include "descs/scene.glsl"
-#include "descs/entities.glsl"
+#include "descs/ecs.glsl"
 
 layout(location = 0) out vec2 out_texcoord;
 layout(location = 1) out flat Entity out_entity;

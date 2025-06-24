@@ -837,11 +837,11 @@ pub fn init(
         },
     });
 
-    for (renderer.desc_sets, 0..) |set, frame| {
+    for (renderer.ecs_desc_sets, 0..) |set, frame| {
         if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
         try desc_set_updates.append(.{
             .set = set,
-            .binding = Renderer.pipeline_layout_options.binding("scene"),
+            .binding = Renderer.ecs_pipeline_layout_options.binding("scene"),
             .value = .{
                 .storage_buf = renderer.scene[frame].asBuf(.{ .storage = true }),
             },
@@ -849,7 +849,7 @@ pub fn init(
         if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
         try desc_set_updates.append(.{
             .set = set,
-            .binding = Renderer.pipeline_layout_options.binding("entities"),
+            .binding = Renderer.ecs_pipeline_layout_options.binding("entities"),
             .value = .{
                 .storage_buf = renderer.entities[frame].asBuf(.{ .storage = true }),
             },
@@ -860,15 +860,24 @@ pub fn init(
             if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
             try desc_set_updates.append(.{
                 .set = set,
-                .binding = Renderer.pipeline_layout_options.binding("textures"),
+                .binding = Renderer.ecs_pipeline_layout_options.binding("textures"),
                 .index = @intCast(texture_index),
                 .value = .{ .sampled_image = texture.view },
             });
         }
         try desc_set_updates.append(.{
             .set = set,
-            .binding = Renderer.pipeline_layout_options.binding("texture_sampler"),
+            .binding = Renderer.ecs_pipeline_layout_options.binding("texture_sampler"),
             .value = .{ .sampler = renderer.texture_sampler },
+        });
+    }
+    for (renderer.post_desc_sets, 0..) |set, frame| {
+        try desc_set_updates.append(.{
+            .set = set,
+            .binding = Renderer.post_pipeline_layout_options.binding("scene"),
+            .value = .{
+                .storage_buf = renderer.scene[frame].asBuf(.{ .storage = true }),
+            },
         });
     }
     gpu.DescSet.update(gx, desc_set_updates.items);

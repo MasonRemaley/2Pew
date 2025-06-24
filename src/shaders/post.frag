@@ -5,8 +5,7 @@
 
 #include "types/scene.glsl"
 
-#include "descs/scene.glsl"
-#include "descs/rt.glsl"
+#include "descs/post.glsl"
 
 layout(push_constant) uniform TestPushConstants {
     uint source;

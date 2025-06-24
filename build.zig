@@ -106,13 +106,13 @@ pub fn build(b: *std.Build) void {
     });
     const shader_compiler_exe = shader_compiler.artifact("shader_compiler");
 
-    const entity_vert_spv = installShader(b, shader_compiler_exe, "entity.vert", optimize);
-    const entity_frag_spv = installShader(b, shader_compiler_exe, "entity.frag", optimize);
+    const ecs_vert_spv = installShader(b, shader_compiler_exe, "ecs.vert", optimize);
+    const ecs_frag_spv = installShader(b, shader_compiler_exe, "ecs.frag", optimize);
     const post_vert = installShader(b, shader_compiler_exe, "post.vert", optimize);
     const post_frag = installShader(b, shader_compiler_exe, "post.frag", optimize);
     const install_shaders_step = b.step("shaders", "Build and install the shaders");
-    install_shaders_step.dependOn(&entity_vert_spv.step);
-    install_shaders_step.dependOn(&entity_frag_spv.step);
+    install_shaders_step.dependOn(&ecs_vert_spv.step);
+    install_shaders_step.dependOn(&ecs_frag_spv.step);
     install_shaders_step.dependOn(&post_vert.step);
     install_shaders_step.dependOn(&post_frag.step);
     b.getInstallStep().dependOn(install_shaders_step);

@@ -31,8 +31,10 @@ color_image_allocator: ImageBumpAllocator(.color),
 textures: std.ArrayListUnmanaged(gpu.Image(.color)),
 
 pipelines: Pipelines,
-pipeline_layout: gpu.Pipeline.Layout,
-desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
+ecs_pipeline_layout: gpu.Pipeline.Layout,
+post_pipeline_layout: gpu.Pipeline.Layout,
+ecs_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
+post_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
 rtp: RenderTargetPool(.color),
 
@@ -84,13 +86,13 @@ pub const ubo = struct {
     };
 };
 
-pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
-    .name = .{ .str = "Game" },
+pub const ecs_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
+    .name = .{ .str = "ECS" },
     .descs = &.{
         .{
             .name = "scene",
             .kind = .storage_buffer,
-            .stages = .{ .vertex = true, .fragment = true },
+            .stages = .{ .vertex = true },
             .partially_bound = false,
         },
         .{
@@ -109,6 +111,18 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
         .{
             .name = "texture_sampler",
             .kind = .sampler,
+            .stages = .{ .fragment = true },
+            .partially_bound = false,
+        },
+    },
+};
+
+pub const post_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
+    .name = .{ .str = "Post" },
+    .descs = &.{
+        .{
+            .name = "scene",
+            .kind = .storage_buffer,
             .stages = .{ .fragment = true },
             .partially_bound = false,
         },
@@ -136,16 +150,26 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         .name = "Color Images",
     }) catch |err| @panic(@errorName(err));
 
-    const pipeline_layout: gpu.Pipeline.Layout = .init(gx, pipeline_layout_options);
+    const ecs_pipeline_layout: gpu.Pipeline.Layout = .init(gx, ecs_pipeline_layout_options);
+    const post_pipeline_layout: gpu.Pipeline.Layout = .init(gx, post_pipeline_layout_options);
 
-    var desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
-    var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, desc_sets.len) = .{};
-    for (&desc_sets, 0..) |*desc_set, i| {
+    var ecs_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
+    var post_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
+    var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, ecs_desc_sets.len + post_desc_sets.len) = .{};
+    for (&ecs_desc_sets, 0..) |*desc_set, i| {
         create_descs.appendAssumeCapacity(.{
-            .name = .{ .str = "Game", .index = i },
+            .name = .{ .str = "Entities", .index = i },
             .result = desc_set,
-            .layout = pipeline_layout.desc_set,
-            .layout_options = &pipeline_layout_options,
+            .layout = ecs_pipeline_layout.desc_set,
+            .layout_options = &ecs_pipeline_layout_options,
+        });
+    }
+    for (&post_desc_sets, 0..) |*desc_set, i| {
+        create_descs.appendAssumeCapacity(.{
+            .name = .{ .str = "Post", .index = i },
+            .result = desc_set,
+            .layout = post_pipeline_layout.desc_set,
+            .layout_options = &post_pipeline_layout_options,
         });
     }
     const desc_pool: gpu.DescPool = .init(gx, .{
@@ -184,7 +208,12 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         max_textures,
     ) catch @panic("OOM");
 
-    const pipelines: Pipelines = .init(gpa, gx, pipeline_layout);
+    const pipelines: Pipelines = .init(
+        gpa,
+        gx,
+        ecs_pipeline_layout,
+        post_pipeline_layout,
+    );
 
     const rtp = RenderTargetPool(.color).init(gpa, gx, .{
         .virtual_extent = .{
@@ -197,8 +226,8 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         },
         .capacity = max_render_targets,
         .allocator = .{ .name = "Render Targets" },
-        .desc_sets = desc_sets,
-        .storage_binding = pipeline_layout_options.binding("render_targets"),
+        .desc_sets = post_desc_sets,
+        .storage_binding = post_pipeline_layout_options.binding("render_targets"),
         .sampled_binding = null,
     }) catch |err| @panic(@errorName(err));
 
@@ -207,8 +236,10 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         .color_image_allocator = color_image_allocator,
         .textures = textures,
         .pipelines = pipelines,
-        .pipeline_layout = pipeline_layout,
-        .desc_sets = desc_sets,
+        .ecs_pipeline_layout = ecs_pipeline_layout,
+        .post_pipeline_layout = post_pipeline_layout,
+        .ecs_desc_sets = ecs_desc_sets,
+        .post_desc_sets = post_desc_sets,
         .desc_pool = desc_pool,
         .storage_buf = storage_buf,
         .texture_sampler = texture_sampler,
@@ -227,7 +258,8 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     for (self.textures.items) |*t| t.deinit(gx);
     self.textures.deinit(gpa);
 
-    self.pipeline_layout.deinit(gx);
+    self.ecs_pipeline_layout.deinit(gx);
+    self.post_pipeline_layout.deinit(gx);
     self.pipelines.deinit(gx);
 
     self.desc_pool.deinit(gx);
@@ -247,27 +279,32 @@ pub const Pipelines = struct {
 
     pub const color_attachment_format: gpu.ImageFormat = .r8g8b8a8_unorm;
 
-    pub fn init(gpa: Allocator, gx: *Gx, pipeline_layout: gpu.Pipeline.Layout) Pipelines {
-        const sprite_vert_spv = initSpv(gpa, "shaders/entity.vert.spv");
-        defer gpa.free(sprite_vert_spv);
-        const sprite_vert_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "entity.vert.spv" },
-            .ir = sprite_vert_spv,
+    pub fn init(
+        gpa: Allocator,
+        gx: *Gx,
+        ecs_pipeline_layout: gpu.Pipeline.Layout,
+        post_pipeline_layout: gpu.Pipeline.Layout,
+    ) Pipelines {
+        const ecs_vert_spv = initSpv(gpa, "shaders/ecs.vert.spv");
+        defer gpa.free(ecs_vert_spv);
+        const ecs_vert_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "ecs.vert.spv" },
+            .ir = ecs_vert_spv,
         });
-        defer sprite_vert_module.deinit(gx);
+        defer ecs_vert_module.deinit(gx);
 
-        const sprite_frag_spv = initSpv(gpa, "shaders/entity.frag.spv");
-        defer gpa.free(sprite_frag_spv);
+        const ecs_frag_spv = initSpv(gpa, "shaders/ecs.frag.spv");
+        defer gpa.free(ecs_frag_spv);
         const sprite_frag_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "entity.frag.spv" },
-            .ir = sprite_frag_spv,
+            .name = .{ .str = "ecs.frag.spv" },
+            .ir = ecs_frag_spv,
         });
         defer sprite_frag_module.deinit(gx);
 
         const post_vert_spv = initSpv(gpa, "shaders/post.vert.spv");
         defer gpa.free(post_vert_spv);
         const post_vert_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "entity.vert.spv" },
+            .name = .{ .str = "ecs.vert.spv" },
             .ir = post_vert_spv,
         });
         defer post_vert_module.deinit(gx);
@@ -286,12 +323,12 @@ pub const Pipelines = struct {
             .{
                 .name = .{ .str = "Game" },
                 .stages = .{
-                    .vertex = sprite_vert_module,
+                    .vertex = ecs_vert_module,
                     .fragment = sprite_frag_module,
                 },
                 .result = &game,
                 .input_assembly = .{ .triangle_strip = .{} },
-                .layout = pipeline_layout,
+                .layout = ecs_pipeline_layout,
                 .color_attachment_formats = &.{
                     color_attachment_format,
                 },
@@ -306,7 +343,7 @@ pub const Pipelines = struct {
                 },
                 .result = &post,
                 .input_assembly = .{ .triangle_strip = .{} },
-                .layout = pipeline_layout,
+                .layout = post_pipeline_layout,
                 .color_attachment_formats = &.{gx.device.surface_format},
                 .depth_attachment_format = .undefined,
                 .stencil_attachment_format = .undefined,

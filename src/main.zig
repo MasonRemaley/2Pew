@@ -242,7 +242,8 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game, delta_s: f32) bool {
                 const pipelines: Renderer.Pipelines = .init(
                     game.debug_allocator,
                     game.gx,
-                    game.renderer.pipeline_layout,
+                    game.renderer.ecs_pipeline_layout,
+                    game.renderer.post_pipeline_layout,
                 );
                 game.gx.waitIdle();
                 game.renderer.pipelines.deinit(game.gx);
