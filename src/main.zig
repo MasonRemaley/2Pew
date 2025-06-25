@@ -62,11 +62,7 @@ const command: Command = .{
     },
 };
 
-fn eventFilter(userdata: ?*anyopaque, event: [*c]c.SDL_Event) callconv(.c) bool {
-    // Windows blocks the whole app during resizes, but you can still get the resize events
-    // from the event filter to prevent it from just rendering the last frame stretched. We
-    // could do *all* event processing from here, but it comes with the caveat that these
-    // events could come in on any thread.
+fn handleResize(userdata: ?*anyopaque, event: [*c]c.SDL_Event) callconv(.c) bool {
     const game: *Game = @alignCast(@ptrCast(userdata));
     switch (event.*.type) {
         c.SDL_EVENT_WINDOW_EXPOSED => {
@@ -223,7 +219,13 @@ pub fn main() !void {
 
     // var warned_memory_usage = false;
 
-    c.SDL_SetEventFilter(&eventFilter, &game);
+    if (builtin.target.os.tag == .windows) {
+        // Windows blocks the whole app during resizes, but you can still get the resize events
+        // from the event filter to prevent it from just rendering the last frame stretched. X11 and
+        // Wayland don't require this code path, and in fact doing it anyway is problematic (you end
+        // up queuing presents faster than you can render them.)
+        c.SDL_SetEventFilter(&handleResize, &game);
+    }
 
     while (true) {
         if (poll(&es, &cb, &game)) {
@@ -258,6 +260,7 @@ pub fn main() !void {
 fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event)) {
+        if (!handleResize(game, &event)) continue;
         switch (event.type) {
             c.SDL_EVENT_QUIT => return true,
             c.SDL_EVENT_WINDOW_FOCUS_GAINED => if (game.hot_swap) {
