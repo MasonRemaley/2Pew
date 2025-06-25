@@ -280,6 +280,9 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game, delta_s: f32) bool {
                 game.seconds_since_resize = 0.0;
             },
             else => {},
+            c.SDL_EVENT_WINDOW_EXPOSED => {
+                render.all(es, game, 0);
+            },
         }
     }
     return false;
