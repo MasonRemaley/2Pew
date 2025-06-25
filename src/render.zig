@@ -303,14 +303,9 @@ pub fn all(game: *Game, delta_s: f32) void {
         break :b entity_writer;
     };
 
-    const acquire_result = game.gx.acquireNextImage(.{
-        .recreate_if_suboptimal = true,
-        .window_extent = game.window_extent,
-    });
-    if (acquire_result.recreated) {
-        game.renderer.rtp.recreate(game.gx, game.gx.swapchain.extent);
-    }
-    const swapchain_image = game.gx.swapchain.images.get(acquire_result.index);
+    const acquire_result = game.gx.acquireNextImage(game.window_extent);
+    const swap_extent = acquire_result.extent;
+    const swapchain_image = acquire_result.image;
 
     // Render the ECS
     {
@@ -392,18 +387,17 @@ pub fn all(game: *Game, delta_s: f32) void {
 
         {
             // Calculate the letter box
-            const win_extent = game.gx.swapchain.extent;
             const game_ar = Game.display_size.x / Game.display_size.y;
-            const wind_ar: f32 = @as(f32, @floatFromInt(win_extent.width)) / @as(f32, @floatFromInt(win_extent.height));
+            const wind_ar: f32 = @as(f32, @floatFromInt(swap_extent.width)) / @as(f32, @floatFromInt(swap_extent.height));
             const arr = wind_ar / game_ar;
-            var size = win_extent;
+            var size = swap_extent;
             var offset: gpu.Offset2D = .zero;
             if (wind_ar > game_ar) {
-                size.width = @intFromFloat(@as(f32, @floatFromInt(win_extent.width)) / arr);
-                offset.x = @intCast((win_extent.width - size.width) / 2);
+                size.width = @intFromFloat(@as(f32, @floatFromInt(swap_extent.width)) / arr);
+                offset.x = @intCast((swap_extent.width - size.width) / 2);
             } else {
-                size.height = @intFromFloat(@as(f32, @floatFromInt(win_extent.height)) * arr);
-                offset.y = @intCast((win_extent.height - size.height) / 2);
+                size.height = @intFromFloat(@as(f32, @floatFromInt(swap_extent.height)) * arr);
+                offset.y = @intCast((swap_extent.height - size.height) / 2);
             }
 
             // Perform the post processing
@@ -424,11 +418,11 @@ pub fn all(game: *Game, delta_s: f32) void {
                 },
                 .scissor = .{
                     .offset = .zero,
-                    .extent = game.gx.swapchain.extent,
+                    .extent = swap_extent,
                 },
                 .area = .{
                     .offset = .zero,
-                    .extent = game.gx.swapchain.extent,
+                    .extent = swap_extent,
                 },
             });
             defer cb.endRendering(game.gx);
