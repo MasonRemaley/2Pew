@@ -202,7 +202,7 @@ pub fn main() !void {
     // var warned_memory_usage = false;
 
     while (true) {
-        if (poll(&es, &cb, &game, delta_s)) {
+        if (poll(&es, &cb, &game)) {
             std.process.cleanExit();
             return;
         }
@@ -231,8 +231,7 @@ pub fn main() !void {
     }
 }
 
-fn poll(es: *Entities, cb: *CmdBuf, game: *Game, delta_s: f32) bool {
-    game.seconds_since_resize += delta_s;
+fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event)) {
         switch (event.type) {
@@ -272,12 +271,9 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game, delta_s: f32) bool {
                 },
                 else => {},
             },
-            c.SDL_EVENT_WINDOW_RESIZED => {
-                game.window_extent = .{
-                    .width = @intCast(event.window.data1),
-                    .height = @intCast(event.window.data2),
-                };
-                game.seconds_since_resize = 0.0;
+            c.SDL_EVENT_WINDOW_RESIZED => game.window_extent = .{
+                .width = @intCast(event.window.data1),
+                .height = @intCast(event.window.data2),
             },
             else => {},
             c.SDL_EVENT_WINDOW_EXPOSED => {

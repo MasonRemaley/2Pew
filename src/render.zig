@@ -304,7 +304,7 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     };
 
     const acquire_result = game.gx.acquireNextImage(.{
-        .recreate_if_suboptimal = game.seconds_since_resize > 0.05,
+        .recreate_if_suboptimal = true,
         .window_extent = game.window_extent,
     });
     if (acquire_result.recreated) {
@@ -391,18 +391,34 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
         });
 
         {
+            // Calculate the letter box
+            const win_extent = game.gx.swapchain.extent;
+            const game_ar = Game.display_size.x / Game.display_size.y;
+            const wind_ar: f32 = @as(f32, @floatFromInt(win_extent.width)) / @as(f32, @floatFromInt(win_extent.height));
+            const arr = wind_ar / game_ar;
+            var size = win_extent;
+            var offset: gpu.Offset2D = .zero;
+            if (wind_ar > game_ar) {
+                size.width = @intFromFloat(@as(f32, @floatFromInt(win_extent.width)) / arr);
+                offset.x = @intCast((win_extent.width - size.width) / 2);
+            } else {
+                size.height = @intFromFloat(@as(f32, @floatFromInt(win_extent.height)) * arr);
+                offset.y = @intCast((win_extent.height - size.height) / 2);
+            }
+
+            // Perform the post processing
             cb.beginRendering(game.gx, .{
                 .color_attachments = &.{
                     .init(.{
-                        .load_op = .dont_care,
+                        .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
                         .view = swapchain_image.view,
                     }),
                 },
                 .viewport = .{
-                    .x = 0,
-                    .y = 0,
-                    .width = @floatFromInt(game.gx.swapchain.extent.width),
-                    .height = @floatFromInt(game.gx.swapchain.extent.height),
+                    .x = @floatFromInt(offset.x),
+                    .y = @floatFromInt(offset.y),
+                    .width = @floatFromInt(size.width),
+                    .height = @floatFromInt(size.height),
                     .min_depth = 0.0,
                     .max_depth = 1.0,
                 },

@@ -93,8 +93,6 @@ global_trauma: Trauma = .init(.{}),
 player_trauma: [4]Trauma = @splat(.init(.{})),
 rumble: Rumble = .{},
 
-seconds_since_resize: f32 = 0.0,
-
 color_buffer: gpu.ext.RenderTargetPool(.color).Handle,
 window_extent: gpu.Extent2D,
 
