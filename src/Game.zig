@@ -39,6 +39,7 @@ const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
 const Game = @This();
 
 gx: *Gx,
+es: *Entities,
 assets: *Assets,
 renderer: *Renderer,
 // Only used for debug purposes.
@@ -511,6 +512,7 @@ fn createWendy(
 pub fn init(
     gpa: Allocator,
     rng: Random,
+    es: *Entities,
     assets: *Assets,
     renderer: *Renderer,
     gx: *Gx,
@@ -882,6 +884,7 @@ pub fn init(
 
     return .{
         .gx = gx,
+        .es = es,
         .debug_allocator = gpa,
         .renderer = renderer,
         .assets = assets,
@@ -1397,17 +1400,16 @@ pub const Health = struct {
     pub fn damage(
         self: *@This(),
         game: *Game,
-        es: *const Entities,
         amount: f32,
         source_opt: Entity.Optional,
     ) f32 {
         if (self.invulnerable_s <= 0.0) {
             const trauma_intensity = remap(0.0, self.hp, 0.4, 0.7, amount);
-            if (es.getComp(self, PlayerIndex)) |pi| {
+            if (game.es.getComp(self, PlayerIndex)) |pi| {
                 game.player_trauma[@intFromEnum(pi.*)].set(.low, trauma_intensity);
             }
             if (source_opt.unwrap()) |source| {
-                if (source.get(es, PlayerIndex)) |pi| {
+                if (source.get(game.es, PlayerIndex)) |pi| {
                     game.player_trauma[@intFromEnum(pi.*)].set(.high, trauma_intensity);
                 }
             }

@@ -62,6 +62,28 @@ const command: Command = .{
     },
 };
 
+fn eventFilter(userdata: ?*anyopaque, event: [*c]c.SDL_Event) callconv(.c) bool {
+    // Windows blocks the whole app during resizes, but you can still get the resize events
+    // from the event filter to prevent it from just rendering the last frame stretched. We
+    // could do *all* event processing from here, but it comes with the caveat that these
+    // events could come in on any thread.
+    const game: *Game = @alignCast(@ptrCast(userdata));
+    switch (event.*.type) {
+        c.SDL_EVENT_WINDOW_EXPOSED => {
+            render.all(game, 0);
+            return false;
+        },
+        c.SDL_EVENT_WINDOW_RESIZED => {
+            game.window_extent = .{
+                .width = @intCast(event.*.window.data1),
+                .height = @intCast(event.*.window.data2),
+            };
+            return false;
+        },
+        else => return true,
+    }
+}
+
 pub fn main() !void {
     c.SDL_SetLogPriorities(c.SDL_LOG_PRIORITY_TRACE);
     c.SDL_SetLogOutputFunction(&sdlLogCallback, null);
@@ -174,6 +196,10 @@ pub fn main() !void {
     var rng = std.Random.DefaultPrng.init(random_seed);
     const random: std.Random = rng.random();
 
+    // Create the entities
+    var es: Entities = try .init(.{ .gpa = allocator });
+    defer es.deinit(allocator);
+
     const init_window_extent: gpu.Extent2D = b: {
         var width: c_int = 0;
         var height: c_int = 0;
@@ -182,13 +208,9 @@ pub fn main() !void {
         }
         break :b .{ .width = @intCast(width), .height = @intCast(height) };
     };
-    var game = try Game.init(allocator, random, &assets, &renderer, &gx, init_window_extent);
+    var game = try Game.init(allocator, random, &es, &assets, &renderer, &gx, init_window_extent);
 
     game.hot_swap = args.named.@"hot-swap";
-
-    // Create the entities
-    var es: Entities = try .init(.{ .gpa = allocator });
-    defer es.deinit(allocator);
 
     var cb = try CmdBuf.init(.{ .name = "cb", .gpa = allocator, .es = &es });
     defer cb.deinit(allocator, &es);
@@ -201,6 +223,8 @@ pub fn main() !void {
 
     // var warned_memory_usage = false;
 
+    c.SDL_SetEventFilter(&eventFilter, &game);
+
     while (true) {
         if (poll(&es, &cb, &game)) {
             std.process.cleanExit();
@@ -208,8 +232,8 @@ pub fn main() !void {
         }
 
         game.timer.update(delta_s);
-        update.all(&es, &cb, &game, delta_s);
-        render.all(&es, &game, delta_s);
+        update.all(&cb, &game, delta_s);
+        render.all(&game, delta_s);
 
         // TODO(mason): we also want a min frame time so we don't get surprising floating point
         // results if it's too close to zero!
@@ -271,14 +295,7 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
                 },
                 else => {},
             },
-            c.SDL_EVENT_WINDOW_RESIZED => game.window_extent = .{
-                .width = @intCast(event.window.data1),
-                .height = @intCast(event.window.data2),
-            },
             else => {},
-            c.SDL_EVENT_WINDOW_EXPOSED => {
-                render.all(es, game, 0);
-            },
         }
     }
     return false;

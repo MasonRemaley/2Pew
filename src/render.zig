@@ -176,7 +176,7 @@ fn handheld(game: *const Game) Mat2x3 {
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
+pub fn all(game: *Game, delta_s: f32) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
@@ -237,22 +237,22 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
             });
         }
 
-        es.forEach("renderAnimations", renderAnimations, .{
+        game.es.forEach("renderAnimations", renderAnimations, .{
             .assets = game.assets,
-            .es = es,
+            .es = game.es,
             .delta_s = delta_s,
             .entity_writer = &entity_writer,
         });
 
-        es.forEach("renderHealthBar", renderHealthBar, .{
+        game.es.forEach("renderHealthBar", renderHealthBar, .{
             .entity_writer = &entity_writer,
         });
-        es.forEach("renderSprite", renderSprite, .{
+        game.es.forEach("renderSprite", renderSprite, .{
             .game = game,
             .entity_writer = &entity_writer,
         });
-        es.forEach("renderSpring", renderSpring, .{
-            .es = es,
+        game.es.forEach("renderSpring", renderSpring, .{
+            .es = game.es,
         });
 
         // Draw the ships in the bank.

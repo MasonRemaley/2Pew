@@ -43,7 +43,6 @@ const display_center = Game.display_center;
 const display_radius = Game.display_radius;
 
 pub fn all(
-    es: *Entities,
     cb: *CmdBuf,
     game: *Game,
     delta_s: f32,
@@ -76,64 +75,60 @@ pub fn all(
         delta_s,
     );
 
-    updateInput(es, cb, game);
-    updatePhysics(game, es, cb);
-    es.forEach("updateGravity", updateGravity, .{
-        .es = es,
+    updateInput(cb, game);
+    updatePhysics(game, cb);
+    game.es.forEach("updateGravity", updateGravity, .{
         .cb = cb,
         .game = game,
         .delta_s = delta_s,
     });
-    es.forEach("updateSprings", updateSprings, .{});
-    es.forEach("updateDamage", updateDamage, .{
-        .es = es,
+    game.es.forEach("updateSprings", updateSprings, .{});
+    game.es.forEach("updateDamage", updateDamage, .{
         .game = game,
         .cb = cb,
     });
 
-    es.forEach("updateHealth", updateHealth, .{
+    game.es.forEach("updateHealth", updateHealth, .{
         .game = game,
         .cb = cb,
         .delta_s = delta_s,
     });
 
-    es.forEach("updateShip", updateShip, .{
-        .game = game,
-        .es = es,
-        .cb = cb,
-        .delta_s = delta_s,
-    });
-
-    es.forEach("updateAnimateOnInput", updateAnimateOnInput, .{
-        .game = game,
-    });
-    es.forEach("updateGrappleGun", updateGrappleGun, .{
-        .game = game,
-        .cb = cb,
-        .delta_s = delta_s,
-    });
-    es.forEach("updateAnimation", updateAnimation, .{
-        .cb = cb,
-    });
-    es.forEach("updateLifetime", updateLifetime, .{
-        .cb = cb,
-        .delta_s = delta_s,
-    });
-    es.forEach("updateTurret", updateTurret, .{
+    game.es.forEach("updateShip", updateShip, .{
         .game = game,
         .cb = cb,
         .delta_s = delta_s,
     });
 
-    exec(es, cb);
+    game.es.forEach("updateAnimateOnInput", updateAnimateOnInput, .{
+        .game = game,
+    });
+    game.es.forEach("updateGrappleGun", updateGrappleGun, .{
+        .game = game,
+        .cb = cb,
+        .delta_s = delta_s,
+    });
+    game.es.forEach("updateAnimation", updateAnimation, .{
+        .cb = cb,
+    });
+    game.es.forEach("updateLifetime", updateLifetime, .{
+        .cb = cb,
+        .delta_s = delta_s,
+    });
+    game.es.forEach("updateTurret", updateTurret, .{
+        .game = game,
+        .cb = cb,
+        .delta_s = delta_s,
+    });
 
-    es.updateStats();
+    exec(game.es, cb);
+
+    game.es.updateStats();
 }
 
 fn updateGravity(
     ctx: struct {
         delta_s: f32,
-        es: *const Entities,
         cb: *CmdBuf,
         game: *Game,
     },
@@ -147,12 +142,12 @@ fn updateGravity(
         const gravity_v = display_center.minus(transform.getWorldPos()).normalized().scaled(gravity * ctx.delta_s);
         rb.vel.add(gravity_v);
         // punishment for leaving the circle
-        if (health_opt) |health| _ = health.damage(ctx.game, ctx.es, ctx.delta_s * 4, .none);
+        if (health_opt) |health| _ = health.damage(ctx.game, ctx.delta_s * 4, .none);
     }
 
-    // transform.move(ctx.es, ctx.cb, rb.vel.scaled(ctx.delta_s));
-    transform.move(ctx.es, rb.vel.scaled(ctx.delta_s));
-    transform.rotate(ctx.es, .fromAngle(rb.rotation_vel * ctx.delta_s));
+    // transform.move(ctx.game.es, ctx.cb, rb.vel.scaled(ctx.delta_s));
+    transform.move(ctx.game.es, rb.vel.scaled(ctx.delta_s));
+    transform.rotate(ctx.game.es, .fromAngle(rb.rotation_vel * ctx.delta_s));
 }
 
 // TODO(mason): take velocity from before impact? i may have messed that up somehow
@@ -239,7 +234,7 @@ fn updateHealth(
     health.invulnerable_s = @max(health.invulnerable_s - delta_s, 0.0);
 }
 
-fn updateInput(es: *Entities, cb: *CmdBuf, game: *Game) void {
+fn updateInput(cb: *CmdBuf, game: *Game) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
@@ -251,11 +246,11 @@ fn updateInput(es: *Entities, cb: *CmdBuf, game: *Game) void {
 
     for (&game.input_state) |*input_state| {
         if (input_state.isAction(.start, .positive, .activated)) {
-            game.setupScenario(es, cb, .deathmatch_1v1_one_rock);
+            game.setupScenario(game.es, cb, .deathmatch_1v1_one_rock);
         }
     }
 
-    es.forEach("blockInvulnerableFire", blockInvulnerableFire, .{ .game = game });
+    game.es.forEach("blockInvulnerableFire", blockInvulnerableFire, .{ .game = game });
 }
 
 fn blockInvulnerableFire(
@@ -271,11 +266,11 @@ fn blockInvulnerableFire(
     }
 }
 
-fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
+fn updatePhysics(game: *Game, cb: *CmdBuf) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
-    var it = es.iterator(struct {
+    var it = game.es.iterator(struct {
         rb: *RigidBody,
         transform: *const Transform,
         collider: *const Collider,
@@ -285,9 +280,9 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
         entity: Entity,
         player_index: ?*PlayerIndex,
     });
-    while (it.next(es)) |vw| {
+    while (it.next(game.es)) |vw| {
         var other_it = it;
-        while (other_it.next(es)) |other| {
+        while (other_it.next(game.es)) |other| {
             if (!Collider.interacts.get(vw.collider.layer, other.collider.layer)) continue;
 
             const added_radii = vw.rb.radius + other.rb.radius;
@@ -334,7 +329,7 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, impulse.mag());
                     if (damage >= 2) {
-                        total_damage += entity_health.damage(game, es, damage, other.entity.toOptional());
+                        total_damage += entity_health.damage(game, damage, other.entity.toOptional());
                     }
                 }
             }
@@ -347,7 +342,7 @@ fn updatePhysics(game: *Game, es: *Entities, cb: *CmdBuf) void {
                     }
                     const damage = lerp(1.0, 1.0 - max_shield, std.math.pow(f32, shield_scale, 1.0 / 2.0)) * remap(20, 300, 0, 80, other_impulse.mag());
                     if (damage >= 2) {
-                        total_damage += other_health.damage(game, es, damage, vw.entity.toOptional());
+                        total_damage += other_health.damage(game, damage, vw.entity.toOptional());
                     }
                 }
             }
@@ -476,7 +471,6 @@ fn updateSprings(ctx: struct {}, spring: *Spring) void {
 
 fn updateDamage(
     ctx: struct {
-        es: *Entities,
         game: *Game,
         cb: *CmdBuf,
     },
@@ -485,16 +479,16 @@ fn updateDamage(
     transform: *Transform,
     entity: Entity,
 ) void {
-    var health_it = ctx.es.iterator(struct {
+    var health_it = ctx.game.es.iterator(struct {
         health: *Health,
         rb: *const RigidBody,
         transform: *const Transform,
     });
-    while (health_it.next(ctx.es)) |health_vw| {
+    while (health_it.next(ctx.game.es)) |health_vw| {
         if (health_vw.transform.getWorldPos().distSq(transform.getWorldPos()) <
             health_vw.rb.radius * health_vw.rb.radius + rb.radius * rb.radius)
         {
-            if (health_vw.health.damage(ctx.game, ctx.es, damage.hp, entity.toOptional()) > 0.0) {
+            if (health_vw.health.damage(ctx.game, damage.hp, entity.toOptional()) > 0.0) {
                 // spawn shrapnel here
                 const shrapnel_animation = ctx.game.shrapnel_animations[
                     ctx.game.rng.uintLessThanBiased(usize, ctx.game.shrapnel_animations.len)
@@ -524,13 +518,12 @@ fn updateDamage(
         }
     }
 
-    transform.setRot(ctx.es, .look(rb.vel.normalized()));
+    transform.setRot(ctx.game.es, .look(rb.vel.normalized()));
 }
 
 fn updateShip(
     ctx: struct {
         game: *Game,
-        es: *Entities,
         cb: *CmdBuf,
         delta_s: f32,
     },
@@ -551,7 +544,7 @@ fn updateShip(
     } else {
         // convert to 1.0 or 0.0
         transform.rotate(
-            ctx.es,
+            ctx.game.es,
             .fromAngle(input_state.getAxis(.turn) * ship.turn_speed * ctx.delta_s),
         );
 
