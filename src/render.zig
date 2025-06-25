@@ -185,10 +185,8 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
     game.renderer.beginFrame(game.gx);
     defer game.gx.endFrame();
 
-    const rt = game.rt.getSizedView(&game.renderer.rtp);
-
     // Write the entity data
-    {
+    const entity_writer = b: {
         var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
         var mouse: Vec2 = .zero;
         _ = c.SDL_GetMouseState(&mouse.x, &mouse.y);
@@ -302,138 +300,141 @@ pub fn all(es: *Entities, game: *Game, delta_s: f32) void {
             }
         }
 
-        const cb: CmdBuf = .init(game.gx, .{ .name = "Render Game", .src = @src() });
-        defer cb.submit(game.gx);
+        break :b entity_writer;
+    };
+
+    const acquire_result = game.gx.acquireNextImage(.{
+        .recreate_if_suboptimal = game.seconds_since_resize > 0.05,
+        .window_extent = game.window_extent,
+    });
+    if (acquire_result.recreated) {
+        game.renderer.rtp.recreate(game.gx, game.gx.swapchain.extent);
+    }
+    const swapchain_image = game.gx.swapchain.images.get(acquire_result.index);
+
+    // Render the ECS
+    {
+        const cb: CmdBuf = .init(game.gx, .{ .name = "ECS", .src = @src() });
+        defer cb.submit(game.gx, .{});
+
+        cb.barriers(game.gx, .{ .image = &.{
+            .undefinedToColorAttachment(.{
+                .handle = game.color_buffer.get(&game.renderer.rtp).handle,
+                .range = .first,
+            }),
+        } });
+        cb.beginRendering(game.gx, .{
+            .color_attachments = &.{
+                .init(.{
+                    .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
+                    .view = game.color_buffer.get(&game.renderer.rtp).view,
+                }),
+            },
+            .viewport = .{
+                .x = 0,
+                .y = 0,
+                .width = @floatFromInt(game.color_buffer.getSizedView(&game.renderer.rtp).extent.width),
+                .height = @floatFromInt(game.color_buffer.getSizedView(&game.renderer.rtp).extent.height),
+                .min_depth = 0.0,
+                .max_depth = 1.0,
+            },
+            .scissor = .{
+                .offset = .zero,
+                .extent = game.color_buffer.getSizedView(&game.renderer.rtp).extent,
+            },
+            .area = .{
+                .offset = .zero,
+                .extent = game.color_buffer.getSizedView(&game.renderer.rtp).extent,
+            },
+        });
+        defer cb.endRendering(game.gx);
+
+        cb.bindPipeline(game.gx, game.renderer.pipelines.game);
+        cb.bindDescSet(
+            game.gx,
+            game.renderer.pipelines.game,
+            game.renderer.ecs_desc_sets[game.gx.frame],
+        );
+        cb.draw(game.gx, .{
+            .vertex_count = 4,
+            .instance_count = @intCast(entity_writer.len),
+            .first_vertex = 0,
+            .first_instance = 0,
+        });
+    }
+
+    // Do the post processing
+    {
+        const cb: CmdBuf = .init(game.gx, .{ .name = "Post", .src = @src() });
+        defer cb.submit(game.gx, .{ .wait_for_swapchain = true });
+
+        gpu.DescSet.update(game.gx, &.{
+            .{
+                .set = game.renderer.post_desc_sets[game.gx.frame],
+                .binding = Renderer.post_pipeline_layout_options.binding("color_buffer"),
+                .value = .{ .storage_image = game.color_buffer.get(&game.renderer.rtp).view },
+            },
+        });
+
+        cb.barriers(game.gx, .{
+            .image = &.{
+                .colorAttachmentToGeneral(.{
+                    .dst_stages = .{ .fragment = true },
+                    .handle = game.color_buffer.get(&game.renderer.rtp).handle,
+                    .range = .first,
+                }),
+                .undefinedToColorAttachment(.{
+                    .handle = swapchain_image.handle,
+                    .range = .first,
+                }),
+            },
+        });
 
         {
-            // Render the entities
-            {
-                cb.beginZone(game.gx, .{ .name = "Render Entities", .src = @src() });
-                defer cb.endZone(game.gx);
-
-                cb.barriers(game.gx, .{ .image = &.{
-                    .undefinedToColorAttachment(.{
-                        .handle = game.rt.get(&game.renderer.rtp).handle,
-                        .range = .first,
+            cb.beginRendering(game.gx, .{
+                .color_attachments = &.{
+                    .init(.{
+                        .load_op = .dont_care,
+                        .view = swapchain_image.view,
                     }),
-                } });
-                cb.beginRendering(game.gx, .{
-                    .color_attachments = &.{
-                        .init(.{
-                            .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
-                            .view = rt.view,
-                        }),
-                    },
-                    .viewport = .{
-                        .x = 0,
-                        .y = 0,
-                        .width = @floatFromInt(rt.extent.width),
-                        .height = @floatFromInt(rt.extent.height),
-                        .min_depth = 0.0,
-                        .max_depth = 1.0,
-                    },
-                    .scissor = .{
-                        .offset = .zero,
-                        .extent = rt.extent,
-                    },
-                    .area = .{
-                        .offset = .zero,
-                        .extent = rt.extent,
-                    },
-                });
-                defer cb.endRendering(game.gx);
-
-                cb.bindPipeline(game.gx, game.renderer.pipelines.game);
-                cb.bindDescSet(
-                    game.gx,
-                    game.renderer.pipelines.game,
-                    game.renderer.ecs_desc_sets[game.gx.frame],
-                );
-                cb.draw(game.gx, .{
-                    .vertex_count = 4,
-                    .instance_count = @intCast(entity_writer.len),
-                    .first_vertex = 0,
-                    .first_instance = 0,
-                });
-            }
-
-            {
-                cb.beginZone(game.gx, .{ .name = "Post Processing", .src = @src() });
-                defer cb.endZone(game.gx);
-
-                const acquire_result = game.gx.acquireNextImage(.{
-                    .recreate_if_suboptimal = game.seconds_since_resize > 0.05,
-                    .window_extent = game.window_extent,
-                });
-                const swapchain_image = game.gx.swapchain.images.get(acquire_result.index);
-
-                cb.barriers(game.gx, .{
-                    .image = &.{
-                        .colorAttachmentToReadOnly(.{
-                            .dst_stages = .{ .fragment = true },
-                            .handle = game.rt.get(&game.renderer.rtp).handle,
-                            .range = .first,
-                        }),
-                        .undefinedToColorAttachment(.{
-                            .handle = swapchain_image.handle,
-                            .range = .first,
-                        }),
-                    },
-                });
-
-                {
-                    cb.beginRendering(game.gx, .{
-                        .color_attachments = &.{
-                            .init(.{
-                                .load_op = .dont_care,
-                                .view = swapchain_image.view,
-                            }),
-                        },
-                        .viewport = .{
-                            .x = 0,
-                            .y = 0,
-                            .width = @floatFromInt(game.gx.swapchain.extent.width),
-                            .height = @floatFromInt(game.gx.swapchain.extent.height),
-                            .min_depth = 0.0,
-                            .max_depth = 1.0,
-                        },
-                        .scissor = .{
-                            .offset = .zero,
-                            .extent = game.gx.swapchain.extent,
-                        },
-                        .area = .{
-                            .offset = .zero,
-                            .extent = game.gx.swapchain.extent,
-                        },
-                    });
-                    defer cb.endRendering(game.gx);
-                    cb.bindPipeline(game.gx, game.renderer.pipelines.post);
-                    cb.pushConstant(gpu.ext.RenderTargetPool(.color).Handle, game.gx, .{
-                        .pipeline_layout = game.renderer.post_pipeline_layout.handle,
-                        .stages = .{ .fragment = true },
-                        .offset = 0,
-                        .data = &game.rt,
-                    });
-                    cb.bindDescSet(
-                        game.gx,
-                        game.renderer.pipelines.post,
-                        game.renderer.post_desc_sets[game.gx.frame],
-                    );
-                    cb.draw(game.gx, .{
-                        .vertex_count = 3,
-                        .instance_count = 1,
-                        .first_vertex = 0,
-                        .first_instance = 0,
-                    });
-                }
-
-                cb.barriers(game.gx, .{ .image = &.{
-                    .colorAttachmentToPresent(.{
-                        .handle = swapchain_image.handle,
-                    }),
-                } });
-            }
+                },
+                .viewport = .{
+                    .x = 0,
+                    .y = 0,
+                    .width = @floatFromInt(game.gx.swapchain.extent.width),
+                    .height = @floatFromInt(game.gx.swapchain.extent.height),
+                    .min_depth = 0.0,
+                    .max_depth = 1.0,
+                },
+                .scissor = .{
+                    .offset = .zero,
+                    .extent = game.gx.swapchain.extent,
+                },
+                .area = .{
+                    .offset = .zero,
+                    .extent = game.gx.swapchain.extent,
+                },
+            });
+            defer cb.endRendering(game.gx);
+            cb.bindPipeline(game.gx, game.renderer.pipelines.post);
+            cb.bindDescSet(
+                game.gx,
+                game.renderer.pipelines.post,
+                game.renderer.post_desc_sets[game.gx.frame],
+            );
+            cb.draw(game.gx, .{
+                .vertex_count = 3,
+                .instance_count = 1,
+                .first_vertex = 0,
+                .first_instance = 0,
+            });
         }
+
+        cb.barriers(game.gx, .{ .image = &.{
+            .colorAttachmentToPresent(.{
+                .handle = swapchain_image.handle,
+            }),
+        } });
     }
 }
 

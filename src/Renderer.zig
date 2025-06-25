@@ -127,17 +127,11 @@ pub const post_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
             .partially_bound = false,
         },
         .{
-            .name = "render_targets",
+            .name = "color_buffer",
             .kind = .storage_image,
-            .count = max_render_targets,
+            .count = 1,
             .stages = .{ .fragment = true },
-            .partially_bound = true,
-        },
-    },
-    .push_constant_ranges = &.{
-        .{
-            .size = 4,
-            .stages = .{ .fragment = true },
+            .partially_bound = false,
         },
     },
 };
@@ -227,7 +221,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
         .capacity = max_render_targets,
         .allocator = .{ .name = "Render Targets" },
         .desc_sets = post_desc_sets,
-        .storage_binding = post_pipeline_layout_options.binding("render_targets"),
+        .storage_binding = null,
         .sampled_binding = null,
     }) catch |err| @panic(@errorName(err));
 

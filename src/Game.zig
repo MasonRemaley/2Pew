@@ -95,7 +95,7 @@ rumble: Rumble = .{},
 
 seconds_since_resize: f32 = 0.0,
 
-rt: gpu.ext.RenderTargetPool(.color).Handle,
+color_buffer: gpu.ext.RenderTargetPool(.color).Handle,
 window_extent: gpu.Extent2D,
 
 const ShipAnimations = struct {
@@ -815,14 +815,11 @@ pub fn init(
     }
     cb.barriers(gx, .{ .image = image_barriers.constSlice() });
 
-    cb.submit(gx);
+    cb.submit(gx, .{});
     gx.endFrame();
 
-    var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 128);
-    defer desc_set_updates.deinit();
-
-    const rt = renderer.rtp.alloc(gx, &desc_set_updates, .{
-        .name = .{ .str = "Render Target" },
+    const color_buffer = renderer.rtp.alloc(gx, .{
+        .name = .{ .str = "Color Buffer" },
         .image = .{
             .format = Renderer.Pipelines.color_attachment_format,
             .extent = .{
@@ -836,6 +833,9 @@ pub fn init(
             },
         },
     });
+
+    var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 128);
+    defer desc_set_updates.deinit();
 
     for (renderer.ecs_desc_sets, 0..) |set, frame| {
         if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
@@ -962,7 +962,7 @@ pub fn init(
 
         .particle = particle,
 
-        .rt = rt,
+        .color_buffer = color_buffer,
         .window_extent = window_extent,
     };
 }
