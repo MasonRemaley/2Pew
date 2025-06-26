@@ -50,6 +50,8 @@ pub fn all(
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
+    game.resize_elapsed += delta_s;
+
     game.global_trauma.update(delta_s);
     for (&game.player_trauma) |*trauma| trauma.update(delta_s);
     game.rumble.update(

@@ -81,7 +81,7 @@ kevin_radius: f32,
 wendy_animations: ShipAnimations,
 wendy_radius: f32,
 
-stars: [150]Star,
+stars: [600]Star,
 
 particle: Sprite.Index,
 
@@ -96,6 +96,7 @@ rumble: Rumble = .{},
 
 color_buffer: gpu.ext.RenderTargetPool(.color).Handle,
 window_extent: gpu.Extent2D,
+resize_elapsed: f32 = 0.0,
 
 const ShipAnimations = struct {
     still: Animation.Index,
@@ -1200,10 +1201,13 @@ pub fn over(game: Game) bool {
 }
 
 fn generateStars(stars: []Star, random: std.Random) void {
+    const radius = @max(display_size.x, display_size.y);
     for (stars) |*star| {
         star.* = .{
-            .x = random.uintLessThanBiased(u31, display_size.x),
-            .y = random.uintLessThanBiased(u31, display_size.y),
+            .pos = .{
+                .x = lerp(-radius, radius, random.float(f32)),
+                .y = lerp(-radius, radius, random.float(f32)),
+            },
             .kind = @enumFromInt(random.uintLessThanBiased(u8, 2)),
         };
     }
@@ -1237,8 +1241,7 @@ pub const input_system = @import("input_system.zig").init(enum {
 });
 
 pub const Star = struct {
-    x: i32,
-    y: i32,
+    pos: Vec2,
     kind: Kind,
 
     const Kind = enum { large, small, planet_red };

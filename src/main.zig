@@ -74,6 +74,7 @@ fn handleResize(userdata: ?*anyopaque, event: [*c]c.SDL_Event) callconv(.c) bool
                 .width = @intCast(event.*.window.data1),
                 .height = @intCast(event.*.window.data2),
             };
+            game.resize_elapsed = 0;
             return false;
         },
         else => return true,
@@ -126,15 +127,14 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyWindow(screen);
 
-    // Necessary for proper scaling on the Wayland backend in windowed mode
-    if (window_mode == c.SDL_WINDOW_RESIZABLE) {
-        const pixel_density = c.SDL_GetWindowPixelDensity(screen);
-        _ = c.SDL_SetWindowSize(
-            screen,
-            @intFromFloat(@round(Game.display_size.x / pixel_density)),
-            @intFromFloat(@round(Game.display_size.y / pixel_density)),
-        );
-    }
+    const init_window_extent: gpu.Extent2D = b: {
+        var width: c_int = 0;
+        var height: c_int = 0;
+        if (!c.SDL_GetWindowSizeInPixels(screen, &width, &height)) {
+            std.debug.panic("SDL_GetWindowSizeInPixels failed: {?s}\n", .{c.SDL_GetError()});
+        }
+        break :b .{ .width = @intCast(width), .height = @intCast(height) };
+    };
 
     // Initialize the graphics context
     const app_version = comptime std.SemanticVersion.parse(build.version) catch unreachable;
@@ -166,6 +166,7 @@ pub fn main() !void {
             .createSurface = &createSurface,
         },
         .surface_format = .unorm4x8,
+        .surface_extent = init_window_extent,
         .debug = args.named.@"gpu-dbg",
     });
     defer {
@@ -174,7 +175,7 @@ pub fn main() !void {
     }
 
     // Initialize the renderer
-    var renderer: Renderer = .init(allocator, &gx);
+    var renderer: Renderer = .init(allocator, &gx, init_window_extent);
     defer {
         gx.waitIdle();
         renderer.deinit(allocator, &gx);
@@ -196,14 +197,6 @@ pub fn main() !void {
     var es: Entities = try .init(.{ .gpa = allocator });
     defer es.deinit(allocator);
 
-    const init_window_extent: gpu.Extent2D = b: {
-        var width: c_int = 0;
-        var height: c_int = 0;
-        if (!c.SDL_GetWindowSizeInPixels(screen, &width, &height)) {
-            std.debug.panic("SDL_GetWindowSizeInPixels failed: {?s}\n", .{c.SDL_GetError()});
-        }
-        break :b .{ .width = @intCast(width), .height = @intCast(height) };
-    };
     var game = try Game.init(allocator, random, &es, &assets, &renderer, &gx, init_window_extent);
 
     game.hot_swap = args.named.@"hot-swap";

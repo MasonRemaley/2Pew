@@ -182,269 +182,286 @@ pub fn all(game: *Game, delta_s: f32) void {
 
     if (game.window_extent.width == 0 or game.window_extent.height == 0) return;
 
-    game.renderer.beginFrame(game.gx);
-    defer game.gx.endFrame();
+    {
+        game.renderer.beginFrame(game.gx);
+        defer game.gx.endFrame();
 
-    // Write the entity data
-    const entity_writer = b: {
-        var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
-        var mouse: Vec2 = .zero;
-        _ = c.SDL_GetMouseState(&mouse.x, &mouse.y);
-        scene_writer.write(.{
-            .view_from_world = Mat2x3.identity
-                .translated(game.camera)
-                .applied(screenShake(game, .{}))
-                .applied(handheld(game)),
-            .projection_from_view = Mat2x3.ortho(.{
-                .left = -display_size.x / 2,
-                .right = display_size.x / 2,
-                .bottom = -display_size.y / 2,
-                .top = display_size.y / 2,
-            }),
-            .timer = game.timer,
-            .mouse = mouse,
-        });
+        // Write the entity data
+        const entity_writer = b: {
+            var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
+            var mouse: Vec2 = .zero;
+            _ = c.SDL_GetMouseState(&mouse.x, &mouse.y);
 
-        var entity_writer = game.renderer.entities[game.gx.frame].writer().typed(ubo.Entity);
-
-        // Draw the stars
-        for (game.stars) |star| {
-            const sprite = game.assets.sprite(switch (star.kind) {
-                .small => game.star_small,
-                .large => game.star_large,
-                .planet_red => game.planet_red,
-            });
-            entity_writer.write(.{
-                .world_from_model = Mat2x3.identity
-                    .translated(.splat(-0.5))
-                    .scaled(sprite.size)
-                    .translated(.{ .x = @floatFromInt(star.x), .y = @floatFromInt(star.y) }),
-                .diffuse = sprite.diffuse,
-                .recolor = sprite.recolor,
-            });
-        }
-
-        // Draw the ring
-        {
-            const sprite = game.assets.sprite(game.ring_bg);
-            entity_writer.write(.{
-                .world_from_model = Mat2x3.identity
-                    .translated(.splat(-0.5))
-                    .scaled(sprite.size)
-                    .translated(display_center),
-                .diffuse = sprite.diffuse,
-                .recolor = sprite.recolor,
-            });
-        }
-
-        game.es.forEach("renderAnimations", renderAnimations, .{
-            .assets = game.assets,
-            .es = game.es,
-            .delta_s = delta_s,
-            .entity_writer = &entity_writer,
-        });
-
-        game.es.forEach("renderHealthBar", renderHealthBar, .{
-            .entity_writer = &entity_writer,
-        });
-        game.es.forEach("renderSprite", renderSprite, .{
-            .game = game,
-            .entity_writer = &entity_writer,
-        });
-        game.es.forEach("renderSpring", renderSpring, .{
-            .es = game.es,
-        });
-
-        // Draw the ships in the bank.
-        {
-            const row_height = 64;
-            const col_width = 64;
-            const top_left: Vec2 = .splat(20);
-
-            for (game.teams, 0..) |team, team_index| {
-                {
-                    const sprite = game.assets.sprite(game.particle);
-                    const pos = top_left.plus(.{
-                        .x = col_width * @as(f32, @floatFromInt(team_index)),
-                        .y = 0,
-                    });
-                    entity_writer.write(.{
-                        .world_from_model = Mat2x3.identity
-                            .translated(.splat(-0.5))
-                            .scaled(sprite.size)
-                            .translated(pos),
-                        .diffuse = sprite.diffuse,
-                        .recolor = sprite.recolor,
-                        .color = team_colors[team_index],
-                    });
+            const projection_from_view = pfv: {
+                // Project the scene so that the 1920x1080 virtual coordinates are centered and
+                // fill the screen as much as they can without getting clipped one either dimension.
+                // This lets us design the game for 16:9, but still render stars and other stuff
+                // outside the 16:9 bounds for other aspect ratios which avoids needing to letterbox
+                // while keeping the game logic simple.
+                const wind_extent: Vec2 = .{
+                    .x = @floatFromInt(game.window_extent.width),
+                    .y = @floatFromInt(game.window_extent.height),
+                };
+                const wind_ar: f32 = wind_extent.x / wind_extent.y;
+                const game_ar = Game.display_size.x / Game.display_size.y;
+                var proj_size: Vec2 = Game.display_size;
+                if (wind_ar > game_ar) {
+                    proj_size.x = proj_size.y * wind_ar;
+                } else {
+                    proj_size.y = proj_size.x / wind_ar;
                 }
-                for (team.ship_progression, 0..) |class, display_prog_index| {
-                    const dead = team.ship_progression_index > display_prog_index;
-                    if (dead) continue;
+                break :pfv Mat2x3.ortho(.{
+                    .left = -proj_size.x / 2,
+                    .right = proj_size.x / 2,
+                    .bottom = -proj_size.y / 2,
+                    .top = proj_size.y / 2,
+                });
+            };
 
-                    const sprite = game.assets.sprite(game.shipLifeSprite(class));
-                    const pos = top_left.plus(.{
-                        .x = col_width * @as(f32, @floatFromInt(team_index)),
-                        .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
-                    });
-                    entity_writer.write(.{
-                        .world_from_model = Mat2x3.identity
-                            .translated(.splat(-0.5))
-                            .scaled(sprite.size.scaled(0.5))
-                            .translated(pos),
-                        .diffuse = sprite.diffuse,
-                        .recolor = sprite.recolor,
-                        .color = team_colors[team_index],
-                    });
+            scene_writer.write(.{
+                .view_from_world = Mat2x3.identity
+                    .translated(game.camera)
+                    .applied(screenShake(game, .{}))
+                    .applied(handheld(game)),
+                .projection_from_view = projection_from_view,
+                .timer = game.timer,
+                .mouse = mouse,
+            });
+
+            var entity_writer = game.renderer.entities[game.gx.frame].writer().typed(ubo.Entity);
+
+            // Draw the stars
+            for (game.stars) |star| {
+                const sprite = game.assets.sprite(switch (star.kind) {
+                    .small => game.star_small,
+                    .large => game.star_large,
+                    .planet_red => game.planet_red,
+                });
+                entity_writer.write(.{
+                    .world_from_model = Mat2x3.identity
+                        .translated(.splat(-0.5))
+                        .scaled(sprite.size)
+                        .translated(star.pos),
+                    .diffuse = sprite.diffuse,
+                    .recolor = sprite.recolor,
+                });
+            }
+
+            // Draw the ring
+            {
+                const sprite = game.assets.sprite(game.ring_bg);
+                entity_writer.write(.{
+                    .world_from_model = Mat2x3.identity
+                        .translated(.splat(-0.5))
+                        .scaled(sprite.size)
+                        .translated(display_center),
+                    .diffuse = sprite.diffuse,
+                    .recolor = sprite.recolor,
+                });
+            }
+
+            game.es.forEach("renderAnimations", renderAnimations, .{
+                .assets = game.assets,
+                .es = game.es,
+                .delta_s = delta_s,
+                .entity_writer = &entity_writer,
+            });
+
+            game.es.forEach("renderHealthBar", renderHealthBar, .{
+                .entity_writer = &entity_writer,
+            });
+            game.es.forEach("renderSprite", renderSprite, .{
+                .game = game,
+                .entity_writer = &entity_writer,
+            });
+            game.es.forEach("renderSpring", renderSpring, .{
+                .es = game.es,
+            });
+
+            // Draw the ships in the bank.
+            {
+                const row_height = 64;
+                const col_width = 64;
+                const top_left: Vec2 = .splat(20);
+
+                for (game.teams, 0..) |team, team_index| {
+                    {
+                        const sprite = game.assets.sprite(game.particle);
+                        const pos = top_left.plus(.{
+                            .x = col_width * @as(f32, @floatFromInt(team_index)),
+                            .y = 0,
+                        });
+                        entity_writer.write(.{
+                            .world_from_model = Mat2x3.identity
+                                .translated(.splat(-0.5))
+                                .scaled(sprite.size)
+                                .translated(pos),
+                            .diffuse = sprite.diffuse,
+                            .recolor = sprite.recolor,
+                            .color = team_colors[team_index],
+                        });
+                    }
+                    for (team.ship_progression, 0..) |class, display_prog_index| {
+                        const dead = team.ship_progression_index > display_prog_index;
+                        if (dead) continue;
+
+                        const sprite = game.assets.sprite(game.shipLifeSprite(class));
+                        const pos = top_left.plus(.{
+                            .x = col_width * @as(f32, @floatFromInt(team_index)),
+                            .y = display_size.y - row_height * @as(f32, @floatFromInt(display_prog_index)),
+                        });
+                        entity_writer.write(.{
+                            .world_from_model = Mat2x3.identity
+                                .translated(.splat(-0.5))
+                                .scaled(sprite.size.scaled(0.5))
+                                .translated(pos),
+                            .diffuse = sprite.diffuse,
+                            .recolor = sprite.recolor,
+                            .color = team_colors[team_index],
+                        });
+                    }
                 }
             }
-        }
 
-        break :b entity_writer;
-    };
+            break :b entity_writer;
+        };
 
-    const acquire_result = game.gx.acquireNextImage(game.window_extent);
-    const swap_extent = acquire_result.extent;
-    const swapchain_image = acquire_result.image;
+        const acquire_result = game.gx.acquireNextImage(game.window_extent);
+        const swap_extent = acquire_result.extent;
+        const swapchain_image = acquire_result.image;
 
-    // Render the ECS
-    {
-        const cb: CmdBuf = .init(game.gx, .{ .name = "ECS", .src = @src() });
-        defer cb.submit(game.gx, .{});
+        // Render the ECS
+        {
+            const cb: CmdBuf = .init(game.gx, .{ .name = "ECS", .src = @src() });
+            defer cb.submit(game.gx, .{});
 
-        cb.barriers(game.gx, .{ .image = &.{
-            .undefinedToColorAttachment(.{
-                .handle = game.color_buffer.get(&game.renderer.rtp).handle,
-                .range = .first,
-            }),
-        } });
-        cb.beginRendering(game.gx, .{
-            .color_attachments = &.{
-                .init(.{
-                    .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
-                    .view = game.color_buffer.get(&game.renderer.rtp).view,
-                }),
-            },
-            .viewport = .{
-                .x = 0,
-                .y = 0,
-                .width = @floatFromInt(game.color_buffer.getSizedView(&game.renderer.rtp).extent.width),
-                .height = @floatFromInt(game.color_buffer.getSizedView(&game.renderer.rtp).extent.height),
-                .min_depth = 0.0,
-                .max_depth = 1.0,
-            },
-            .scissor = .{
-                .offset = .zero,
-                .extent = game.color_buffer.getSizedView(&game.renderer.rtp).extent,
-            },
-            .area = .{
-                .offset = .zero,
-                .extent = game.color_buffer.getSizedView(&game.renderer.rtp).extent,
-            },
-        });
-        defer cb.endRendering(game.gx);
-
-        cb.bindPipeline(game.gx, game.renderer.pipelines.game);
-        cb.bindDescSet(
-            game.gx,
-            game.renderer.pipelines.game,
-            game.renderer.ecs_desc_sets[game.gx.frame],
-        );
-        cb.draw(game.gx, .{
-            .vertex_count = 4,
-            .instance_count = @intCast(entity_writer.len),
-            .first_vertex = 0,
-            .first_instance = 0,
-        });
-    }
-
-    // Do the post processing
-    {
-        const cb: CmdBuf = .init(game.gx, .{ .name = "Post", .src = @src() });
-        defer cb.submit(game.gx, .{ .wait_for_swapchain = true });
-
-        gpu.DescSet.update(game.gx, &.{
-            .{
-                .set = game.renderer.post_desc_sets[game.gx.frame],
-                .binding = Renderer.post_pipeline_layout_options.binding("color_buffer"),
-                .value = .{ .storage_image = game.color_buffer.get(&game.renderer.rtp).view },
-            },
-        });
-
-        cb.barriers(game.gx, .{
-            .image = &.{
-                .colorAttachmentToGeneral(.{
-                    .dst_stages = .{ .fragment = true },
+            cb.barriers(game.gx, .{ .image = &.{
+                .undefinedToColorAttachment(.{
                     .handle = game.color_buffer.get(&game.renderer.rtp).handle,
                     .range = .first,
                 }),
-                .undefinedToColorAttachment(.{
-                    .handle = swapchain_image.handle,
-                    .range = .first,
-                }),
-            },
-        });
-
-        {
-            // Calculate the letter box
-            const game_ar = Game.display_size.x / Game.display_size.y;
-            const wind_ar: f32 = @as(f32, @floatFromInt(swap_extent.width)) / @as(f32, @floatFromInt(swap_extent.height));
-            const arr = wind_ar / game_ar;
-            var size = swap_extent;
-            var offset: gpu.Offset2D = .zero;
-            if (wind_ar > game_ar) {
-                size.width = @intFromFloat(@as(f32, @floatFromInt(swap_extent.width)) / arr);
-                offset.x = @intCast((swap_extent.width - size.width) / 2);
-            } else {
-                size.height = @intFromFloat(@as(f32, @floatFromInt(swap_extent.height)) * arr);
-                offset.y = @intCast((swap_extent.height - size.height) / 2);
-            }
-
-            // Perform the post processing
+            } });
             cb.beginRendering(game.gx, .{
                 .color_attachments = &.{
                     .init(.{
                         .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
-                        .view = swapchain_image.view,
+                        .view = game.color_buffer.get(&game.renderer.rtp).view,
                     }),
                 },
                 .viewport = .{
-                    .x = @floatFromInt(offset.x),
-                    .y = @floatFromInt(offset.y),
-                    .width = @floatFromInt(size.width),
-                    .height = @floatFromInt(size.height),
+                    .x = 0,
+                    .y = 0,
+                    .width = @floatFromInt(game.color_buffer.getSizedView(&game.renderer.rtp).extent.width),
+                    .height = @floatFromInt(game.color_buffer.getSizedView(&game.renderer.rtp).extent.height),
                     .min_depth = 0.0,
                     .max_depth = 1.0,
                 },
                 .scissor = .{
                     .offset = .zero,
-                    .extent = swap_extent,
+                    .extent = game.color_buffer.getSizedView(&game.renderer.rtp).extent,
                 },
                 .area = .{
                     .offset = .zero,
-                    .extent = swap_extent,
+                    .extent = game.color_buffer.getSizedView(&game.renderer.rtp).extent,
                 },
             });
             defer cb.endRendering(game.gx);
-            cb.bindPipeline(game.gx, game.renderer.pipelines.post);
+
+            cb.bindPipeline(game.gx, game.renderer.pipelines.game);
             cb.bindDescSet(
                 game.gx,
-                game.renderer.pipelines.post,
-                game.renderer.post_desc_sets[game.gx.frame],
+                game.renderer.pipelines.game,
+                game.renderer.ecs_desc_sets[game.gx.frame],
             );
             cb.draw(game.gx, .{
-                .vertex_count = 3,
-                .instance_count = 1,
+                .vertex_count = 4,
+                .instance_count = @intCast(entity_writer.len),
                 .first_vertex = 0,
                 .first_instance = 0,
             });
         }
 
-        cb.barriers(game.gx, .{ .image = &.{
-            .colorAttachmentToPresent(.{
-                .handle = swapchain_image.handle,
-            }),
-        } });
+        // Do the post processing
+        {
+            const cb: CmdBuf = .init(game.gx, .{ .name = "Post", .src = @src() });
+            defer cb.submit(game.gx, .{ .wait_for_swapchain = true });
+
+            gpu.DescSet.update(game.gx, &.{
+                .{
+                    .set = game.renderer.post_desc_sets[game.gx.frame],
+                    .binding = Renderer.post_pipeline_layout_options.binding("color_buffer"),
+                    .value = .{ .storage_image = game.color_buffer.get(&game.renderer.rtp).view },
+                },
+            });
+
+            cb.barriers(game.gx, .{
+                .image = &.{
+                    .colorAttachmentToGeneral(.{
+                        .dst_stages = .{ .fragment = true },
+                        .handle = game.color_buffer.get(&game.renderer.rtp).handle,
+                        .range = .first,
+                    }),
+                    .undefinedToColorAttachment(.{
+                        .handle = swapchain_image.handle,
+                        .range = .first,
+                    }),
+                },
+            });
+
+            {
+                cb.beginRendering(game.gx, .{
+                    .color_attachments = &.{
+                        .init(.{
+                            .load_op = .dont_care,
+                            .view = swapchain_image.view,
+                        }),
+                    },
+                    .viewport = .{
+                        .x = 0,
+                        .y = 0,
+                        .width = @floatFromInt(swap_extent.width),
+                        .height = @floatFromInt(swap_extent.height),
+                        .min_depth = 0.0,
+                        .max_depth = 1.0,
+                    },
+                    .scissor = .{
+                        .offset = .zero,
+                        .extent = swap_extent,
+                    },
+                    .area = .{
+                        .offset = .zero,
+                        .extent = swap_extent,
+                    },
+                });
+                defer cb.endRendering(game.gx);
+                cb.bindPipeline(game.gx, game.renderer.pipelines.post);
+                cb.bindDescSet(
+                    game.gx,
+                    game.renderer.pipelines.post,
+                    game.renderer.post_desc_sets[game.gx.frame],
+                );
+                cb.draw(game.gx, .{
+                    .vertex_count = 3,
+                    .instance_count = 1,
+                    .first_vertex = 0,
+                    .first_instance = 0,
+                });
+            }
+
+            cb.barriers(game.gx, .{ .image = &.{
+                .colorAttachmentToPresent(.{
+                    .handle = swapchain_image.handle,
+                }),
+            } });
+        }
+    }
+
+    // After drawing, update the render target sizes if the window has resized, with a slight
+    // debounce to avoid repeatedly recreating the render targets during the resize. We wait until
+    // drawing after to minimize latency on the frames where this occurs.
+    if (game.resize_elapsed > 0.1 and !game.renderer.rtp.physical_extent.eql(game.window_extent)) {
+        game.gx.waitIdle();
+        game.renderer.rtp.recreate(game.gx, game.window_extent);
     }
 }
 

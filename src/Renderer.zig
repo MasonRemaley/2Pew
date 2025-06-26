@@ -136,7 +136,7 @@ pub const post_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
     },
 };
 
-pub fn init(gpa: Allocator, gx: *Gx) @This() {
+pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
     const zone: Zone = .begin(.{ .src = @src() });
     defer zone.end();
 
@@ -214,10 +214,7 @@ pub fn init(gpa: Allocator, gx: *Gx) @This() {
             .width = 1920,
             .height = 1080,
         },
-        .physical_extent = .{
-            .width = Game.display_size.x,
-            .height = Game.display_size.y,
-        },
+        .physical_extent = init_window_extent,
         .capacity = max_render_targets,
         .allocator = .{ .name = "Render Targets" },
         .desc_sets = post_desc_sets,
