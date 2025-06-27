@@ -335,7 +335,7 @@ pub const Pipelines = struct {
                 .result = &post,
                 .input_assembly = .{ .triangle_strip = .{} },
                 .layout = post_pipeline_layout,
-                .color_attachment_formats = &.{gx.device.surface_format},
+                .color_attachment_formats = &.{color_attachment_format},
                 .depth_attachment_format = .undefined,
                 .stencil_attachment_format = .undefined,
             },

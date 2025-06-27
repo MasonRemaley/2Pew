@@ -95,6 +95,7 @@ player_trauma: [4]Trauma = @splat(.init(.{})),
 rumble: Rumble = .{},
 
 color_buffer: gpu.ext.RenderTargetPool(.color).Handle,
+present: gpu.ext.RenderTargetPool(.color).Handle,
 window_extent: gpu.Extent2D,
 resize_elapsed: f32 = 0.0,
 
@@ -816,8 +817,8 @@ pub fn init(
     }
     cb.barriers(gx, .{ .image = image_barriers.constSlice() });
 
-    cb.submit(gx, .{});
-    gx.endFrame();
+    cb.submit(gx);
+    gx.endFrame(.{ .present = null });
 
     const color_buffer = renderer.rtp.alloc(gx, .{
         .name = .{ .str = "Color Buffer" },
@@ -831,6 +832,22 @@ pub fn init(
             .usage = .{
                 .color_attachment = true,
                 .storage = true,
+            },
+        },
+    });
+
+    const present = renderer.rtp.alloc(gx, .{
+        .name = .{ .str = "Present" },
+        .image = .{
+            .format = Renderer.Pipelines.color_attachment_format,
+            .extent = .{
+                .width = 1920,
+                .height = 1080,
+                .depth = 1,
+            },
+            .usage = .{
+                .color_attachment = true,
+                .transfer_src = true,
             },
         },
     });
@@ -965,6 +982,7 @@ pub fn init(
         .particle = particle,
 
         .color_buffer = color_buffer,
+        .present = present,
         .window_extent = window_extent,
     };
 }

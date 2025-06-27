@@ -184,7 +184,13 @@ pub fn all(game: *Game, delta_s: f32) void {
 
     {
         game.renderer.beginFrame(game.gx);
-        defer game.gx.endFrame();
+        defer game.gx.endFrame(.{ .present = .{
+            .image = game.present.get(&game.renderer.rtp).handle,
+            .src_extent = game.present.getSizedView(&game.renderer.rtp).extent,
+            .surface_extent = game.window_extent,
+            .range = .first,
+            .filter = .linear,
+        } });
 
         // Write the entity data
         const entity_writer = b: {
@@ -326,14 +332,10 @@ pub fn all(game: *Game, delta_s: f32) void {
             break :b entity_writer;
         };
 
-        const acquire_result = game.gx.acquireNextImage(game.window_extent);
-        const swap_extent = acquire_result.extent;
-        const swapchain_image = acquire_result.image;
-
         // Render the ECS
         {
             const cb: CmdBuf = .init(game.gx, .{ .name = "ECS", .src = @src() });
-            defer cb.submit(game.gx, .{});
+            defer cb.submit(game.gx);
 
             cb.barriers(game.gx, .{ .image = &.{
                 .undefinedToColorAttachment(.{
@@ -384,7 +386,9 @@ pub fn all(game: *Game, delta_s: f32) void {
         // Do the post processing
         {
             const cb: CmdBuf = .init(game.gx, .{ .name = "Post", .src = @src() });
-            defer cb.submit(game.gx, .{ .wait_for_swapchain = true });
+            defer cb.submit(game.gx);
+
+            const present_extent = game.present.getSizedView(&game.renderer.rtp).extent; // XXX: annoying api cause of view vs handle vs extent all separte/mixed
 
             gpu.DescSet.update(game.gx, &.{
                 .{
@@ -401,8 +405,8 @@ pub fn all(game: *Game, delta_s: f32) void {
                         .handle = game.color_buffer.get(&game.renderer.rtp).handle,
                         .range = .first,
                     }),
-                    .undefinedToColorAttachment(.{
-                        .handle = swapchain_image.handle,
+                    .undefinedToColorAttachmentAfterPresentBlit(.{
+                        .handle = game.present.get(&game.renderer.rtp).handle,
                         .range = .first,
                     }),
                 },
@@ -413,24 +417,24 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .color_attachments = &.{
                         .init(.{
                             .load_op = .dont_care,
-                            .view = swapchain_image.view,
+                            .view = game.present.get(&game.renderer.rtp).view,
                         }),
                     },
                     .viewport = .{
                         .x = 0,
                         .y = 0,
-                        .width = @floatFromInt(swap_extent.width),
-                        .height = @floatFromInt(swap_extent.height),
+                        .width = @floatFromInt(present_extent.width),
+                        .height = @floatFromInt(present_extent.height),
                         .min_depth = 0.0,
                         .max_depth = 1.0,
                     },
                     .scissor = .{
                         .offset = .zero,
-                        .extent = swap_extent,
+                        .extent = present_extent,
                     },
                     .area = .{
                         .offset = .zero,
-                        .extent = swap_extent,
+                        .extent = present_extent,
                     },
                 });
                 defer cb.endRendering(game.gx);
@@ -449,8 +453,9 @@ pub fn all(game: *Game, delta_s: f32) void {
             }
 
             cb.barriers(game.gx, .{ .image = &.{
-                .colorAttachmentToPresent(.{
-                    .handle = swapchain_image.handle,
+                .colorAttachmentToPresentBlitSrc(.{
+                    .handle = game.present.get(&game.renderer.rtp).handle,
+                    .range = .first,
                 }),
             } });
         }
