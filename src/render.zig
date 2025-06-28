@@ -338,17 +338,17 @@ pub fn all(game: *Game, delta_s: f32) void {
         };
 
         // Render the ECS
+        const ecs_cb: CmdBuf = .init(game.gx, .{ .name = "ECS", .src = @src() });
         {
-            const cb: CmdBuf = .init(game.gx, .{ .name = "ECS", .src = @src() });
-            defer cb.submit(game.gx);
+            defer ecs_cb.end(game.gx);
 
-            cb.barriers(game.gx, .{ .image = &.{
+            ecs_cb.barriers(game.gx, .{ .image = &.{
                 .undefinedToColorAttachment(.{
                     .handle = color_buffer.handle,
                     .range = .first,
                 }),
             } });
-            cb.beginRendering(game.gx, .{
+            ecs_cb.beginRendering(game.gx, .{
                 .color_attachments = &.{
                     .init(.{
                         .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
@@ -372,15 +372,15 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .extent = color_buffer_extent,
                 },
             });
-            defer cb.endRendering(game.gx);
+            defer ecs_cb.endRendering(game.gx);
 
-            cb.bindPipeline(game.gx, game.renderer.pipelines.game);
-            cb.bindDescSet(
+            ecs_cb.bindPipeline(game.gx, game.renderer.pipelines.game);
+            ecs_cb.bindDescSet(
                 game.gx,
                 game.renderer.pipelines.game,
                 game.renderer.ecs_desc_sets[game.gx.frame],
             );
-            cb.draw(game.gx, .{
+            ecs_cb.draw(game.gx, .{
                 .vertex_count = 4,
                 .instance_count = @intCast(entity_writer.len),
                 .first_vertex = 0,
@@ -389,9 +389,9 @@ pub fn all(game: *Game, delta_s: f32) void {
         }
 
         // Do the post processing
+        const post_cb: CmdBuf = .init(game.gx, .{ .name = "Post", .src = @src() });
         {
-            const cb: CmdBuf = .init(game.gx, .{ .name = "Post", .src = @src() });
-            defer cb.submit(game.gx);
+            defer post_cb.end(game.gx);
 
             gpu.DescSet.update(game.gx, &.{
                 .{
@@ -401,7 +401,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                 },
             });
 
-            cb.barriers(game.gx, .{
+            post_cb.barriers(game.gx, .{
                 .image = &.{
                     .colorAttachmentToGeneral(.{
                         .dst_stages = .{ .fragment = true },
@@ -416,7 +416,7 @@ pub fn all(game: *Game, delta_s: f32) void {
             });
 
             {
-                cb.beginRendering(game.gx, .{
+                post_cb.beginRendering(game.gx, .{
                     .color_attachments = &.{
                         .init(.{
                             .load_op = .dont_care,
@@ -440,14 +440,14 @@ pub fn all(game: *Game, delta_s: f32) void {
                         .extent = present_extent,
                     },
                 });
-                defer cb.endRendering(game.gx);
-                cb.bindPipeline(game.gx, game.renderer.pipelines.post);
-                cb.bindDescSet(
+                defer post_cb.endRendering(game.gx);
+                post_cb.bindPipeline(game.gx, game.renderer.pipelines.post);
+                post_cb.bindDescSet(
                     game.gx,
                     game.renderer.pipelines.post,
                     game.renderer.post_desc_sets[game.gx.frame],
                 );
-                cb.draw(game.gx, .{
+                post_cb.draw(game.gx, .{
                     .vertex_count = 3,
                     .instance_count = 1,
                     .first_vertex = 0,
@@ -455,13 +455,16 @@ pub fn all(game: *Game, delta_s: f32) void {
                 });
             }
 
-            cb.barriers(game.gx, .{ .image = &.{
+            post_cb.barriers(game.gx, .{ .image = &.{
                 .colorAttachmentToPresentBlitSrc(.{
                     .handle = present.handle,
                     .range = .first,
                 }),
             } });
         }
+
+        // Submit all the work at once to reduce driver overhead
+        game.gx.submit(&.{ ecs_cb, post_cb });
     }
 
     if (game.renderer.rtp.suboptimal(&game.resize_timer, game.window_extent)) {

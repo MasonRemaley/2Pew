@@ -817,7 +817,8 @@ pub fn init(
     }
     cb.barriers(gx, .{ .image = image_barriers.constSlice() });
 
-    cb.submit(gx);
+    cb.end(gx);
+    gx.submit(&.{cb});
     gx.endFrame(.{ .present = null });
 
     const color_buffer = renderer.rtp.alloc(gx, .{
