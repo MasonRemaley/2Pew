@@ -15,7 +15,7 @@ const Gx = gpu.Gx;
 const Memory = gpu.Memory;
 const UploadBuf = gpu.UploadBuf;
 const ImageUploadQueue = gpu.ext.ImageUploadQueue;
-const RenderTargetPool = gpu.ext.RenderTargetPool;
+const RenderTarget = gpu.ext.RenderTarget;
 const Mat2x3 = geom.Mat2x3;
 const Vec2 = geom.Vec2;
 const Zone = tracy.Zone;
@@ -36,7 +36,7 @@ post_pipeline_layout: gpu.Pipeline.Layout,
 ecs_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 post_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
-rtp: RenderTargetPool(.color),
+rtp: RenderTarget(.color).Pool,
 
 storage_buf: UploadBuf(.{ .storage = true }),
 
@@ -209,7 +209,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         post_pipeline_layout,
     );
 
-    const rtp = RenderTargetPool(.color).init(gpa, gx, .{
+    const rtp = RenderTarget(.color).Pool.init(gpa, gx, .{
         .virtual_extent = .{
             .width = 1920,
             .height = 1080,
@@ -217,9 +217,6 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .physical_extent = init_window_extent,
         .capacity = max_render_targets,
         .allocator = .{ .name = "Render Targets" },
-        .desc_sets = post_desc_sets,
-        .storage_binding = null,
-        .sampled_binding = null,
     }) catch |err| @panic(@errorName(err));
 
     return .{

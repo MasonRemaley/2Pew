@@ -182,16 +182,14 @@ pub fn all(game: *Game, delta_s: f32) void {
 
     if (game.window_extent.width == 0 or game.window_extent.height == 0) return;
 
-    const color_buffer = game.color_buffer.image(&game.renderer.rtp);
-    const color_buffer_extent = game.color_buffer.extent(&game.renderer.rtp);
-    const present = game.present.image(&game.renderer.rtp);
-    const present_extent = game.present.extent(&game.renderer.rtp);
+    const color_buffer = game.color_buffer.get(&game.renderer.rtp);
+    const composite = game.composite.get(&game.renderer.rtp);
 
     {
         game.renderer.beginFrame(game.gx);
         defer game.gx.endFrame(.{ .present = .{
-            .image = present.handle,
-            .src_extent = present_extent,
+            .handle = composite.image.handle,
+            .src_extent = composite.extent,
             .surface_extent = game.window_extent,
             .range = .first,
             .filter = .linear,
@@ -346,7 +344,7 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             cb.barriers(game.gx, .{ .image = &.{
                 .undefinedToColorAttachment(.{
-                    .handle = color_buffer.handle,
+                    .handle = color_buffer.image.handle,
                     .range = .first,
                 }),
             } });
@@ -354,24 +352,24 @@ pub fn all(game: *Game, delta_s: f32) void {
                 .color_attachments = &.{
                     .init(.{
                         .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
-                        .view = color_buffer.view,
+                        .view = color_buffer.image.view,
                     }),
                 },
                 .viewport = .{
                     .x = 0,
                     .y = 0,
-                    .width = @floatFromInt(color_buffer_extent.width),
-                    .height = @floatFromInt(color_buffer_extent.height),
+                    .width = @floatFromInt(color_buffer.extent.width),
+                    .height = @floatFromInt(color_buffer.extent.height),
                     .min_depth = 0.0,
                     .max_depth = 1.0,
                 },
                 .scissor = .{
                     .offset = .zero,
-                    .extent = color_buffer_extent,
+                    .extent = color_buffer.extent,
                 },
                 .area = .{
                     .offset = .zero,
-                    .extent = color_buffer_extent,
+                    .extent = color_buffer.extent,
                 },
             });
             defer cb.endRendering(game.gx);
@@ -395,11 +393,11 @@ pub fn all(game: *Game, delta_s: f32) void {
             cb.beginZone(game.gx, .{ .name = "Post", .src = @src() });
             defer cb.endZone(game.gx);
 
-            gpu.DescSet.update(game.gx, &.{
+            game.gx.updateDescSets(&.{
                 .{
                     .set = game.renderer.post_desc_sets[game.gx.frame],
                     .binding = Renderer.post_pipeline_layout_options.binding("color_buffer"),
-                    .value = .{ .storage_image = color_buffer.view },
+                    .value = .{ .storage_image = color_buffer.image.view },
                 },
             });
 
@@ -407,11 +405,11 @@ pub fn all(game: *Game, delta_s: f32) void {
                 .image = &.{
                     .colorAttachmentToGeneral(.{
                         .dst_stages = .{ .fragment = true },
-                        .handle = color_buffer.handle,
+                        .handle = color_buffer.image.handle,
                         .range = .first,
                     }),
                     .undefinedToColorAttachmentAfterPresentBlit(.{
-                        .handle = present.handle,
+                        .handle = composite.image.handle,
                         .range = .first,
                     }),
                 },
@@ -422,24 +420,24 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .color_attachments = &.{
                         .init(.{
                             .load_op = .dont_care,
-                            .view = present.view,
+                            .view = composite.image.view,
                         }),
                     },
                     .viewport = .{
                         .x = 0,
                         .y = 0,
-                        .width = @floatFromInt(present_extent.width),
-                        .height = @floatFromInt(present_extent.height),
+                        .width = @floatFromInt(composite.extent.width),
+                        .height = @floatFromInt(composite.extent.height),
                         .min_depth = 0.0,
                         .max_depth = 1.0,
                     },
                     .scissor = .{
                         .offset = .zero,
-                        .extent = present_extent,
+                        .extent = composite.extent,
                     },
                     .area = .{
                         .offset = .zero,
-                        .extent = present_extent,
+                        .extent = composite.extent,
                     },
                 });
                 defer cb.endRendering(game.gx);
@@ -459,7 +457,7 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             cb.barriers(game.gx, .{ .image = &.{
                 .colorAttachmentToPresentBlitSrc(.{
-                    .handle = present.handle,
+                    .handle = composite.image.handle,
                     .range = .first,
                 }),
             } });

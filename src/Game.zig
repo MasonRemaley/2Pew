@@ -22,6 +22,7 @@ const ImageUploadQueue = gpu.ext.ImageUploadQueue;
 const Gx = gpu.Gx;
 const Random = std.Random;
 const ModTimer = gpu.ext.ModTimer;
+const RenderTarget = gpu.ext.RenderTarget;
 
 const log = std.log;
 const math = std.math;
@@ -94,8 +95,8 @@ global_trauma: Trauma = .init(.{}),
 player_trauma: [4]Trauma = @splat(.init(.{})),
 rumble: Rumble = .{},
 
-color_buffer: gpu.ext.RenderTargetPool(.color).Handle,
-present: gpu.ext.RenderTargetPool(.color).Handle,
+color_buffer: RenderTarget(.color),
+composite: RenderTarget(.color),
 window_extent: gpu.Extent2D,
 resize_timer: std.time.Timer,
 
@@ -837,8 +838,8 @@ pub fn init(
         },
     });
 
-    const present = renderer.rtp.alloc(gx, .{
-        .name = .{ .str = "Present" },
+    const composite = renderer.rtp.alloc(gx, .{
+        .name = .{ .str = "Composite" },
         .image = .{
             .format = Renderer.Pipelines.color_attachment_format,
             .extent = .{
@@ -899,7 +900,7 @@ pub fn init(
             },
         });
     }
-    gpu.DescSet.update(gx, desc_set_updates.items);
+    gx.updateDescSets(desc_set_updates.items);
 
     return .{
         .gx = gx,
@@ -983,7 +984,7 @@ pub fn init(
         .particle = particle,
 
         .color_buffer = color_buffer,
-        .present = present,
+        .composite = composite,
         .window_extent = window_extent,
         .resize_timer = std.time.Timer.start() catch |err| @panic(@errorName(err)),
     };

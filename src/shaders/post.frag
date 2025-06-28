@@ -7,12 +7,8 @@
 
 #include "descs/post.glsl"
 
-layout(push_constant) uniform TestPushConstants {
-    uint source;
-};
-
 layout(location = 0) in vec2 texcoord;
-layout(location = 0) out vec4 out_color;
+layout(location = 0) out vec4 composite;
 
 void main() {
     // Render target info
@@ -54,5 +50,5 @@ void main() {
     float crt = mix(1.0, 0.8, step(mod(floor(texcoord.y * 540), 2), 0));
 
     // Final compositing
-    out_color = vec4(linearToSrgb(((center + noise) * crt + bloom * 0.05) * vignette), 1);
+    composite = vec4(linearToSrgb(((center + noise) * crt + bloom * 0.05) * vignette), 1);
 }

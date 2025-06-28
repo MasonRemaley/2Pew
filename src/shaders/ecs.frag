@@ -7,7 +7,7 @@
 layout(location = 0) in vec2 texcoord;
 layout(location = 1) in flat Entity entity;
 
-layout(location = 0) out vec4 out_color;
+layout(location = 0) out vec4 color_buffer;
 
 void main() {
     uvec2 diffuse_recolor = unpackShort2x16(entity.diffuse_recolor);
@@ -25,6 +25,6 @@ void main() {
     }
 
     vec4 color = unpackUnorm4x8(entity.color);
-    out_color = mix(diffuse, diffuse * color, recolor);
-    out_color.rgb = linearToSrgb(out_color.rgb);
+    color_buffer = mix(diffuse, diffuse * color, recolor);
+    color_buffer.rgb = linearToSrgb(color_buffer.rgb);
 }
