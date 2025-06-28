@@ -464,10 +464,7 @@ pub fn all(game: *Game, delta_s: f32) void {
         }
     }
 
-    // After drawing, update the render target sizes if the window has resized, with a slight
-    // debounce to avoid repeatedly recreating the render targets during the resize. We wait until
-    // drawing after to minimize latency on the frames where this occurs.
-    if (game.resize_elapsed > 0.1 and !game.renderer.rtp.physical_extent.eql(game.window_extent)) {
+    if (game.renderer.rtp.suboptimal(&game.resize_timer, game.window_extent)) {
         game.gx.waitIdle();
         game.renderer.rtp.recreate(game.gx, game.window_extent);
     }

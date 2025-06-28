@@ -74,7 +74,7 @@ fn handleResize(userdata: ?*anyopaque, event: [*c]c.SDL_Event) callconv(.c) bool
                 .width = @intCast(event.*.window.data1),
                 .height = @intCast(event.*.window.data2),
             };
-            game.resize_elapsed = 0;
+            game.resize_timer.reset();
             return false;
         },
         else => return true,
