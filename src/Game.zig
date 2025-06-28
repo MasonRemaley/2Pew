@@ -97,7 +97,7 @@ rumble: Rumble = .{},
 color_buffer: gpu.ext.RenderTargetPool(.color).Handle,
 present: gpu.ext.RenderTargetPool(.color).Handle,
 window_extent: gpu.Extent2D,
-resize_elapsed: f32 = 0.0,
+resize_timer: std.time.Timer,
 
 const ShipAnimations = struct {
     still: Animation.Index,
@@ -984,6 +984,7 @@ pub fn init(
         .color_buffer = color_buffer,
         .present = present,
         .window_extent = window_extent,
+        .resize_timer = std.time.Timer.start() catch |err| @panic(@errorName(err)),
     };
 }
 
