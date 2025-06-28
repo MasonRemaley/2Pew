@@ -81,7 +81,7 @@ kevin_radius: f32,
 wendy_animations: ShipAnimations,
 wendy_radius: f32,
 
-stars: [600]Star,
+stars: [900]Star,
 
 particle: Sprite.Index,
 
@@ -1219,12 +1219,12 @@ pub fn over(game: Game) bool {
 }
 
 fn generateStars(stars: []Star, random: std.Random) void {
-    const radius = @max(display_size.x, display_size.y);
+    const margin = @max(display_size.x, display_size.y);
     for (stars) |*star| {
         star.* = .{
             .pos = .{
-                .x = lerp(-radius, radius, random.float(f32)),
-                .y = lerp(-radius, radius, random.float(f32)),
+                .x = lerp(-margin, margin * 2, random.float(f32)),
+                .y = lerp(-margin, margin * 2, random.float(f32)),
             },
             .kind = @enumFromInt(random.uintLessThanBiased(u8, 2)),
         };

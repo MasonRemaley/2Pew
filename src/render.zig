@@ -182,11 +182,16 @@ pub fn all(game: *Game, delta_s: f32) void {
 
     if (game.window_extent.width == 0 or game.window_extent.height == 0) return;
 
+    const color_buffer = game.color_buffer.image(&game.renderer.rtp);
+    const color_buffer_extent = game.color_buffer.extent(&game.renderer.rtp);
+    const present = game.present.image(&game.renderer.rtp);
+    const present_extent = game.present.extent(&game.renderer.rtp);
+
     {
         game.renderer.beginFrame(game.gx);
         defer game.gx.endFrame(.{ .present = .{
-            .image = game.present.get(&game.renderer.rtp).handle,
-            .src_extent = game.present.getSizedView(&game.renderer.rtp).extent,
+            .image = present.handle,
+            .src_extent = present_extent,
             .surface_extent = game.window_extent,
             .range = .first,
             .filter = .linear,
@@ -339,7 +344,7 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             cb.barriers(game.gx, .{ .image = &.{
                 .undefinedToColorAttachment(.{
-                    .handle = game.color_buffer.get(&game.renderer.rtp).handle,
+                    .handle = color_buffer.handle,
                     .range = .first,
                 }),
             } });
@@ -347,24 +352,24 @@ pub fn all(game: *Game, delta_s: f32) void {
                 .color_attachments = &.{
                     .init(.{
                         .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
-                        .view = game.color_buffer.get(&game.renderer.rtp).view,
+                        .view = color_buffer.view,
                     }),
                 },
                 .viewport = .{
                     .x = 0,
                     .y = 0,
-                    .width = @floatFromInt(game.color_buffer.getSizedView(&game.renderer.rtp).extent.width),
-                    .height = @floatFromInt(game.color_buffer.getSizedView(&game.renderer.rtp).extent.height),
+                    .width = @floatFromInt(color_buffer_extent.width),
+                    .height = @floatFromInt(color_buffer_extent.height),
                     .min_depth = 0.0,
                     .max_depth = 1.0,
                 },
                 .scissor = .{
                     .offset = .zero,
-                    .extent = game.color_buffer.getSizedView(&game.renderer.rtp).extent,
+                    .extent = color_buffer_extent,
                 },
                 .area = .{
                     .offset = .zero,
-                    .extent = game.color_buffer.getSizedView(&game.renderer.rtp).extent,
+                    .extent = color_buffer_extent,
                 },
             });
             defer cb.endRendering(game.gx);
@@ -388,13 +393,11 @@ pub fn all(game: *Game, delta_s: f32) void {
             const cb: CmdBuf = .init(game.gx, .{ .name = "Post", .src = @src() });
             defer cb.submit(game.gx);
 
-            const present_extent = game.present.getSizedView(&game.renderer.rtp).extent; // XXX: annoying api cause of view vs handle vs extent all separte/mixed
-
             gpu.DescSet.update(game.gx, &.{
                 .{
                     .set = game.renderer.post_desc_sets[game.gx.frame],
                     .binding = Renderer.post_pipeline_layout_options.binding("color_buffer"),
-                    .value = .{ .storage_image = game.color_buffer.get(&game.renderer.rtp).view },
+                    .value = .{ .storage_image = color_buffer.view },
                 },
             });
 
@@ -402,11 +405,11 @@ pub fn all(game: *Game, delta_s: f32) void {
                 .image = &.{
                     .colorAttachmentToGeneral(.{
                         .dst_stages = .{ .fragment = true },
-                        .handle = game.color_buffer.get(&game.renderer.rtp).handle,
+                        .handle = color_buffer.handle,
                         .range = .first,
                     }),
                     .undefinedToColorAttachmentAfterPresentBlit(.{
-                        .handle = game.present.get(&game.renderer.rtp).handle,
+                        .handle = present.handle,
                         .range = .first,
                     }),
                 },
@@ -417,7 +420,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .color_attachments = &.{
                         .init(.{
                             .load_op = .dont_care,
-                            .view = game.present.get(&game.renderer.rtp).view,
+                            .view = present.view,
                         }),
                     },
                     .viewport = .{
@@ -454,7 +457,7 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             cb.barriers(game.gx, .{ .image = &.{
                 .colorAttachmentToPresentBlitSrc(.{
-                    .handle = game.present.get(&game.renderer.rtp).handle,
+                    .handle = present.handle,
                     .range = .first,
                 }),
             } });
