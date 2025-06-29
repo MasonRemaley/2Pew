@@ -399,65 +399,49 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .binding = Renderer.post_pipeline_layout_options.binding("color_buffer"),
                     .value = .{ .storage_image = color_buffer.image.view },
                 },
+                .{
+                    .set = game.renderer.post_desc_sets[game.gx.frame],
+                    .binding = Renderer.post_pipeline_layout_options.binding("composite"),
+                    .value = .{ .storage_image = composite.image.view },
+                },
             });
 
             cb.barriers(game.gx, .{
                 .image = &.{
                     .colorAttachmentToGeneral(.{
-                        .dst_stages = .{ .fragment = true },
                         .handle = color_buffer.image.handle,
+                        .dst_stages = .{ .compute = true },
+                        .dst_access = .{ .read = true },
                         .range = .first,
                     }),
-                    .undefinedToColorAttachmentAfterPresentBlit(.{
+                    .undefinedToGeneralAfterPresentBlit(.{
                         .handle = composite.image.handle,
+                        .dst_stages = .{ .compute = true },
+                        .dst_access = .{ .write = true },
                         .range = .first,
                     }),
                 },
             });
 
             {
-                cb.beginRendering(game.gx, .{
-                    .color_attachments = &.{
-                        .init(.{
-                            .load_op = .dont_care,
-                            .view = composite.image.view,
-                        }),
-                    },
-                    .viewport = .{
-                        .x = 0,
-                        .y = 0,
-                        .width = @floatFromInt(composite.extent.width),
-                        .height = @floatFromInt(composite.extent.height),
-                        .min_depth = 0.0,
-                        .max_depth = 1.0,
-                    },
-                    .scissor = .{
-                        .offset = .zero,
-                        .extent = composite.extent,
-                    },
-                    .area = .{
-                        .offset = .zero,
-                        .extent = composite.extent,
-                    },
-                });
-                defer cb.endRendering(game.gx);
                 cb.bindPipeline(game.gx, game.renderer.pipelines.post);
                 cb.bindDescSet(
                     game.gx,
                     game.renderer.pipelines.post,
                     game.renderer.post_desc_sets[game.gx.frame],
                 );
-                cb.draw(game.gx, .{
-                    .vertex_count = 3,
-                    .instance_count = 1,
-                    .first_vertex = 0,
-                    .first_instance = 0,
+                const local_size = 16;
+                cb.dispatch(game.gx, .{
+                    .x = (composite.extent.width + local_size - 1) / local_size,
+                    .y = (composite.extent.height + local_size - 1) / local_size,
+                    .z = 1,
                 });
             }
 
             cb.barriers(game.gx, .{ .image = &.{
-                .colorAttachmentToPresentBlitSrc(.{
+                .generalToPresentBlitSrc(.{
                     .handle = composite.image.handle,
+                    .src_stages = .{ .compute = true },
                     .range = .first,
                 }),
             } });

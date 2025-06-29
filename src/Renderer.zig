@@ -123,14 +123,21 @@ pub const post_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
         .{
             .name = "scene",
             .kind = .storage_buffer,
-            .stages = .{ .fragment = true },
+            .stages = .{ .compute = true },
             .partially_bound = false,
         },
         .{
             .name = "color_buffer",
             .kind = .storage_image,
             .count = 1,
-            .stages = .{ .fragment = true },
+            .stages = .{ .compute = true },
+            .partially_bound = false,
+        },
+        .{
+            .name = "composite",
+            .kind = .storage_image,
+            .count = 1,
+            .stages = .{ .compute = true },
             .partially_bound = false,
         },
     },
@@ -289,21 +296,13 @@ pub const Pipelines = struct {
         });
         defer sprite_frag_module.deinit(gx);
 
-        const post_vert_spv = initSpv(gpa, "shaders/post.vert.spv");
-        defer gpa.free(post_vert_spv);
-        const post_vert_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "ecs.vert.spv" },
-            .ir = post_vert_spv,
+        const post_comp_spv = initSpv(gpa, "shaders/post.comp.spv");
+        defer gpa.free(post_comp_spv);
+        const post_comp_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "post.comp.spv" },
+            .ir = post_comp_spv,
         });
-        defer post_vert_module.deinit(gx);
-
-        const post_frag_spv = initSpv(gpa, "shaders/post.frag.spv");
-        defer gpa.free(post_frag_spv);
-        const post_frag_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "post.frag.spv" },
-            .ir = post_frag_spv,
-        });
-        defer post_frag_module.deinit(gx);
+        defer post_comp_module.deinit(gx);
 
         var game: gpu.Pipeline = undefined;
         var post: gpu.Pipeline = undefined;
@@ -323,18 +322,14 @@ pub const Pipelines = struct {
                 .depth_attachment_format = .undefined,
                 .stencil_attachment_format = .undefined,
             },
+        });
+
+        gpu.Pipeline.initCompute(gx, &.{
             .{
                 .name = .{ .str = "Post" },
-                .stages = .{
-                    .vertex = post_vert_module,
-                    .fragment = post_frag_module,
-                },
+                .shader_module = post_comp_module,
                 .result = &post,
-                .input_assembly = .{ .triangle_strip = .{} },
                 .layout = post_pipeline_layout,
-                .color_attachment_formats = &.{color_attachment_format},
-                .depth_attachment_format = .undefined,
-                .stencil_attachment_format = .undefined,
             },
         });
 

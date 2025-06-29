@@ -108,13 +108,11 @@ pub fn build(b: *std.Build) void {
 
     const ecs_vert_spv = installShader(b, shader_compiler_exe, "ecs.vert", optimize);
     const ecs_frag_spv = installShader(b, shader_compiler_exe, "ecs.frag", optimize);
-    const post_vert = installShader(b, shader_compiler_exe, "post.vert", optimize);
-    const post_frag = installShader(b, shader_compiler_exe, "post.frag", optimize);
+    const post_comp = installShader(b, shader_compiler_exe, "post.comp", optimize);
     const install_shaders_step = b.step("shaders", "Build and install the shaders");
     install_shaders_step.dependOn(&ecs_vert_spv.step);
     install_shaders_step.dependOn(&ecs_frag_spv.step);
-    install_shaders_step.dependOn(&post_vert.step);
-    install_shaders_step.dependOn(&post_frag.step);
+    install_shaders_step.dependOn(&post_comp.step);
     b.getInstallStep().dependOn(install_shaders_step);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -182,11 +180,17 @@ fn installShader(
     compile_shader.addArg("--write-deps");
     _ = compile_shader.addDepFileOutputArg("deps.d");
 
+    compile_shader.addArgs(&.{
+        "--define",
+        switch (optimize) {
+            .Debug, .ReleaseSafe => "RUNTIME_SAFETY=1\n",
+            .ReleaseFast, .ReleaseSmall => "RUNTIME_SAFETY=0\n",
+        },
+    });
+
     switch (optimize) {
-        .Debug => {},
-        .ReleaseSafe, .ReleaseFast => compile_shader.addArgs(&.{
-            "--optimize-perf",
-        }),
+        .Debug, .ReleaseSafe => {},
+        .ReleaseFast => compile_shader.addArg("--optimize-perf"),
         .ReleaseSmall => compile_shader.addArgs(&.{
             "--optimize-perf",
             "--optimize-small",

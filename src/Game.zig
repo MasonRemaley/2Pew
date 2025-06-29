@@ -848,7 +848,7 @@ pub fn init(
                 .depth = 1,
             },
             .usage = .{
-                .color_attachment = true,
+                .storage = true,
                 .transfer_src = true,
             },
         },
