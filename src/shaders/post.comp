@@ -11,10 +11,10 @@ layout(local_size_x = local_size.x, local_size_y = local_size.y, local_size_z = 
 void main() {
     // Get the sample coordinate
     ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-    uvec2 image_size = imageSize(composite);
+    uvec2 image_size = imageSize(composite_rw);
     #if RUNTIME_SAFETY
-        if (imageSize(composite) != imageSize(color_buffer)) {
-            imageStore(composite, coord, vec4(1, 0, 1, 1));
+        if (imageSize(composite_rw) != imageSize(color_buffer_r)) {
+            imageStore(composite_rw, coord, vec4(1, 0, 1, 1));
             return;
         }
     #endif
@@ -24,7 +24,7 @@ void main() {
     float ar = float(image_size.x) / float(image_size.y);
 
     // Sample the center of the image
-    vec3 center = srgbToLinear(imageLoad(color_buffer, coord).rgb);
+    vec3 center = srgbToLinear(imageLoad(color_buffer_r, coord).rgb);
 
     // Terrible bloom implementation, just using it to test out post processing
     vec3 bloom = center;
@@ -34,7 +34,7 @@ void main() {
             if (x != 0 || y != 0) {
                 ivec2 bc = coord + ivec2(x, y);
                 bc = clamp(bc, ivec2(0, 0), ivec2(image_size));
-                bloom += srgbToLinear(imageLoad(color_buffer, bc).rgb) * mix(1, 0, length(vec2(x, y)) / length(vec2(bloom_size)));
+                bloom += srgbToLinear(imageLoad(color_buffer_r, bc).rgb) * mix(1, 0, length(vec2(x, y)) / length(vec2(bloom_size)));
             }
         }
     }
@@ -66,5 +66,5 @@ void main() {
     float crt = mix(1.0, 0.8, step(mod(floor(remap(0, image_size.y, 0, 540/2, coord.y)), 2), 0));
 
     // Final composite
-    imageStore(composite, coord, vec4(linearToSrgb(((center + noise) * crt + bloom * 0.05) * vignette), 1));
+    imageStore(composite_rw, coord, vec4(linearToSrgb(((center + noise) * crt + bloom * 0.05) * vignette), 1));
 }

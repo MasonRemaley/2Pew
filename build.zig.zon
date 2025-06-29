@@ -33,8 +33,8 @@
             .hash = "gbms-0.0.0-AAAAAEljAQBlokdJhdOwN7RL2jdvcIMImB7Ow47GvIcm",
         },
         .sdl = .{
-            .url = "git+https://github.com/Games-By-Mason/sdl_zig#7e02e12c1dd0d01062e4f9261516053b362b07b9",
-            .hash = "sdl-0.0.0-i4QD0atfqAC9XqQ9a8uDwpBCstgIdTGoyeVI9nL1qia_",
+            .url = "git+https://github.com/Games-By-Mason/sdl_zig#c54a9bcd765729995b4ca69e3bac48ea18ffe409",
+            .hash = "sdl-0.0.0-i4QD0YFbqAA9LqMHZqFA-c2a4wMaWpoCorHQz9n-_naC",
         },
     },
     .paths = .{
