@@ -46,12 +46,12 @@ LINK_VERT_FRAG(location = 1) flat Entity l_entity;
         uint recolor_id = diffuse_recolor.y;
 
         vec4 diffuse = vec4(1.0);
-        if (diffuse_id != TexNone) {
+        if (diffuse_id != i_tex_none) {
             diffuse = texture(SAMPLER(diffuse_id), l_texcoord);
         }
 
         float recolor = diffuse.a;
-        if (recolor_id != TexNone) {
+        if (recolor_id != i_tex_none) {
             recolor *= texture(SAMPLER(recolor_id), l_texcoord).r;
         }
 

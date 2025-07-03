@@ -1,7 +1,23 @@
-#include "types/entity.glsl"
-#include "types/scene.glsl"
+#ifndef INCLUDE_2P_INTERFACE
+#define INCLUDE_2P_INTERFACE
 
+#include <gbms/mod_timer.glsl>
+
+const uint i_tex_none = 0xFFFF;
 const uint i_max_render_targets = 16;
+
+struct Scene {
+    mat2x3 world_to_view;
+    mat2x3 view_to_projection;
+    ModTimer timer;
+    vec2 mouse;
+};
+
+struct Entity {
+    mat2x3 model_to_world;
+    uint diffuse_recolor;
+    uint color;
+};
 
 #if defined(GL_VERTEX_SHADER) || defined(GL_COMPUTE_SHADER)
 	layout(scalar, binding = 0) readonly buffer SceneUbo { Scene i_scene; };
@@ -33,3 +49,4 @@ const uint i_max_render_targets = 16;
 	};
 #endif
 
+#endif
