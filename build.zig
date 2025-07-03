@@ -106,14 +106,36 @@ pub fn build(b: *std.Build) void {
     });
     const shader_compiler_exe = shader_compiler.artifact("shader_compiler");
 
-    const ecs_vert_spv = installShader(b, shader_compiler_exe, "ecs.vert", optimize);
-    const ecs_frag_spv = installShader(b, shader_compiler_exe, "ecs.frag", optimize);
-    const post_comp = installShader(b, shader_compiler_exe, "post.comp", optimize);
     const install_shaders_step = b.step("shaders", "Build and install the shaders");
-    install_shaders_step.dependOn(&ecs_vert_spv.step);
-    install_shaders_step.dependOn(&ecs_frag_spv.step);
-    install_shaders_step.dependOn(&post_comp.step);
     b.getInstallStep().dependOn(install_shaders_step);
+    installShaderProgram(
+        b,
+        install_shaders_step,
+        shader_compiler_exe,
+        "ecs.vf.glsl",
+        optimize,
+    );
+    installShaderProgram(
+        b,
+        install_shaders_step,
+        shader_compiler_exe,
+        "ecs.vf.glsl",
+        optimize,
+    );
+    installShaderProgram(
+        b,
+        install_shaders_step,
+        shader_compiler_exe,
+        "kawase_blur.comp.glsl",
+        optimize,
+    );
+    installShaderProgram(
+        b,
+        install_shaders_step,
+        shader_compiler_exe,
+        "composite.comp.glsl",
+        optimize,
+    );
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -148,18 +170,53 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&exe.step);
 }
 
-fn installShader(
+fn installShaderProgram(
     b: *std.Build,
+    install_shaders_step: *std.Build.Step,
     exe: *std.Build.Step.Compile,
     path: []const u8,
     optimize: std.builtin.OptimizeMode,
-) *std.Build.Step.InstallFile {
+) void {
+    const filename = std.fs.path.basename(path);
+    var iter = std.mem.splitScalar(u8, filename, '.');
+    const name = iter.next().?;
+    const stages_str = iter.next().?;
+    std.debug.assert(std.mem.eql(u8, iter.next().?, "glsl"));
+    std.debug.assert(iter.next() == null);
+
+    const stages = std.StaticStringMap(enum { vf, comp }).initComptime(.{
+        .{ "vf", .vf },
+        .{ "comp", .comp },
+    }).get(stages_str) orelse std.debug.panic("unknown shader stages {s}", .{stages_str});
+
+    switch (stages) {
+        .vf => {
+            installShader(b, install_shaders_step, exe, .vert, name, path, optimize);
+            installShader(b, install_shaders_step, exe, .frag, name, path, optimize);
+        },
+        .comp => {
+            installShader(b, install_shaders_step, exe, .comp, name, path, optimize);
+        },
+    }
+}
+
+fn installShader(
+    b: *std.Build,
+    install_shaders_step: *std.Build.Step,
+    exe: *std.Build.Step.Compile,
+    stage: enum { vert, frag, comp },
+    name: []const u8,
+    path: []const u8,
+    optimize: std.builtin.OptimizeMode,
+) void {
     const compile_shader = b.addRunArtifact(exe);
 
     // We just always include debug info for now, it's useful to have when something goes wrong and
     // I don't expect the shaders to be particularly large. I also don't mind sharing the source to
     // them etc.
     compile_shader.addArg("--debug");
+
+    compile_shader.addArgs(&.{ "--stage", @tagName(stage) });
 
     compile_shader.addArg("--preamble");
     compile_shader.addFileArg(b.path(b.pathJoin(&.{ "src", "shaders", "preamble.glsl" })));
@@ -180,29 +237,28 @@ fn installShader(
     compile_shader.addArg("--write-deps");
     _ = compile_shader.addDepFileOutputArg("deps.d");
 
-    compile_shader.addArgs(&.{
-        "--define",
-        switch (optimize) {
-            .Debug, .ReleaseSafe => "RUNTIME_SAFETY=1\n",
-            .ReleaseFast, .ReleaseSmall => "RUNTIME_SAFETY=0\n",
-        },
-    });
+    switch (optimize) {
+        .Debug, .ReleaseSafe => compile_shader.addArgs(&.{ "--define", "RUNTIME_SAFETY=1" }),
+        .ReleaseFast, .ReleaseSmall => compile_shader.addArgs(&.{ "--define", "RUNTIME_SAFETY=0" }),
+    }
 
     switch (optimize) {
         .Debug, .ReleaseSafe => {},
         .ReleaseFast => compile_shader.addArg("--optimize-perf"),
         .ReleaseSmall => compile_shader.addArgs(&.{
             "--optimize-perf",
-            "--optimize-small",
+            "--optimize-size",
         }),
     }
     compile_shader.addFileArg(b.path(b.pathJoin(&.{ "src", "shaders", path })));
 
     const spv = compile_shader.addOutputFileArg("compiled.spv");
 
-    return b.addInstallFile(spv, b.pathJoin(&.{
+    const file = b.addInstallFile(spv, b.pathJoin(&.{
         "data",
         "shaders",
-        b.fmt("{s}.spv", .{path}),
+        b.fmt("{s}.{s}.spv", .{ name, @tagName(stage) }),
     }));
+
+    install_shaders_step.dependOn(&file.step);
 }

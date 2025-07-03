@@ -183,6 +183,10 @@ pub fn all(game: *Game, delta_s: f32) void {
     if (game.window_extent.width == 0 or game.window_extent.height == 0) return;
 
     const color_buffer = game.color_buffer.get(&game.renderer.rtp);
+    const blurred: [2]gpu.ext.RenderTarget(.color).State = .{
+        game.blurred[0].get(&game.renderer.rtp),
+        game.blurred[1].get(&game.renderer.rtp),
+    };
     const composite = game.composite.get(&game.renderer.rtp);
 
     {
@@ -335,7 +339,45 @@ pub fn all(game: *Game, delta_s: f32) void {
             break :b entity_writer;
         };
 
+        // Update the render targets
+        {
+            var updates: std.BoundedArray(gpu.DescSet.Update, Renderer.max_render_targets) = .{};
+
+            for (game.renderer.rtp.images.items, game.renderer.rtp.info.items, 0..) |image, info, i| {
+                if (info.image.usage.storage) {
+                    updates.appendAssumeCapacity(.{
+                        .set = game.renderer.desc_sets[game.gx.frame],
+                        .binding = Renderer.pipeline_layout_options.binding("rt_storage"),
+                        .value = .{ .storage_image = image.view },
+                        .index = @intCast(i),
+                    });
+                }
+            }
+
+            for (game.renderer.rtp.images.items, game.renderer.rtp.info.items, 0..) |image, info, i| {
+                if (info.image.usage.sampled) {
+                    updates.appendAssumeCapacity(.{
+                        .set = game.renderer.desc_sets[game.gx.frame],
+                        .binding = Renderer.pipeline_layout_options.binding("rt_sampled"),
+                        .value = .{ .sampled_image = image.view },
+                        .index = @intCast(i),
+                    });
+                }
+            }
+
+            game.gx.updateDescSets(updates.constSlice());
+        }
+
         const cb: CmdBuf = .init(game.gx, .{ .name = "Render", .src = @src() });
+
+        cb.bindDescSet(game.gx, .{
+            .bind_points = .{
+                .graphics = true,
+                .compute = true,
+            },
+            .layout = game.renderer.pipeline_layout.handle,
+            .set = game.renderer.desc_sets[game.gx.frame],
+        });
 
         // Render the ECS
         {
@@ -345,6 +387,7 @@ pub fn all(game: *Game, delta_s: f32) void {
             cb.barriers(game.gx, .{ .image = &.{
                 .undefinedToColorAttachment(.{
                     .handle = color_buffer.image.handle,
+                    .src_stages = .{ .top_of_pipe = true },
                     .range = .first,
                 }),
             } });
@@ -375,11 +418,6 @@ pub fn all(game: *Game, delta_s: f32) void {
             defer cb.endRendering(game.gx);
 
             cb.bindPipeline(game.gx, game.renderer.pipelines.game);
-            cb.bindDescSet(
-                game.gx,
-                game.renderer.pipelines.game,
-                game.renderer.ecs_desc_sets[game.gx.frame],
-            );
             cb.draw(game.gx, .{
                 .vertex_count = 4,
                 .instance_count = @intCast(entity_writer.len),
@@ -389,47 +427,144 @@ pub fn all(game: *Game, delta_s: f32) void {
         }
 
         // Do the post processing
+        var blur_in_index: u32 = 0;
+        var blur_out_index: u32 = 1;
         {
             cb.beginZone(game.gx, .{ .name = "Post", .src = @src() });
             defer cb.endZone(game.gx);
 
-            game.gx.updateDescSets(&.{
-                .{
-                    .set = game.renderer.post_desc_sets[game.gx.frame],
-                    .binding = Renderer.post_pipeline_layout_options.binding("color_buffer"),
-                    .value = .{ .storage_image = color_buffer.image.view },
-                },
-                .{
-                    .set = game.renderer.post_desc_sets[game.gx.frame],
-                    .binding = Renderer.post_pipeline_layout_options.binding("composite"),
-                    .value = .{ .storage_image = composite.image.view },
-                },
-            });
-
-            cb.barriers(game.gx, .{
-                .image = &.{
-                    .colorAttachmentToGeneral(.{
-                        .handle = color_buffer.image.handle,
-                        .dst_stages = .{ .compute = true },
-                        .dst_access = .{ .read = true },
-                        .range = .first,
-                    }),
-                    .undefinedToGeneralAfterPresentBlit(.{
-                        .handle = composite.image.handle,
-                        .dst_stages = .{ .compute = true },
-                        .dst_access = .{ .write = true },
-                        .range = .first,
-                    }),
-                },
-            });
-
+            // Blur
             {
-                cb.bindPipeline(game.gx, game.renderer.pipelines.post);
-                cb.bindDescSet(
-                    game.gx,
-                    game.renderer.pipelines.post,
-                    game.renderer.post_desc_sets[game.gx.frame],
-                );
+                cb.beginZone(game.gx, .{ .name = "Blur", .src = @src() });
+                defer cb.endZone(game.gx);
+
+                const BlurArgs = extern struct {
+                    input: gpu.ext.RenderTarget(.color),
+                    output: gpu.ext.RenderTarget(.color),
+                    dist: u32,
+                };
+                const local_size = 16;
+
+                cb.bindPipeline(game.gx, game.renderer.pipelines.blur);
+
+                {
+                    cb.beginZone(game.gx, .{ .name = "Blur Init", .src = @src() });
+                    defer cb.endZone(game.gx);
+
+                    cb.barriers(game.gx, .{
+                        .image = &.{
+                            .colorAttachmentToReadOnly(.{
+                                .handle = color_buffer.image.handle,
+                                .dst_stages = .{ .compute = true },
+                                .range = .first,
+                            }),
+                            .undefinedToGeneral(.{
+                                .handle = blurred[blur_out_index].image.handle,
+                                .src_stages = .{ .top_of_pipe = true },
+                                .dst_stages = .{ .compute = true },
+                                .dst_access = .{ .write = true },
+                                .range = .first,
+                            }),
+                        },
+                    });
+
+                    // XXX: I guess we need to set all indices, have some kind of NONE value? or is
+                    // this just a warning that we can ignore?
+                    cb.pushConstant(BlurArgs, game.gx, .{
+                        .pipeline_layout = game.renderer.pipelines.blur.layout,
+                        .stages = .{ .compute = true },
+                        .offset = 0,
+                        .data = &.{
+                            .input = game.color_buffer,
+                            .output = game.blurred[blur_out_index],
+                            .dist = 0,
+                        },
+                    });
+                    cb.dispatch(game.gx, .{
+                        .x = (blurred[0].extent.width + local_size - 1) / local_size,
+                        .y = (blurred[0].extent.height + local_size - 1) / local_size,
+                        .z = 1,
+                    });
+
+                    std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                }
+
+                // The blur radius is resolution dependent while I experiment with it, later on this
+                // will be adjusted for the current resolution either via downsampling or changing
+                // the iterations (or by using a different blur)
+                for (1..10) |i| {
+                    cb.beginZone(game.gx, .{ .name = "Blur Iter", .src = @src() });
+                    defer cb.endZone(game.gx);
+
+                    cb.barriers(game.gx, .{
+                        .image = &.{
+                            .generalToReadOnly(.{
+                                .handle = blurred[blur_in_index].image.handle,
+                                .src_stages = .{ .compute = true },
+                                .src_access = .{ .write = true },
+                                .dst_stages = .{ .compute = true },
+                                .range = .first,
+                                .aspect = .{ .color = true },
+                            }),
+                            .undefinedToGeneral(.{
+                                .handle = blurred[blur_out_index].image.handle,
+                                .src_stages = .{ .top_of_pipe = true },
+                                .dst_stages = .{ .compute = true },
+                                .dst_access = .{ .write = true },
+                                .range = .first,
+                            }),
+                        },
+                    });
+
+                    cb.pushConstant(BlurArgs, game.gx, .{
+                        .pipeline_layout = game.renderer.pipelines.blur.layout,
+                        .stages = .{ .compute = true },
+                        .offset = 0,
+                        .data = &.{
+                            .input = game.blurred[blur_in_index],
+                            .output = game.blurred[blur_out_index],
+                            .dist = @intCast(i),
+                        },
+                    });
+                    cb.dispatch(game.gx, .{
+                        .x = (blurred[0].extent.width + local_size - 1) / local_size,
+                        .y = (blurred[0].extent.height + local_size - 1) / local_size,
+                        .z = 1,
+                    });
+
+                    std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                }
+            }
+
+            // Composite
+            {
+                cb.beginZone(game.gx, .{ .name = "Composite", .src = @src() });
+                defer cb.endZone(game.gx);
+                cb.barriers(game.gx, .{
+                    .image = &.{
+                        .generalToGeneral(.{
+                            .handle = blurred[blur_in_index].image.handle,
+                            .src_stages = .{ .compute = true },
+                            .src_access = .{ .write = true },
+                            .dst_stages = .{ .compute = true },
+                            .dst_access = .{ .read = true },
+                            .range = .first,
+                        }),
+                        .undefinedToGeneralAfterPresentBlit(.{
+                            .handle = composite.image.handle,
+                            .dst_stages = .{ .compute = true },
+                            .dst_access = .{ .write = true },
+                            .range = .first,
+                        }),
+                    },
+                });
+                cb.bindPipeline(game.gx, game.renderer.pipelines.composite);
+                cb.pushConstant([3]gpu.ext.RenderTarget(.color), game.gx, .{
+                    .pipeline_layout = game.renderer.pipelines.blur.layout,
+                    .stages = .{ .compute = true },
+                    .offset = 0,
+                    .data = &.{ game.color_buffer, game.blurred[blur_in_index], game.composite },
+                });
                 const local_size = 16;
                 cb.dispatch(game.gx, .{
                     .x = (composite.extent.width + local_size - 1) / local_size,
@@ -438,6 +573,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                 });
             }
 
+            // Get ready for presentation
             cb.barriers(game.gx, .{ .image = &.{
                 .generalToPresentBlitSrc(.{
                     .handle = composite.image.handle,

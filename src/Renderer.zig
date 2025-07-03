@@ -31,16 +31,14 @@ color_image_allocator: ImageBumpAllocator(.color),
 textures: std.ArrayListUnmanaged(gpu.Image(.color)),
 
 pipelines: Pipelines,
-ecs_pipeline_layout: gpu.Pipeline.Layout,
-post_pipeline_layout: gpu.Pipeline.Layout,
-ecs_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
-post_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
+pipeline_layout: gpu.Pipeline.Layout,
+desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
 rtp: RenderTarget(.color).Pool,
 
 storage_buf: UploadBuf(.{ .storage = true }),
 
-texture_sampler: gpu.Sampler,
+sampler: gpu.Sampler,
 
 entities: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
@@ -86,13 +84,13 @@ pub const ubo = struct {
     };
 };
 
-pub const ecs_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
-    .name = .{ .str = "ECS" },
+pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
+    .name = .{ .str = "Main" },
     .descs = &.{
         .{
             .name = "scene",
             .kind = .storage_buffer,
-            .stages = .{ .vertex = true },
+            .stages = .{ .vertex = true, .compute = true },
             .partially_bound = false,
         },
         .{
@@ -109,36 +107,30 @@ pub const ecs_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
             .partially_bound = true,
         },
         .{
-            .name = "texture_sampler",
+            .name = "linear_sampler",
             .kind = .sampler,
-            .stages = .{ .fragment = true },
+            .stages = .{ .fragment = true, .compute = true },
             .partially_bound = false,
+        },
+        .{
+            .name = "rt_storage",
+            .kind = .storage_image,
+            .count = max_render_targets,
+            .stages = .{ .compute = true },
+            .partially_bound = true,
+        },
+        .{
+            .name = "rt_sampled",
+            .kind = .sampled_image,
+            .count = max_render_targets,
+            .stages = .{ .compute = true },
+            .partially_bound = true,
         },
     },
-};
-
-pub const post_pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
-    .name = .{ .str = "Post" },
-    .descs = &.{
+    .push_constant_ranges = &.{
         .{
-            .name = "scene",
-            .kind = .storage_buffer,
             .stages = .{ .compute = true },
-            .partially_bound = false,
-        },
-        .{
-            .name = "color_buffer",
-            .kind = .storage_image,
-            .count = 1,
-            .stages = .{ .compute = true },
-            .partially_bound = false,
-        },
-        .{
-            .name = "composite",
-            .kind = .storage_image,
-            .count = 1,
-            .stages = .{ .compute = true },
-            .partially_bound = false,
+            .size = @sizeOf(gpu.ext.RenderTarget(.color)) * 3,
         },
     },
 };
@@ -151,26 +143,16 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .name = "Color Images",
     }) catch |err| @panic(@errorName(err));
 
-    const ecs_pipeline_layout: gpu.Pipeline.Layout = .init(gx, ecs_pipeline_layout_options);
-    const post_pipeline_layout: gpu.Pipeline.Layout = .init(gx, post_pipeline_layout_options);
+    const pipeline_layout: gpu.Pipeline.Layout = .init(gx, pipeline_layout_options);
 
-    var ecs_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
-    var post_desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
-    var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, ecs_desc_sets.len + post_desc_sets.len) = .{};
-    for (&ecs_desc_sets, 0..) |*desc_set, i| {
+    var desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
+    var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, desc_sets.len) = .{};
+    for (&desc_sets, 0..) |*desc_set, i| {
         create_descs.appendAssumeCapacity(.{
             .name = .{ .str = "Entities", .index = i },
             .result = desc_set,
-            .layout = ecs_pipeline_layout.desc_set,
-            .layout_options = &ecs_pipeline_layout_options,
-        });
-    }
-    for (&post_desc_sets, 0..) |*desc_set, i| {
-        create_descs.appendAssumeCapacity(.{
-            .name = .{ .str = "Post", .index = i },
-            .result = desc_set,
-            .layout = post_pipeline_layout.desc_set,
-            .layout_options = &post_pipeline_layout_options,
+            .layout = pipeline_layout.desc_set,
+            .layout_options = &pipeline_layout_options,
         });
     }
     const desc_pool: gpu.DescPool = .init(gx, .{
@@ -191,7 +173,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         },
     });
 
-    const texture_sampler: gpu.Sampler = .init(gx, .{ .str = "Texture" }, .{
+    const sampler: gpu.Sampler = .init(gx, .{ .str = "Texture" }, .{
         .mag_filter = .linear,
         .min_filter = .linear,
         .mipmap_mode = .linear,
@@ -212,8 +194,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
     const pipelines: Pipelines = .init(
         gpa,
         gx,
-        ecs_pipeline_layout,
-        post_pipeline_layout,
+        pipeline_layout,
     );
 
     const rtp = RenderTarget(.color).Pool.init(gpa, gx, .{
@@ -231,13 +212,11 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .color_image_allocator = color_image_allocator,
         .textures = textures,
         .pipelines = pipelines,
-        .ecs_pipeline_layout = ecs_pipeline_layout,
-        .post_pipeline_layout = post_pipeline_layout,
-        .ecs_desc_sets = ecs_desc_sets,
-        .post_desc_sets = post_desc_sets,
+        .pipeline_layout = pipeline_layout,
+        .desc_sets = desc_sets,
         .desc_pool = desc_pool,
         .storage_buf = storage_buf,
-        .texture_sampler = texture_sampler,
+        .sampler = sampler,
         .scene = scene,
         .entities = entities,
         .rtp = rtp,
@@ -253,13 +232,12 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     for (self.textures.items) |*t| t.deinit(gx);
     self.textures.deinit(gpa);
 
-    self.ecs_pipeline_layout.deinit(gx);
-    self.post_pipeline_layout.deinit(gx);
+    self.pipeline_layout.deinit(gx);
     self.pipelines.deinit(gx);
 
     self.desc_pool.deinit(gx);
     self.storage_buf.deinit(gx);
-    self.texture_sampler.deinit(gx);
+    self.sampler.deinit(gx);
 
     self.color_image_allocator.deinit(gpa, gx);
 
@@ -270,15 +248,15 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
 
 pub const Pipelines = struct {
     game: gpu.Pipeline,
-    post: gpu.Pipeline,
+    blur: gpu.Pipeline,
+    composite: gpu.Pipeline,
 
     pub const color_attachment_format: gpu.ImageFormat = .r8g8b8a8_unorm;
 
     pub fn init(
         gpa: Allocator,
         gx: *Gx,
-        ecs_pipeline_layout: gpu.Pipeline.Layout,
-        post_pipeline_layout: gpu.Pipeline.Layout,
+        pipeline_layout: gpu.Pipeline.Layout,
     ) Pipelines {
         const ecs_vert_spv = initSpv(gpa, "shaders/ecs.vert.spv");
         defer gpa.free(ecs_vert_spv);
@@ -296,16 +274,25 @@ pub const Pipelines = struct {
         });
         defer sprite_frag_module.deinit(gx);
 
-        const post_comp_spv = initSpv(gpa, "shaders/post.comp.spv");
+        const post_comp_spv = initSpv(gpa, "shaders/composite.comp.spv");
         defer gpa.free(post_comp_spv);
         const post_comp_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "post.comp.spv" },
+            .name = .{ .str = "composite.comp.spv" },
             .ir = post_comp_spv,
         });
         defer post_comp_module.deinit(gx);
 
+        const blur_comp_spv = initSpv(gpa, "shaders/kawase_blur.comp.spv");
+        defer gpa.free(blur_comp_spv);
+        const blur_comp_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "blur.comp.spv" },
+            .ir = blur_comp_spv,
+        });
+        defer blur_comp_module.deinit(gx);
+
         var game: gpu.Pipeline = undefined;
-        var post: gpu.Pipeline = undefined;
+        var blur: gpu.Pipeline = undefined;
+        var composite: gpu.Pipeline = undefined;
         gpu.Pipeline.initGraphics(gx, &.{
             .{
                 .name = .{ .str = "Game" },
@@ -315,7 +302,7 @@ pub const Pipelines = struct {
                 },
                 .result = &game,
                 .input_assembly = .{ .triangle_strip = .{} },
-                .layout = ecs_pipeline_layout,
+                .layout = pipeline_layout,
                 .color_attachment_formats = &.{
                     color_attachment_format,
                 },
@@ -326,22 +313,30 @@ pub const Pipelines = struct {
 
         gpu.Pipeline.initCompute(gx, &.{
             .{
-                .name = .{ .str = "Post" },
+                .name = .{ .str = "Blur" },
+                .shader_module = blur_comp_module,
+                .result = &blur,
+                .layout = pipeline_layout,
+            },
+            .{
+                .name = .{ .str = "Composite" },
                 .shader_module = post_comp_module,
-                .result = &post,
-                .layout = post_pipeline_layout,
+                .result = &composite,
+                .layout = pipeline_layout,
             },
         });
 
         return .{
             .game = game,
-            .post = post,
+            .blur = blur,
+            .composite = composite,
         };
     }
 
     pub fn deinit(self: *@This(), gx: *Gx) void {
         self.game.deinit(gx);
-        self.post.deinit(gx);
+        self.composite.deinit(gx);
+        self.blur.deinit(gx);
         self.* = undefined;
     }
 };

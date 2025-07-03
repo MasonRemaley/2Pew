@@ -97,6 +97,7 @@ rumble: Rumble = .{},
 
 color_buffer: RenderTarget(.color),
 composite: RenderTarget(.color),
+blurred: [2]RenderTarget(.color),
 window_extent: gpu.Extent2D,
 resize_timer: std.time.Timer,
 
@@ -834,6 +835,7 @@ pub fn init(
             .usage = .{
                 .color_attachment = true,
                 .storage = true,
+                .sampled = true,
             },
         },
     });
@@ -854,14 +856,33 @@ pub fn init(
         },
     });
 
+    var blurred: [2]RenderTarget(.color) = undefined;
+    for (&blurred, 0..) |*rt, i| {
+        rt.* = renderer.rtp.alloc(gx, .{
+            .name = .{ .str = "Blurred", .index = i },
+            .image = .{
+                .format = Renderer.Pipelines.color_attachment_format,
+                .extent = .{
+                    .width = 1920,
+                    .height = 1080,
+                    .depth = 1,
+                },
+                .usage = .{
+                    .storage = true,
+                    .sampled = true,
+                },
+            },
+        });
+    }
+
     var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 128);
     defer desc_set_updates.deinit();
 
-    for (renderer.ecs_desc_sets, 0..) |set, frame| {
+    for (renderer.desc_sets, 0..) |set, frame| {
         if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
         try desc_set_updates.append(.{
             .set = set,
-            .binding = Renderer.ecs_pipeline_layout_options.binding("scene"),
+            .binding = Renderer.pipeline_layout_options.binding("scene"),
             .value = .{
                 .storage_buf = renderer.scene[frame].asBuf(.{ .storage = true }),
             },
@@ -869,7 +890,7 @@ pub fn init(
         if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
         try desc_set_updates.append(.{
             .set = set,
-            .binding = Renderer.ecs_pipeline_layout_options.binding("entities"),
+            .binding = Renderer.pipeline_layout_options.binding("entities"),
             .value = .{
                 .storage_buf = renderer.entities[frame].asBuf(.{ .storage = true }),
             },
@@ -880,24 +901,15 @@ pub fn init(
             if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
             try desc_set_updates.append(.{
                 .set = set,
-                .binding = Renderer.ecs_pipeline_layout_options.binding("textures"),
+                .binding = Renderer.pipeline_layout_options.binding("textures"),
                 .index = @intCast(texture_index),
                 .value = .{ .sampled_image = texture.view },
             });
         }
         try desc_set_updates.append(.{
             .set = set,
-            .binding = Renderer.ecs_pipeline_layout_options.binding("texture_sampler"),
-            .value = .{ .sampler = renderer.texture_sampler },
-        });
-    }
-    for (renderer.post_desc_sets, 0..) |set, frame| {
-        try desc_set_updates.append(.{
-            .set = set,
-            .binding = Renderer.post_pipeline_layout_options.binding("scene"),
-            .value = .{
-                .storage_buf = renderer.scene[frame].asBuf(.{ .storage = true }),
-            },
+            .binding = Renderer.pipeline_layout_options.binding("linear_sampler"),
+            .value = .{ .sampler = renderer.sampler },
         });
     }
     gx.updateDescSets(desc_set_updates.items);
@@ -985,6 +997,7 @@ pub fn init(
 
         .color_buffer = color_buffer,
         .composite = composite,
+        .blurred = blurred,
         .window_extent = window_extent,
         .resize_timer = std.time.Timer.start() catch |err| @panic(@errorName(err)),
     };
