@@ -59,5 +59,5 @@ void main() {
     float crt = mix(1.0, 0.8, step(mod(floor(remap(0, image_size.y, 0, 540/2, coord.y)), 2), 0));
 
     // Final composite
-    imageStore(COMPOSITE, coord, vec4(linearToSrgb(((center + noise) * crt + bloom * 0.1) * vignette), 1));
+    imageStore(COMPOSITE, coord, vec4(linearToSrgb(((center + noise) * crt + bloom * 0.05) * vignette), 1));
 }

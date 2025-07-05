@@ -126,7 +126,7 @@ pub fn build(b: *std.Build) void {
         b,
         install_shaders_step,
         shader_compiler_exe,
-        "kawase_blur.comp.glsl",
+        "blur_moving_average.comp.glsl",
         optimize,
     );
     installShaderProgram(

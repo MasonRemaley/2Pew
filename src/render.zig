@@ -441,21 +441,25 @@ pub fn all(game: *Game, delta_s: f32) void {
                 const BlurArgs = extern struct {
                     input: gpu.ext.RenderTarget(.color),
                     output: gpu.ext.RenderTarget(.color),
-                    dist: u32,
+                    radius: i32,
+                    dir: enum(i32) { x = 1, y = 0 },
                 };
-                const local_size = 16;
 
+                const block_width = 256;
+                const local_height = 256;
+                const radius = 20;
                 cb.bindPipeline(game.gx, game.renderer.pipelines.blur);
 
                 {
-                    cb.beginZone(game.gx, .{ .name = "Blur Init", .src = @src() });
+                    cb.beginZone(game.gx, .{ .name = "Blur X", .src = @src() });
                     defer cb.endZone(game.gx);
 
                     cb.barriers(game.gx, .{
                         .image = &.{
-                            .colorAttachmentToReadOnly(.{
+                            .colorAttachmentToGeneral(.{
                                 .handle = color_buffer.image.handle,
                                 .dst_stages = .{ .compute = true },
+                                .dst_access = .{ .read = true },
                                 .range = .first,
                             }),
                             .undefinedToGeneral(.{
@@ -464,12 +468,11 @@ pub fn all(game: *Game, delta_s: f32) void {
                                 .dst_stages = .{ .compute = true },
                                 .dst_access = .{ .write = true },
                                 .range = .first,
+                                .aspect = .{ .color = true },
                             }),
                         },
                     });
 
-                    // XXX: I guess we need to set all indices, have some kind of NONE value? or is
-                    // this just a warning that we can ignore?
                     cb.pushConstant(BlurArgs, game.gx, .{
                         .pipeline_layout = game.renderer.pipelines.blur.layout,
                         .stages = .{ .compute = true },
@@ -477,40 +480,40 @@ pub fn all(game: *Game, delta_s: f32) void {
                         .data = &.{
                             .input = game.color_buffer,
                             .output = game.blurred[blur_out_index],
-                            .dist = 0,
+                            .radius = radius,
+                            .dir = .x,
                         },
                     });
                     cb.dispatch(game.gx, .{
-                        .x = (blurred[0].extent.width + local_size - 1) / local_size,
-                        .y = (blurred[0].extent.height + local_size - 1) / local_size,
+                        .x = std.math.divCeil(u32, blurred[0].extent.width, block_width) catch unreachable,
+                        .y = std.math.divCeil(u32, blurred[0].extent.height, local_height) catch unreachable,
                         .z = 1,
                     });
 
                     std.mem.swap(u32, &blur_in_index, &blur_out_index);
                 }
 
-                // The blur radius is resolution dependent while I experiment with it, later on this
-                // will be adjusted for the current resolution either via downsampling or changing
-                // the iterations (or by using a different blur)
-                for (1..10) |i| {
-                    cb.beginZone(game.gx, .{ .name = "Blur Iter", .src = @src() });
+                for (0..2) |_| {
+                    cb.beginZone(game.gx, .{ .name = "Blur X", .src = @src() });
                     defer cb.endZone(game.gx);
 
                     cb.barriers(game.gx, .{
                         .image = &.{
-                            .generalToReadOnly(.{
+                            .generalToGeneral(.{
                                 .handle = blurred[blur_in_index].image.handle,
                                 .src_stages = .{ .compute = true },
                                 .src_access = .{ .write = true },
                                 .dst_stages = .{ .compute = true },
+                                .dst_access = .{ .read = true },
                                 .range = .first,
                                 .aspect = .{ .color = true },
                             }),
                             .undefinedToGeneral(.{
                                 .handle = blurred[blur_out_index].image.handle,
-                                .src_stages = .{ .top_of_pipe = true },
+                                .src_stages = .{ .compute = true },
                                 .dst_stages = .{ .compute = true },
                                 .dst_access = .{ .write = true },
+                                .aspect = .{ .color = true },
                                 .range = .first,
                             }),
                         },
@@ -523,12 +526,59 @@ pub fn all(game: *Game, delta_s: f32) void {
                         .data = &.{
                             .input = game.blurred[blur_in_index],
                             .output = game.blurred[blur_out_index],
-                            .dist = @intCast(i),
+                            .radius = radius,
+                            .dir = .x,
                         },
                     });
                     cb.dispatch(game.gx, .{
-                        .x = (blurred[0].extent.width + local_size - 1) / local_size,
-                        .y = (blurred[0].extent.height + local_size - 1) / local_size,
+                        .x = std.math.divCeil(u32, blurred[0].extent.width, block_width) catch unreachable,
+                        .y = std.math.divCeil(u32, blurred[0].extent.height, local_height) catch unreachable,
+                        .z = 1,
+                    });
+
+                    std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                }
+
+                for (0..3) |_| {
+                    cb.beginZone(game.gx, .{ .name = "Blur Y", .src = @src() });
+                    defer cb.endZone(game.gx);
+
+                    cb.barriers(game.gx, .{
+                        .image = &.{
+                            .generalToGeneral(.{
+                                .handle = blurred[blur_in_index].image.handle,
+                                .src_stages = .{ .compute = true },
+                                .src_access = .{ .write = true },
+                                .dst_stages = .{ .compute = true },
+                                .dst_access = .{ .read = true },
+                                .range = .first,
+                                .aspect = .{ .color = true },
+                            }),
+                            .undefinedToGeneral(.{
+                                .handle = blurred[blur_out_index].image.handle,
+                                .src_stages = .{ .compute = true },
+                                .dst_stages = .{ .compute = true },
+                                .dst_access = .{ .write = true },
+                                .range = .first,
+                                .aspect = .{ .color = true },
+                            }),
+                        },
+                    });
+
+                    cb.pushConstant(BlurArgs, game.gx, .{
+                        .pipeline_layout = game.renderer.pipelines.blur.layout,
+                        .stages = .{ .compute = true },
+                        .offset = 0,
+                        .data = &.{
+                            .input = game.blurred[blur_in_index],
+                            .output = game.blurred[blur_out_index],
+                            .radius = radius,
+                            .dir = .y,
+                        },
+                    });
+                    cb.dispatch(game.gx, .{
+                        .x = std.math.divCeil(u32, blurred[0].extent.height, block_width) catch unreachable,
+                        .y = std.math.divCeil(u32, blurred[0].extent.width, local_height) catch unreachable,
                         .z = 1,
                     });
 
@@ -549,6 +599,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                             .dst_stages = .{ .compute = true },
                             .dst_access = .{ .read = true },
                             .range = .first,
+                            .aspect = .{ .color = true },
                         }),
                         .undefinedToGeneralAfterPresentBlit(.{
                             .handle = composite.image.handle,

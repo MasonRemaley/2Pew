@@ -130,7 +130,7 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
     .push_constant_ranges = &.{
         .{
             .stages = .{ .compute = true },
-            .size = @sizeOf(gpu.ext.RenderTarget(.color)) * 3,
+            .size = @sizeOf(gpu.ext.RenderTarget(.color)) * 4,
         },
     },
 };
@@ -282,7 +282,7 @@ pub const Pipelines = struct {
         });
         defer post_comp_module.deinit(gx);
 
-        const blur_comp_spv = initSpv(gpa, "shaders/kawase_blur.comp.spv");
+        const blur_comp_spv = initSpv(gpa, "shaders/blur_moving_average.comp.spv");
         defer gpa.free(blur_comp_spv);
         const blur_comp_module: gpu.ShaderModule = .init(gx, .{
             .name = .{ .str = "blur.comp.spv" },
