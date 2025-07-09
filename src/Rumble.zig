@@ -13,7 +13,7 @@
 //! Instead, we opt to synchronize the rumble state at a fixed frequency likely much lower than the
 //! rate at which the game is rendering.
 
-const c = @import("c.zig");
+const c = @import("c.zig").c;
 
 /// The size of a packet of rumble data in seconds.
 ///

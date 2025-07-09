@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig");
+const c = @import("c.zig").c;
 const panic = std.debug.panic;
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;

@@ -5,7 +5,7 @@ const gpu = @import("gpu");
 const Game = @import("Game.zig");
 const Renderer = @import("Renderer.zig");
 const Assets = @import("Assets.zig");
-const c = @import("c.zig");
+const c = @import("c.zig").c;
 const Entities = zcs.Entities;
 
 const ubo = Renderer.ubo;

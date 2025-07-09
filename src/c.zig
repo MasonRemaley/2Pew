@@ -1,4 +1,4 @@
-pub usingnamespace @cImport({
+pub const c = @cImport({
     @cInclude("SDL3/SDL.h");
     @cInclude("SDL3/SDL_vulkan.h");
     @cDefine("STBI_ONLY_PNG", "");

@@ -3,7 +3,7 @@ const std = @import("std");
 const gpu = @import("gpu");
 const geom = @import("zcs").ext.geom;
 const tracy = @import("tracy");
-const c = @import("c.zig");
+const c = @import("c.zig").c;
 const Game = @import("Game.zig");
 
 const DeleteQueue = gpu.ext.DeleteQueue;
