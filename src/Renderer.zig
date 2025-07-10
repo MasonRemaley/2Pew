@@ -130,7 +130,7 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
     .push_constant_ranges = &.{
         .{
             .stages = .{ .compute = true },
-            .size = @sizeOf(gpu.ext.RenderTarget(.color)) * 4,
+            .size = @sizeOf(u32) * 32,
         },
     },
 };
@@ -248,7 +248,8 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
 
 pub const Pipelines = struct {
     game: gpu.Pipeline,
-    blur: gpu.Pipeline,
+    linear_convolve: gpu.Pipeline,
+    box_blur_moving_avg: gpu.Pipeline,
     composite: gpu.Pipeline,
 
     pub const color_attachment_format: gpu.ImageFormat = .r8g8b8a8_unorm;
@@ -282,16 +283,25 @@ pub const Pipelines = struct {
         });
         defer post_comp_module.deinit(gx);
 
-        const blur_comp_spv = initSpv(gpa, "shaders/blur_moving_average.comp.spv");
-        defer gpa.free(blur_comp_spv);
-        const blur_comp_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "blur.comp.spv" },
-            .ir = blur_comp_spv,
+        const blur_separable_spv = initSpv(gpa, "shaders/linear_convolve.comp.spv");
+        defer gpa.free(blur_separable_spv);
+        const blur_separable_comp_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "linear_convolve.comp.spv" },
+            .ir = blur_separable_spv,
         });
-        defer blur_comp_module.deinit(gx);
+        defer blur_separable_comp_module.deinit(gx);
+
+        const blur_moving_average_spv = initSpv(gpa, "shaders/box_blur_moving_avg.comp.spv");
+        defer gpa.free(blur_moving_average_spv);
+        const blur_moving_average_comp_module: gpu.ShaderModule = .init(gx, .{
+            .name = .{ .str = "linear_convolve.comp.spv" },
+            .ir = blur_moving_average_spv,
+        });
+        defer blur_moving_average_comp_module.deinit(gx);
 
         var game: gpu.Pipeline = undefined;
-        var blur: gpu.Pipeline = undefined;
+        var linear_convolve: gpu.Pipeline = undefined;
+        var box_blur_moving_avg: gpu.Pipeline = undefined;
         var composite: gpu.Pipeline = undefined;
         gpu.Pipeline.initGraphics(gx, &.{
             .{
@@ -313,9 +323,15 @@ pub const Pipelines = struct {
 
         gpu.Pipeline.initCompute(gx, &.{
             .{
-                .name = .{ .str = "Blur" },
-                .shader_module = blur_comp_module,
-                .result = &blur,
+                .name = .{ .str = "Blur Separable" },
+                .shader_module = blur_separable_comp_module,
+                .result = &linear_convolve,
+                .layout = pipeline_layout,
+            },
+            .{
+                .name = .{ .str = "Blur Moving Average" },
+                .shader_module = blur_moving_average_comp_module,
+                .result = &box_blur_moving_avg,
                 .layout = pipeline_layout,
             },
             .{
@@ -328,7 +344,8 @@ pub const Pipelines = struct {
 
         return .{
             .game = game,
-            .blur = blur,
+            .linear_convolve = linear_convolve,
+            .box_blur_moving_avg = box_blur_moving_avg,
             .composite = composite,
         };
     }
@@ -336,7 +353,8 @@ pub const Pipelines = struct {
     pub fn deinit(self: *@This(), gx: *Gx) void {
         self.game.deinit(gx);
         self.composite.deinit(gx);
-        self.blur.deinit(gx);
+        self.linear_convolve.deinit(gx);
+        self.box_blur_moving_avg.deinit(gx);
         self.* = undefined;
     }
 };

@@ -378,6 +378,15 @@ pub fn all(game: *Game, delta_s: f32) void {
             .layout = game.renderer.pipeline_layout.handle,
             .set = game.renderer.desc_sets[game.gx.frame],
         });
+        if (game.gx.validate) {
+            // If validation layers are on, fill the push constant data with undefined so that we
+            // don't get warnings about unused fields not being set
+            cb.pushConstant([32]u32, game.gx, .{
+                .pipeline_layout = game.renderer.pipeline_layout.handle,
+                .stages = .{ .compute = true },
+                .data = &undefined,
+            });
+        }
 
         // Render the ECS
         {
@@ -417,7 +426,10 @@ pub fn all(game: *Game, delta_s: f32) void {
             });
             defer cb.endRendering(game.gx);
 
-            cb.bindPipeline(game.gx, game.renderer.pipelines.game);
+            cb.bindPipeline(game.gx, .{
+                .bind_point = .graphics,
+                .pipeline = game.renderer.pipelines.game,
+            });
             cb.draw(game.gx, .{
                 .vertex_count = 4,
                 .instance_count = @intCast(entity_writer.len),
@@ -429,160 +441,281 @@ pub fn all(game: *Game, delta_s: f32) void {
         // Do the post processing
         var blur_in_index: u32 = 0;
         var blur_out_index: u32 = 1;
+        const moving_avg = false;
         {
             cb.beginZone(game.gx, .{ .name = "Post", .src = @src() });
             defer cb.endZone(game.gx);
 
             // Blur
             {
-                cb.beginZone(game.gx, .{ .name = "Blur", .src = @src() });
-                defer cb.endZone(game.gx);
-
-                const BlurArgs = extern struct {
-                    input: gpu.ext.RenderTarget(.color),
-                    output: gpu.ext.RenderTarget(.color),
-                    radius: i32,
-                    dir: enum(i32) { x = 1, y = 0 },
-                };
-
-                const block_width = 256;
-                const local_height = 256;
-                const radius = 20;
-                cb.bindPipeline(game.gx, game.renderer.pipelines.blur);
-
-                {
-                    cb.beginZone(game.gx, .{ .name = "Blur X", .src = @src() });
+                if (moving_avg) {
+                    cb.beginZone(game.gx, .{ .name = "Moving Average Gaussian", .src = @src() });
                     defer cb.endZone(game.gx);
 
-                    cb.barriers(game.gx, .{
-                        .image = &.{
-                            .colorAttachmentToGeneral(.{
-                                .handle = color_buffer.image.handle,
-                                .dst_stages = .{ .compute = true },
-                                .dst_access = .{ .read = true },
-                                .range = .first,
-                            }),
-                            .undefinedToGeneral(.{
-                                .handle = blurred[blur_out_index].image.handle,
-                                .src_stages = .{ .top_of_pipe = true },
-                                .dst_stages = .{ .compute = true },
-                                .dst_access = .{ .write = true },
-                                .range = .first,
-                                .aspect = .{ .color = true },
-                            }),
-                        },
+                    const BlurArgs = extern struct {
+                        input: gpu.ext.RenderTarget(.color),
+                        output: gpu.ext.RenderTarget(.color),
+                        radius: i32,
+                        dir: enum(i32) { x = 1, y = 0 },
+                    };
+
+                    const block_size = 256;
+                    const local_size = 256;
+                    const radius = 9;
+                    cb.bindPipeline(game.gx, .{
+                        .bind_point = .compute,
+                        .pipeline = game.renderer.pipelines.box_blur_moving_avg,
                     });
 
-                    cb.pushConstant(BlurArgs, game.gx, .{
-                        .pipeline_layout = game.renderer.pipelines.blur.layout,
-                        .stages = .{ .compute = true },
-                        .offset = 0,
-                        .data = &.{
-                            .input = game.color_buffer,
-                            .output = game.blurred[blur_out_index],
-                            .radius = radius,
-                            .dir = .x,
-                        },
-                    });
-                    cb.dispatch(game.gx, .{
-                        .x = std.math.divCeil(u32, blurred[0].extent.width, block_width) catch unreachable,
-                        .y = std.math.divCeil(u32, blurred[0].extent.height, local_height) catch unreachable,
-                        .z = 1,
-                    });
+                    {
+                        cb.beginZone(game.gx, .{ .name = "Blur X", .src = @src() });
+                        defer cb.endZone(game.gx);
 
-                    std.mem.swap(u32, &blur_in_index, &blur_out_index);
-                }
+                        cb.barriers(game.gx, .{
+                            .image = &.{
+                                .colorAttachmentToGeneral(.{
+                                    .handle = color_buffer.image.handle,
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .read = true },
+                                    .range = .first,
+                                }),
+                                .undefinedToGeneral(.{
+                                    .handle = blurred[blur_out_index].image.handle,
+                                    .src_stages = .{ .top_of_pipe = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .write = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                            },
+                        });
 
-                for (0..2) |_| {
-                    cb.beginZone(game.gx, .{ .name = "Blur X", .src = @src() });
+                        cb.pushConstant(BlurArgs, game.gx, .{
+                            .pipeline_layout = game.renderer.pipeline_layout.handle,
+                            .stages = .{ .compute = true },
+                            .data = &.{
+                                .input = game.color_buffer,
+                                .output = game.blurred[blur_out_index],
+                                .radius = radius,
+                                .dir = .x,
+                            },
+                        });
+                        cb.dispatch(game.gx, .{
+                            .x = std.math.divCeil(u32, blurred[0].extent.width, block_size) catch unreachable,
+                            .y = std.math.divCeil(u32, blurred[0].extent.height, local_size) catch unreachable,
+                            .z = 1,
+                        });
+
+                        std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                    }
+
+                    for (0..2) |_| {
+                        cb.beginZone(game.gx, .{ .name = "Blur X", .src = @src() });
+                        defer cb.endZone(game.gx);
+
+                        cb.barriers(game.gx, .{
+                            .image = &.{
+                                .generalToGeneral(.{
+                                    .handle = blurred[blur_in_index].image.handle,
+                                    .src_stages = .{ .compute = true },
+                                    .src_access = .{ .write = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .read = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                                .undefinedToGeneral(.{
+                                    .handle = blurred[blur_out_index].image.handle,
+                                    .src_stages = .{ .top_of_pipe = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .write = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                            },
+                        });
+
+                        cb.pushConstant(BlurArgs, game.gx, .{
+                            .pipeline_layout = game.renderer.pipeline_layout.handle,
+                            .stages = .{ .compute = true },
+                            .data = &.{
+                                .input = game.blurred[blur_in_index],
+                                .output = game.blurred[blur_out_index],
+                                .radius = radius,
+                                .dir = .x,
+                            },
+                        });
+                        cb.dispatch(game.gx, .{
+                            .x = std.math.divCeil(u32, blurred[0].extent.width, block_size) catch unreachable,
+                            .y = std.math.divCeil(u32, blurred[0].extent.height, local_size) catch unreachable,
+                            .z = 1,
+                        });
+
+                        std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                    }
+
+                    for (0..3) |_| {
+                        cb.beginZone(game.gx, .{ .name = "Blur Y", .src = @src() });
+                        defer cb.endZone(game.gx);
+
+                        cb.barriers(game.gx, .{
+                            .image = &.{
+                                .generalToGeneral(.{
+                                    .handle = blurred[blur_in_index].image.handle,
+                                    .src_stages = .{ .compute = true },
+                                    .src_access = .{ .write = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .read = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                                .undefinedToGeneral(.{
+                                    .handle = blurred[blur_out_index].image.handle,
+                                    .src_stages = .{ .top_of_pipe = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .write = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                            },
+                        });
+
+                        cb.pushConstant(BlurArgs, game.gx, .{
+                            .pipeline_layout = game.renderer.pipeline_layout.handle,
+                            .stages = .{ .compute = true },
+                            .data = &.{
+                                .input = game.blurred[blur_in_index],
+                                .output = game.blurred[blur_out_index],
+                                .radius = radius,
+                                .dir = .y,
+                            },
+                        });
+                        cb.dispatch(game.gx, .{
+                            .x = std.math.divCeil(u32, blurred[0].extent.height, block_size) catch unreachable,
+                            .y = std.math.divCeil(u32, blurred[0].extent.width, local_size) catch unreachable,
+                            .z = 1,
+                        });
+
+                        std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                    }
+                } else {
+                    cb.beginZone(game.gx, .{ .name = "Linear Gaussian", .src = @src() });
                     defer cb.endZone(game.gx);
 
-                    cb.barriers(game.gx, .{
-                        .image = &.{
-                            .generalToGeneral(.{
-                                .handle = blurred[blur_in_index].image.handle,
-                                .src_stages = .{ .compute = true },
-                                .src_access = .{ .write = true },
-                                .dst_stages = .{ .compute = true },
-                                .dst_access = .{ .read = true },
-                                .range = .first,
-                                .aspect = .{ .color = true },
-                            }),
-                            .undefinedToGeneral(.{
-                                .handle = blurred[blur_out_index].image.handle,
-                                .src_stages = .{ .compute = true },
-                                .dst_stages = .{ .compute = true },
-                                .dst_access = .{ .write = true },
-                                .aspect = .{ .color = true },
-                                .range = .first,
-                            }),
-                        },
+                    const BlurArgs = extern struct {
+                        input: gpu.ext.RenderTarget(.color),
+                        output: gpu.ext.RenderTarget(.color),
+                        dir: enum(i32) { x = 1, y = 0 },
+                        radius: i32,
+                        weights: [14]f32,
+                        offsets: [14]f32,
+                    };
+
+                    const local_size = 16;
+                    cb.bindPipeline(game.gx, .{
+                        .bind_point = .compute,
+                        .pipeline = game.renderer.pipelines.linear_convolve,
                     });
 
-                    cb.pushConstant(BlurArgs, game.gx, .{
-                        .pipeline_layout = game.renderer.pipelines.blur.layout,
-                        .stages = .{ .compute = true },
-                        .offset = 0,
-                        .data = &.{
-                            .input = game.blurred[blur_in_index],
-                            .output = game.blurred[blur_out_index],
-                            .radius = radius,
-                            .dir = .x,
-                        },
+                    var blur_args: BlurArgs = .{
+                        .input = game.color_buffer,
+                        .output = game.blurred[blur_out_index],
+                        .dir = .x,
+                        .radius = 0,
+                        .weights = undefined,
+                        .offsets = undefined,
+                    };
+                    const linear = gpu.ext.gaussian.linear(.{
+                        .weights_buf = &blur_args.weights,
+                        .offsets_buf = &blur_args.offsets,
+                        .sigma = 13,
                     });
-                    cb.dispatch(game.gx, .{
-                        .x = std.math.divCeil(u32, blurred[0].extent.width, block_width) catch unreachable,
-                        .y = std.math.divCeil(u32, blurred[0].extent.height, local_height) catch unreachable,
-                        .z = 1,
-                    });
+                    blur_args.radius = @intCast(linear.weights.len);
 
-                    std.mem.swap(u32, &blur_in_index, &blur_out_index);
-                }
+                    {
+                        cb.beginZone(game.gx, .{ .name = "X", .src = @src() });
+                        defer cb.endZone(game.gx);
 
-                for (0..3) |_| {
-                    cb.beginZone(game.gx, .{ .name = "Blur Y", .src = @src() });
-                    defer cb.endZone(game.gx);
+                        cb.barriers(game.gx, .{
+                            .image = &.{
+                                .colorAttachmentToReadOnly(.{
+                                    .handle = color_buffer.image.handle,
+                                    .dst_stages = .{ .compute = true },
+                                    .range = .first,
+                                }),
+                                .undefinedToGeneral(.{
+                                    .handle = blurred[blur_out_index].image.handle,
+                                    .src_stages = .{ .top_of_pipe = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .write = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                            },
+                        });
 
-                    cb.barriers(game.gx, .{
-                        .image = &.{
-                            .generalToGeneral(.{
-                                .handle = blurred[blur_in_index].image.handle,
-                                .src_stages = .{ .compute = true },
-                                .src_access = .{ .write = true },
-                                .dst_stages = .{ .compute = true },
-                                .dst_access = .{ .read = true },
-                                .range = .first,
-                                .aspect = .{ .color = true },
-                            }),
-                            .undefinedToGeneral(.{
-                                .handle = blurred[blur_out_index].image.handle,
-                                .src_stages = .{ .compute = true },
-                                .dst_stages = .{ .compute = true },
-                                .dst_access = .{ .write = true },
-                                .range = .first,
-                                .aspect = .{ .color = true },
-                            }),
-                        },
-                    });
+                        cb.pushConstant(BlurArgs, game.gx, .{
+                            .pipeline_layout = game.renderer.pipeline_layout.handle,
+                            .stages = .{ .compute = true },
+                            .data = &blur_args,
+                        });
+                        cb.dispatch(game.gx, .{
+                            .x = std.math.divCeil(u32, blurred[0].extent.width, local_size) catch unreachable,
+                            .y = std.math.divCeil(u32, blurred[0].extent.height, local_size) catch unreachable,
+                            .z = 1,
+                        });
 
-                    cb.pushConstant(BlurArgs, game.gx, .{
-                        .pipeline_layout = game.renderer.pipelines.blur.layout,
-                        .stages = .{ .compute = true },
-                        .offset = 0,
-                        .data = &.{
-                            .input = game.blurred[blur_in_index],
-                            .output = game.blurred[blur_out_index],
-                            .radius = radius,
-                            .dir = .y,
-                        },
-                    });
-                    cb.dispatch(game.gx, .{
-                        .x = std.math.divCeil(u32, blurred[0].extent.height, block_width) catch unreachable,
-                        .y = std.math.divCeil(u32, blurred[0].extent.width, local_height) catch unreachable,
-                        .z = 1,
-                    });
+                        std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                    }
 
-                    std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                    {
+                        cb.beginZone(game.gx, .{ .name = "Y", .src = @src() });
+                        defer cb.endZone(game.gx);
+
+                        cb.barriers(game.gx, .{
+                            .image = &.{
+                                .generalToReadOnly(.{
+                                    .handle = blurred[blur_in_index].image.handle,
+                                    .src_stages = .{ .compute = true },
+                                    .src_access = .{ .write = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                                .undefinedToGeneral(.{
+                                    .handle = blurred[blur_out_index].image.handle,
+                                    .src_stages = .{ .compute = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .write = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                            },
+                        });
+
+                        cb.pushConstantField(BlurArgs, "input", game.gx, .{
+                            .pipeline_layout = game.renderer.pipeline_layout.handle,
+                            .stages = .{ .compute = true },
+                            .data = &game.blurred[blur_in_index],
+                        });
+                        cb.pushConstantField(BlurArgs, "output", game.gx, .{
+                            .pipeline_layout = game.renderer.pipeline_layout.handle,
+                            .stages = .{ .compute = true },
+                            .data = &game.blurred[blur_out_index],
+                        });
+                        cb.pushConstantField(BlurArgs, "dir", game.gx, .{
+                            .pipeline_layout = game.renderer.pipeline_layout.handle,
+                            .stages = .{ .compute = true },
+                            .data = &.y,
+                        });
+                        cb.dispatch(game.gx, .{
+                            .x = std.math.divCeil(u32, blurred[0].extent.width, local_size) catch unreachable,
+                            .y = std.math.divCeil(u32, blurred[0].extent.height, local_size) catch unreachable,
+                            .z = 1,
+                        });
+
+                        std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                    }
                 }
             }
 
@@ -609,11 +742,13 @@ pub fn all(game: *Game, delta_s: f32) void {
                         }),
                     },
                 });
-                cb.bindPipeline(game.gx, game.renderer.pipelines.composite);
+                cb.bindPipeline(game.gx, .{
+                    .bind_point = .compute,
+                    .pipeline = game.renderer.pipelines.composite,
+                });
                 cb.pushConstant([3]gpu.ext.RenderTarget(.color), game.gx, .{
-                    .pipeline_layout = game.renderer.pipelines.blur.layout,
+                    .pipeline_layout = game.renderer.pipeline_layout.handle,
                     .stages = .{ .compute = true },
-                    .offset = 0,
                     .data = &.{ game.color_buffer, game.blurred[blur_in_index], game.composite },
                 });
                 const local_size = 16;

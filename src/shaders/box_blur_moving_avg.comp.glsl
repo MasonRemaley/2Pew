@@ -35,7 +35,7 @@ void main() {
         sum += load(left + ivec2(x, 0), size).rgb;
     }
 
-    float divisor = 1.0f / (float(RADIUS * 2) - 1.0);
+    float divisor = 1.0f / (float(RADIUS * 2) + 1.0);
     for (int x = 0; x < block_width; ++x) {
         if (left.x + x >= size) return;
         sum += load(left + ivec2(x + RADIUS, 0), size);

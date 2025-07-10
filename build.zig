@@ -126,7 +126,14 @@ pub fn build(b: *std.Build) void {
         b,
         install_shaders_step,
         shader_compiler_exe,
-        "blur_moving_average.comp.glsl",
+        "linear_convolve.comp.glsl",
+        optimize,
+    );
+    installShaderProgram(
+        b,
+        install_shaders_step,
+        shader_compiler_exe,
+        "box_blur_moving_avg.comp.glsl",
         optimize,
     );
     installShaderProgram(

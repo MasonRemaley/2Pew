@@ -1245,8 +1245,10 @@ fn generateStars(stars: []Star, random: std.Random) void {
             .kind = @enumFromInt(random.uintLessThanBiased(u8, 2)),
         };
     }
-    // Overwrite the last one so it shows up on top
-    stars[stars.len - 1].kind = .planet_red;
+    // Draw some planets on top of the stars
+    for (0..10) |i| {
+        stars[stars.len - i - 1].kind = .planet_red;
+    }
 }
 
 pub fn clearInvulnerability(es: *Entities) void {
