@@ -1054,7 +1054,8 @@ const Scenario = enum {
 };
 
 pub fn setupScenario(game: *Game, es: *Entities, cb: *CmdBuf, scenario: Scenario) void {
-    cb.clear(es); // TODO: if we didn't clear here es could be const
+    cb.clear(es);
+    es.destroyArchImmediate(.initEmpty());
 
     var player_teams: []const u2 = undefined;
 
