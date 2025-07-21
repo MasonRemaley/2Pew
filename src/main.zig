@@ -59,6 +59,14 @@ const command: Command = .{
             .long = "hot-swap",
             .default = .{ .value = if (builtin.mode == .Debug) true else false },
         }),
+        NamedArg.init(bool, .{
+            .long = "prefer-integrated",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "safe-mode",
+            .default = .{ .value = false },
+        }),
     },
 };
 
@@ -168,6 +176,14 @@ pub fn main() !void {
         .surface_format = .unorm4x8,
         .surface_extent = init_window_extent,
         .debug = args.named.@"gpu-dbg",
+        .device_type_ranks = b: {
+            var ranks = Gx.Options.default_device_type_ranks;
+            if (args.named.@"prefer-integrated") {
+                ranks.getPtr(.integrated).* = std.math.maxInt(u8);
+            }
+            break :b ranks;
+        },
+        .safe_mode = args.named.@"safe-mode",
     });
     defer {
         gx.waitIdle();
