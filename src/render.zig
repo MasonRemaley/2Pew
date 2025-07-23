@@ -786,8 +786,8 @@ pub fn all(game: *Game, delta_s: f32) void {
                 });
                 const local_size = 16;
                 cb.dispatch(game.gx, .{
-                    .x = (composite.extent.width + local_size - 1) / local_size,
-                    .y = (composite.extent.height + local_size - 1) / local_size,
+                    .x = std.math.divCeil(u32, composite.extent.width, local_size) catch unreachable,
+                    .y = std.math.divCeil(u32, composite.extent.height, local_size) catch unreachable,
                     .z = 1,
                 });
             }
