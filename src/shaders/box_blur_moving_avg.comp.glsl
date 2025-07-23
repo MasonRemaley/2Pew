@@ -1,7 +1,3 @@
-#include <gbms/srgb.glsl>
-#include <gbms/noise.glsl>
-#include <gbms/sd.glsl>
-
 #include "interface.glsl"
 
 #define INPUT i_rt_storage_image_rba8_r[i_push_args[0]]

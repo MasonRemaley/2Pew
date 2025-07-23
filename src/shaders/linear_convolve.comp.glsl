@@ -1,8 +1,3 @@
-#include <gbms/srgb.glsl>
-#include <gbms/noise.glsl>
-#include <gbms/sd.glsl>
-#include <gbms/unorm.glsl>
-
 #include "interface.glsl"
 
 #define MAX_RADIUS 14
