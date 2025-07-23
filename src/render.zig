@@ -715,6 +715,21 @@ pub fn all(game: *Game, delta_s: f32) void {
                         });
 
                         std.mem.swap(u32, &blur_in_index, &blur_out_index);
+
+                        // Since this branch doesn't always run, we transition the layout back before exiting the
+                        // block. This may get simpler once we downscale before blurring.
+                        cb.barriers(game.gx, .{
+                            .image = &.{
+                                .readOnlyToGeneral(.{
+                                    .handle = color_buffer.image.handle,
+                                    .src_stages = .{ .compute = true },
+                                    .dst_stages = .{ .compute = true },
+                                    .dst_access = .{ .read = true },
+                                    .range = .first,
+                                    .aspect = .{ .color = true },
+                                }),
+                            },
+                        });
                     }
                 }
             }
