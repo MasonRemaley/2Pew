@@ -378,7 +378,7 @@ pub fn all(game: *Game, delta_s: f32) void {
             .layout = game.renderer.pipeline_layout.handle,
             .set = game.renderer.desc_sets[game.gx.frame],
         });
-        if (game.gx.validate) {
+        if (game.gx.validation.gte(.fast)) {
             // If validation layers are on, fill the push constant data with undefined so that we
             // don't get warnings about unused fields not being set
             cb.pushConstant([32]u32, game.gx, .{

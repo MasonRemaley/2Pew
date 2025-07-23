@@ -50,9 +50,9 @@ pub const gpu_options: gpu.Options = .{
 const command: Command = .{
     .name = @tagName(build.name),
     .named_args = &.{
-        NamedArg.init(Gx.Options.DebugMode, .{
-            .long = "gpu-dbg",
-            .default = .{ .value = if (builtin.mode == .Debug) .validate else .none },
+        NamedArg.init(Gx.Validation, .{
+            .long = "gpu-validation",
+            .default = .{ .value = .default },
         }),
         // Just shaders for now
         NamedArg.init(bool, .{
@@ -180,7 +180,7 @@ pub fn main() !void {
         },
         .surface_format = .unorm4x8,
         .surface_extent = init_window_extent,
-        .debug = args.named.@"gpu-dbg",
+        .validation = args.named.@"gpu-validation",
         .device_type_ranks = b: {
             var ranks = Gx.Options.default_device_type_ranks;
             if (args.named.@"prefer-integrated") {
