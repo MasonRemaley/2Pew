@@ -446,7 +446,12 @@ pub fn all(game: *Game, delta_s: f32) void {
             cb.beginZone(game.gx, .{ .name = "Post", .src = @src() });
             defer cb.endZone(game.gx);
 
-            // Blur
+            // Blur.
+            //
+            // We do this in srgb space which is incorrect but looks fine. It's not worth doing
+            // the conversion on every sample, and we don't want to just store the data in linear
+            // space then convert at the end because when working with 24 bit color you get banding
+            // if you do this. Don't want to store more bits since needs to run on raspi.
             {
                 cb.beginZone(game.gx, .{ .name = "Blur", .src = @src() });
                 defer cb.endZone(game.gx);
