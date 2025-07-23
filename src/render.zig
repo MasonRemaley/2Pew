@@ -441,7 +441,7 @@ pub fn all(game: *Game, delta_s: f32) void {
         // Do the post processing
         var blur_in_index: u32 = 0;
         var blur_out_index: u32 = 1;
-        const moving_avg = true;
+        const moving_avg = false;
         {
             cb.beginZone(game.gx, .{ .name = "Post", .src = @src() });
             defer cb.endZone(game.gx);

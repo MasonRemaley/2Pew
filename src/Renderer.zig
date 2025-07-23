@@ -45,7 +45,9 @@ scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).
 
 pub const max_render_entities = 100000;
 pub const max_textures = b: {
-    const n = 16384;
+    // https://docs.vulkan.org/spec/latest/appendices/roadmap.html
+    // If using animations, consider creating texture arrays to avoid hitting this limit
+    const n = 128;
     assert(n < @intFromEnum(ubo.Texture.none));
     break :b n;
 };

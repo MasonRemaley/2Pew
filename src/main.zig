@@ -17,7 +17,6 @@ const VkBackend = @import("VkBackend");
 const Gx = gpu.Gx;
 const build = @import("build.zig.zon");
 const logger = @import("logger");
-const Logger = logger.Logger(.{ .history = .none });
 const structopt = @import("structopt");
 const Command = structopt.Command;
 const NamedArg = structopt.NamedArg;
@@ -37,9 +36,10 @@ const Game = @import("Game.zig");
 
 pub const tracy_impl = @import("tracy_impl");
 
+const Logger = logger.Logger(.{ .history = .none });
 pub const std_options: std.Options = .{
     .logFn = Logger.logFn,
-    .log_level = .info,
+    .log_level = .debug,
 };
 
 pub const gpu_options: gpu.Options = .{
@@ -66,6 +66,10 @@ const command: Command = .{
         NamedArg.init(bool, .{
             .long = "safe-mode",
             .default = .{ .value = false },
+        }),
+        NamedArg.init(std.log.Level, .{
+            .long = "log-level",
+            .default = .{ .value = .info },
         }),
     },
 };
@@ -103,6 +107,7 @@ pub fn main() !void {
 
     const args = try command.parse(allocator);
     defer command.parseFree(args);
+    Logger.runtime_level = args.named.@"log-level";
 
     // Init SDL
     if (!c.SDL_SetHintWithPriority(
