@@ -5,7 +5,7 @@
 #include "interface.glsl"
 
 #define COLOR_BUFFER i_rt_storage_image_rba8_r[i_push_args[0]]
-#define BLURRED i_rt_storage_image_rba8_r[i_push_args[1]]
+#define BLURRED sampler2D(i_rt_texture[i_push_args[1]], i_linear_sampler)
 #define COMPOSITE i_rt_storage_image_any_w[i_push_args[2]]
 
 const uvec2 local_size = uvec2(16);
@@ -31,7 +31,7 @@ void main() {
     vec3 center = srgbToLinear(imageLoad(COLOR_BUFFER, coord).rgb);
 
     // Load the blurred color buffer for bloom
-    vec3 bloom = imageLoad(BLURRED, coord).rgb;
+    vec3 bloom = texture(BLURRED, vec2(coord) / vec2(image_size)).rgb;
 
     // Vignette effect
     float vignette = sdSample(sdCircle(coord - vec2(image_size) * 0.5, 0.3 * max(image_size.x, image_size.y)), max(image_size.x, image_size.y));
@@ -56,5 +56,5 @@ void main() {
     float crt = mix(1.0, 0.8, step(mod(floor(remap(0, image_size.y, 0, 540/2, coord.y)), 2), 0));
 
     // Final composite
-    imageStore(COMPOSITE, coord, vec4(linearToSrgb(((center + noise) * crt + bloom * 0.05) * vignette), 1));
+    imageStore(COMPOSITE, coord, vec4(linearToSrgb(((center + noise) * crt + bloom * 0.075) * vignette), 1));
 }

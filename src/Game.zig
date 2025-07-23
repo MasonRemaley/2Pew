@@ -836,6 +836,7 @@ pub fn init(
                 .color_attachment = true,
                 .storage = true,
                 .sampled = true,
+                .transfer_src = true,
             },
         },
     });
@@ -863,13 +864,14 @@ pub fn init(
             .image = .{
                 .format = Renderer.Pipelines.color_attachment_format,
                 .extent = .{
-                    .width = 1920,
-                    .height = 1080,
+                    .width = 1920 / 4,
+                    .height = 1080 / 4,
                     .depth = 1,
                 },
                 .usage = .{
                     .storage = true,
                     .sampled = true,
+                    .transfer_dst = i == 1,
                 },
             },
         });

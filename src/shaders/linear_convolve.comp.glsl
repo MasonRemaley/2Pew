@@ -27,6 +27,12 @@ vec3 load(vec2 coord, vec2 size) {
 void main() {
     ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
     uvec2 size = imageSize(OUTPUT);
+     #if RUNTIME_SAFETY
+        if (textureSize(SAMPLER(INPUT), 0) != size) {
+            imageStore(OUTPUT, coord, vec4(1, 0, 1, 1));
+            return;
+        }
+    #endif
     if (coord.x >= size.x || coord.y >= size.y) return;
 
     vec2 dir = HORIZONTAL ? vec2(1, 0) : vec2(0, 1);

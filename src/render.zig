@@ -448,6 +448,54 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             // Blur
             {
+                cb.beginZone(game.gx, .{ .name = "Blur", .src = @src() });
+                defer cb.endZone(game.gx);
+
+                {
+                    cb.beginZone(game.gx, .{ .name = "Downscale", .src = @src() });
+                    cb.endZone(game.gx);
+
+                    cb.barriers(game.gx, .{
+                        .image = &.{
+                            .colorAttachmentToBlitSrc(.{
+                                .handle = color_buffer.image.handle,
+                                .range = .first,
+                            }),
+                            .undefinedToBlitDst(.{
+                                .handle = blurred[blur_out_index].image.handle,
+                                .range = .first,
+                                .src_stages = .{ .top_of_pipe = true },
+                                .aspect = .{ .color = true },
+                            }),
+                        },
+                    });
+
+                    cb.blit(game.gx, .{
+                        .src = color_buffer.image.handle,
+                        .dst = blurred[blur_out_index].image.handle,
+                        .regions = &.{
+                            .init(.{
+                                .src = .{
+                                    .mip_level = 0,
+                                    .base_array_layer = 0,
+                                    .array_layers = 1,
+                                    .volume = .fromExtent2D(color_buffer.extent),
+                                },
+                                .dst = .{
+                                    .mip_level = 0,
+                                    .base_array_layer = 0,
+                                    .array_layers = 1,
+                                    .volume = .fromExtent2D(blurred[blur_out_index].extent),
+                                },
+                                .aspect = .{ .color = true },
+                            }),
+                        },
+                        .filter = .linear,
+                    });
+
+                    std.mem.swap(u32, &blur_in_index, &blur_out_index);
+                }
+
                 if (moving_avg) {
                     cb.beginZone(game.gx, .{ .name = "Moving Average Gaussian", .src = @src() });
                     defer cb.endZone(game.gx);
@@ -461,69 +509,39 @@ pub fn all(game: *Game, delta_s: f32) void {
 
                     const block_size = 256;
                     const local_size = 256;
-                    const radius = 9;
+                    const radius = 2;
                     cb.bindPipeline(game.gx, .{
                         .bind_point = .compute,
                         .pipeline = game.renderer.pipelines.box_blur_moving_avg,
                     });
 
-                    {
+                    for (0..3) |i| {
                         cb.beginZone(game.gx, .{ .name = "Blur X", .src = @src() });
                         defer cb.endZone(game.gx);
 
                         cb.barriers(game.gx, .{
                             .image = &.{
-                                .colorAttachmentToGeneral(.{
-                                    .handle = color_buffer.image.handle,
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .read = true },
-                                    .range = .first,
-                                }),
-                                .undefinedToGeneral(.{
-                                    .handle = blurred[blur_out_index].image.handle,
-                                    .src_stages = .{ .top_of_pipe = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .write = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
-                            },
-                        });
-
-                        cb.pushConstant(BlurArgs, game.gx, .{
-                            .pipeline_layout = game.renderer.pipeline_layout.handle,
-                            .stages = .{ .compute = true },
-                            .data = &.{
-                                .input = game.color_buffer,
-                                .output = game.blurred[blur_out_index],
-                                .radius = radius,
-                                .dir = .x,
-                            },
-                        });
-                        cb.dispatch(game.gx, .{
-                            .x = std.math.divCeil(u32, blurred[0].extent.width, block_size) catch unreachable,
-                            .y = std.math.divCeil(u32, blurred[0].extent.height, local_size) catch unreachable,
-                            .z = 1,
-                        });
-
-                        std.mem.swap(u32, &blur_in_index, &blur_out_index);
-                    }
-
-                    for (0..2) |_| {
-                        cb.beginZone(game.gx, .{ .name = "Blur X", .src = @src() });
-                        defer cb.endZone(game.gx);
-
-                        cb.barriers(game.gx, .{
-                            .image = &.{
-                                .generalToGeneral(.{
-                                    .handle = blurred[blur_in_index].image.handle,
-                                    .src_stages = .{ .compute = true },
-                                    .src_access = .{ .write = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .read = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
+                                b: {
+                                    if (i == 0) {
+                                        break :b .blitDstToGeneral(.{
+                                            .handle = blurred[blur_in_index].image.handle,
+                                            .dst_stages = .{ .compute = true },
+                                            .dst_access = .{ .read = true },
+                                            .range = .first,
+                                            .aspect = .{ .color = true },
+                                        });
+                                    } else {
+                                        break :b .generalToGeneral(.{
+                                            .handle = blurred[blur_in_index].image.handle,
+                                            .src_stages = .{ .compute = true },
+                                            .src_access = .{ .write = true },
+                                            .dst_stages = .{ .compute = true },
+                                            .dst_access = .{ .read = true },
+                                            .range = .first,
+                                            .aspect = .{ .color = true },
+                                        });
+                                    }
+                                },
                                 .undefinedToGeneral(.{
                                     .handle = blurred[blur_out_index].image.handle,
                                     .src_stages = .{ .top_of_pipe = true },
@@ -618,7 +636,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                     });
 
                     var blur_args: BlurArgs = .{
-                        .input = game.color_buffer,
+                        .input = game.blurred[blur_in_index],
                         .output = game.blurred[blur_out_index],
                         .dir = .x,
                         .radius = 0,
@@ -628,7 +646,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                     const linear = gpu.ext.gaussian.linear(.{
                         .weights_buf = &blur_args.weights,
                         .offsets_buf = &blur_args.offsets,
-                        .sigma = 13,
+                        .sigma = 5,
                     });
                     blur_args.radius = @intCast(linear.weights.len);
 
@@ -638,10 +656,11 @@ pub fn all(game: *Game, delta_s: f32) void {
 
                         cb.barriers(game.gx, .{
                             .image = &.{
-                                .colorAttachmentToReadOnly(.{
-                                    .handle = color_buffer.image.handle,
+                                .blitDstToReadOnly(.{
+                                    .handle = blurred[blur_in_index].image.handle,
                                     .dst_stages = .{ .compute = true },
                                     .range = .first,
+                                    .aspect = .{ .color = true },
                                 }),
                                 .undefinedToGeneral(.{
                                     .handle = blurred[blur_out_index].image.handle,
@@ -715,21 +734,6 @@ pub fn all(game: *Game, delta_s: f32) void {
                         });
 
                         std.mem.swap(u32, &blur_in_index, &blur_out_index);
-
-                        // Since this branch doesn't always run, we transition the layout back before exiting the
-                        // block. This may get simpler once we downscale before blurring.
-                        cb.barriers(game.gx, .{
-                            .image = &.{
-                                .readOnlyToGeneral(.{
-                                    .handle = color_buffer.image.handle,
-                                    .src_stages = .{ .compute = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .read = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
-                            },
-                        });
                     }
                 }
             }
@@ -738,8 +742,16 @@ pub fn all(game: *Game, delta_s: f32) void {
             {
                 cb.beginZone(game.gx, .{ .name = "Composite", .src = @src() });
                 defer cb.endZone(game.gx);
+
                 cb.barriers(game.gx, .{
                     .image = &.{
+                        .blitSrcToGeneral(.{
+                            .handle = color_buffer.image.handle,
+                            .dst_stages = .{ .compute = true },
+                            .dst_access = .{ .read = true },
+                            .range = .first,
+                            .aspect = .{ .color = true },
+                        }),
                         .generalToGeneral(.{
                             .handle = blurred[blur_in_index].image.handle,
                             .src_stages = .{ .compute = true },
@@ -749,11 +761,12 @@ pub fn all(game: *Game, delta_s: f32) void {
                             .range = .first,
                             .aspect = .{ .color = true },
                         }),
-                        .undefinedToGeneralAfterPresentBlit(.{
+                        .undefinedToGeneralAfterBlit(.{
                             .handle = composite.image.handle,
                             .dst_stages = .{ .compute = true },
                             .dst_access = .{ .write = true },
                             .range = .first,
+                            .aspect = .{ .color = true },
                         }),
                     },
                 });
@@ -776,10 +789,11 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             // Get ready for presentation
             cb.barriers(game.gx, .{ .image = &.{
-                .generalToPresentBlitSrc(.{
+                .generalToBlitSrc(.{
                     .handle = composite.image.handle,
                     .src_stages = .{ .compute = true },
                     .range = .first,
+                    .aspect = .{ .color = true },
                 }),
             } });
         }
