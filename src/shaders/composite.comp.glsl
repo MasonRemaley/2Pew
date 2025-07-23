@@ -48,11 +48,8 @@ void main() {
     }
     noise_scale /= image_size;
     float noise_hz = 60;
-    float value_noise = valueNoise(
-        vec3(noise_scale * coord, i_scene.timer.seconds * noise_hz),
-        vec3(FLT_MAX_CONSEC, FLT_MAX_CONSEC, i_scene.timer.period * noise_hz)
-    );
-    vec3 noise = vec3(0.01 * mix(-1, 1, value_noise));
+    float noise_amp = rand(vec3(floor(noise_scale * coord), round(noise_hz * i_scene.timer.seconds)));
+    vec3 noise = vec3(0.01 * mix(-1, 1, noise_amp));
     noise.r *= 0.8;
 
     // CRT effect
