@@ -5,6 +5,9 @@ const geom = @import("zcs").ext.geom;
 const tracy = @import("tracy");
 const c = @import("c.zig").c;
 const Game = @import("Game.zig");
+pub const interface = @cImport({
+    @cInclude("shaders/interface.glsl");
+});
 
 const DeleteQueue = gpu.ext.DeleteQueue;
 const ImageBumpAllocator = gpu.ext.ImageBumpAllocator;
@@ -53,7 +56,7 @@ pub const max_textures = b: {
 };
 pub const image_mibs = 16;
 
-pub const max_render_targets = 16;
+pub const max_render_targets = interface.i_max_render_targets;
 
 pub const mib = std.math.pow(u64, 2, 20);
 
@@ -69,6 +72,10 @@ pub const ubo = struct {
     pub const Texture = enum(u16) {
         none = std.math.maxInt(u16),
         _,
+
+        comptime {
+            assert(@intFromEnum(@This().none) == interface.i_tex_none);
+        }
     };
 
     pub const Scene = extern struct {
@@ -76,6 +83,10 @@ pub const ubo = struct {
         projection_from_view: Mat2x3,
         timer: ModTimer,
         mouse: Vec2,
+
+        comptime {
+            assert(@sizeOf(@This()) == @sizeOf(interface.Scene));
+        }
     };
 
     pub const Entity = extern struct {
@@ -83,6 +94,10 @@ pub const ubo = struct {
         diffuse: Texture = .none,
         recolor: Texture = .none,
         color: Color = .white,
+
+        comptime {
+            assert(@sizeOf(@This()) == @sizeOf(interface.Entity));
+        }
     };
 };
 

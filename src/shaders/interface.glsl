@@ -1,6 +1,7 @@
 #ifndef INCLUDE_2P_INTERFACE
 #define INCLUDE_2P_INTERFACE
 
+#include <gbms/c.glsl>
 #include <gbms/mod_timer.glsl>
 
 const uint i_tex_none = 0xFFFF;

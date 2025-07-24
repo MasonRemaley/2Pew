@@ -38,6 +38,9 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("zcs", zcs.module("zcs"));
 
+    const gbms = b.dependency("gbms", .{});
+    exe.root_module.addIncludePath(gbms.path("include"));
+
     const build_zig_zon = b.createModule(.{
         .root_source_file = b.path("build.zig.zon"),
         .target = target,
