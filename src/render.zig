@@ -512,8 +512,6 @@ pub fn all(game: *Game, delta_s: f32) void {
                         dir: enum(i32) { x = 1, y = 0 },
                     };
 
-                    const block_size = 256;
-                    const local_size = 256;
                     const radius = 2;
                     cb.bindPipeline(game.gx, .{
                         .bind_point = .compute,
@@ -568,11 +566,10 @@ pub fn all(game: *Game, delta_s: f32) void {
                                 .dir = .x,
                             },
                         });
-                        cb.dispatch(game.gx, .{
-                            .x = std.math.divCeil(u32, blurred[0].extent.width, block_size) catch unreachable,
-                            .y = std.math.divCeil(u32, blurred[0].extent.height, local_size) catch unreachable,
-                            .z = 1,
-                        });
+                        cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_BBMA_DSIZE(.{
+                            .x = blurred[0].extent.width,
+                            .y = blurred[0].extent.height,
+                        })));
 
                         std.mem.swap(u32, &blur_in_index, &blur_out_index);
                     }
@@ -613,11 +610,10 @@ pub fn all(game: *Game, delta_s: f32) void {
                                 .dir = .y,
                             },
                         });
-                        cb.dispatch(game.gx, .{
-                            .x = std.math.divCeil(u32, blurred[0].extent.height, block_size) catch unreachable,
-                            .y = std.math.divCeil(u32, blurred[0].extent.width, local_size) catch unreachable,
-                            .z = 1,
-                        });
+                        cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_BBMA_DSIZE(.{
+                            .x = blurred[0].extent.height,
+                            .y = blurred[0].extent.width,
+                        })));
 
                         std.mem.swap(u32, &blur_in_index, &blur_out_index);
                     }
@@ -634,7 +630,6 @@ pub fn all(game: *Game, delta_s: f32) void {
                         offsets: [14]f32,
                     };
 
-                    const local_size = 16;
                     cb.bindPipeline(game.gx, .{
                         .bind_point = .compute,
                         .pipeline = game.renderer.pipelines.linear_convolve,
@@ -683,11 +678,10 @@ pub fn all(game: *Game, delta_s: f32) void {
                             .stages = .{ .compute = true },
                             .data = &blur_args,
                         });
-                        cb.dispatch(game.gx, .{
-                            .x = std.math.divCeil(u32, blurred[0].extent.width, local_size) catch unreachable,
-                            .y = std.math.divCeil(u32, blurred[0].extent.height, local_size) catch unreachable,
-                            .z = 1,
-                        });
+                        cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_LC_DSIZE(.{
+                            .x = blurred[0].extent.width,
+                            .y = blurred[0].extent.height,
+                        })));
 
                         std.mem.swap(u32, &blur_in_index, &blur_out_index);
                     }
@@ -732,11 +726,10 @@ pub fn all(game: *Game, delta_s: f32) void {
                             .stages = .{ .compute = true },
                             .data = &.y,
                         });
-                        cb.dispatch(game.gx, .{
-                            .x = std.math.divCeil(u32, blurred[0].extent.width, local_size) catch unreachable,
-                            .y = std.math.divCeil(u32, blurred[0].extent.height, local_size) catch unreachable,
-                            .z = 1,
-                        });
+                        cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_LC_DSIZE(.{
+                            .x = blurred[0].extent.width,
+                            .y = blurred[0].extent.height,
+                        })));
 
                         std.mem.swap(u32, &blur_in_index, &blur_out_index);
                     }
@@ -784,12 +777,10 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .stages = .{ .compute = true },
                     .data = &.{ game.color_buffer, game.blurred[blur_in_index], game.composite },
                 });
-                const local_size = 16;
-                cb.dispatch(game.gx, .{
-                    .x = std.math.divCeil(u32, composite.extent.width, local_size) catch unreachable,
-                    .y = std.math.divCeil(u32, composite.extent.height, local_size) catch unreachable,
-                    .z = 1,
-                });
+                cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_C_DSIZE(.{
+                    .x = composite.extent.width,
+                    .y = composite.extent.height,
+                })));
             }
 
             // Get ready for presentation

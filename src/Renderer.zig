@@ -7,6 +7,9 @@ const c = @import("c.zig").c;
 const Game = @import("Game.zig");
 pub const interface = @cImport({
     @cInclude("shaders/interface.glsl");
+    @cInclude("shaders/box_blur_moving_avg.comp.glsl");
+    @cInclude("shaders/linear_convolve.comp.glsl");
+    @cInclude("shaders/composite.comp.glsl");
 });
 
 const DeleteQueue = gpu.ext.DeleteQueue;
