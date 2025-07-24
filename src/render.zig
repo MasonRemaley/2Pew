@@ -200,6 +200,7 @@ pub fn all(game: *Game, delta_s: f32) void {
         } });
 
         // Write the entity data
+        var effect_scale: f32 = 1.0;
         const entity_writer = b: {
             var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
             var mouse: Vec2 = .zero;
@@ -219,8 +220,10 @@ pub fn all(game: *Game, delta_s: f32) void {
                 const game_ar = Game.display_size.x / Game.display_size.y;
                 var proj_size: Vec2 = Game.display_size;
                 if (wind_ar > game_ar) {
+                    effect_scale = wind_extent.x / Game.display_size.x;
                     proj_size.x = proj_size.y * wind_ar;
                 } else {
+                    effect_scale = wind_extent.y / Game.display_size.y;
                     proj_size.y = proj_size.x / wind_ar;
                 }
                 break :pfv Mat2x3.ortho(.{
@@ -506,7 +509,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                         dir: enum(i32) { x = 1, y = 0 },
                     };
 
-                    const radius = 2;
+                    const radius: i32 = @intFromFloat(@round(2 * effect_scale));
                     cb.bindPipeline(game.gx, .{
                         .bind_point = .compute,
                         .pipeline = game.renderer.pipelines.box_blur_moving_avg,
@@ -640,7 +643,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                     const linear = gpu.ext.gaussian.linear(.{
                         .weights_buf = &blur_args.weights,
                         .offsets_buf = &blur_args.offsets,
-                        .sigma = 5,
+                        .sigma = 5 * effect_scale,
                     });
                     blur_args.radius = @intCast(linear.weights.len);
 
