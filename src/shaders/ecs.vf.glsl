@@ -1,5 +1,4 @@
 #include <gbms/unpack.glsl>
-#include <gbms/srgb.glsl>
 #include <gbms/link.glsl>
 
 #include "interface.glsl"
@@ -57,6 +56,5 @@ LINK_VERT_FRAG(location = 1) flat Entity l_entity;
 
         vec4 color = unpackUnorm4x8(l_entity.color);
         l_color_buffer = mix(diffuse, diffuse * color, recolor);
-        l_color_buffer.rgb = linearToSrgb(l_color_buffer.rgb);
     }
 #endif

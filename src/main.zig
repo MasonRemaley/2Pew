@@ -71,6 +71,10 @@ const command: Command = .{
             .long = "log-level",
             .default = .{ .value = .info },
         }),
+        NamedArg.init(bool, .{
+            .long = "moving-avg-blur",
+            .default = .{ .value = false },
+        }),
     },
 };
 
@@ -178,7 +182,7 @@ pub fn main() !void {
             .surface_context = screen,
             .createSurface = &createSurface,
         },
-        .surface_format = .unorm4x8,
+        .surface_format = .srgb4x8,
         .surface_extent = init_window_extent,
         .validation = args.named.@"gpu-validation",
         .device_type_ranks = b: {
@@ -197,6 +201,7 @@ pub fn main() !void {
 
     // Initialize the renderer
     var renderer: Renderer = .init(allocator, &gx, init_window_extent);
+    renderer.moving_avg_blur = args.named.@"moving-avg-blur";
     defer {
         gx.waitIdle();
         renderer.deinit(allocator, &gx);

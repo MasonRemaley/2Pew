@@ -441,17 +441,11 @@ pub fn all(game: *Game, delta_s: f32) void {
         // Do the post processing
         var blur_in_index: u32 = 0;
         var blur_out_index: u32 = 1;
-        const moving_avg = false;
         {
             cb.beginZone(game.gx, .{ .name = "Post", .src = @src() });
             defer cb.endZone(game.gx);
 
-            // Blur.
-            //
-            // We do this in srgb space which is incorrect but looks fine. It's not worth doing
-            // the conversion on every sample, and we don't want to just store the data in linear
-            // space then convert at the end because when working with 24 bit color you get banding
-            // if you do this. Don't want to store more bits since needs to run on raspi.
+            // Blur
             {
                 cb.beginZone(game.gx, .{ .name = "Blur", .src = @src() });
                 defer cb.endZone(game.gx);
@@ -501,7 +495,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                     std.mem.swap(u32, &blur_in_index, &blur_out_index);
                 }
 
-                if (moving_avg) {
+                if (game.renderer.moving_avg_blur) {
                     cb.beginZone(game.gx, .{ .name = "Moving Average Gaussian", .src = @src() });
                     defer cb.endZone(game.gx);
 

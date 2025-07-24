@@ -8,7 +8,6 @@ const uvec3 pp_c_local_size = uvec3(16, 16, 1);
 }
 
 #ifdef GL_COMPUTE_SHADER
-    #include <gbms/srgb.glsl>
     #include <gbms/noise.glsl>
     #include <gbms/sd.glsl>
 
@@ -38,7 +37,7 @@ const uvec3 pp_c_local_size = uvec3(16, 16, 1);
         f32 ar = f32(image_size.x) / f32(image_size.y);
 
         // Sample the center of the image
-        vec3 center = srgbToLinear(imageLoad(COLOR_BUFFER, coord).rgb);
+        vec3 center = imageLoad(COLOR_BUFFER, coord).rgb;
 
         // Load the blurred color buffer for bloom
         vec3 bloom = texture(BLURRED, vec2(coord) / vec2(image_size)).rgb;
@@ -66,6 +65,6 @@ const uvec3 pp_c_local_size = uvec3(16, 16, 1);
         f32 crt = mix(1.0, 0.8, step(mod(floor(remap(0, image_size.y, 0, 540/2, coord.y)), 2), 0));
 
         // Final composite
-        imageStore(COMPOSITE, coord, vec4(linearToSrgb(((center + noise) * crt + bloom * 0.075) * vignette), 1));
+        imageStore(COMPOSITE, coord, vec4(((center + noise) * crt + bloom * 0.15) * vignette, 1));
     }
 #endif

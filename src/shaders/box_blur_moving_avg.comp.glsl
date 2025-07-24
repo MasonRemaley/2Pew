@@ -4,7 +4,7 @@ const u32 pp_bbma_chunk_width = 256;
 const uvec3 pp_bbma_ls = uvec3(1, 256, 1);
 #define PP_BBMA_DSIZE(image_size) (uvec3){ \
     divCeil(image_size.x, pp_bbma_chunk_width), \
-    divCeil(image_size.y, pp_gbma_ls.y), \
+    divCeil(image_size.y, pp_bbma_ls.y), \
     1 \
 }
 

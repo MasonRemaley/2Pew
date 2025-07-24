@@ -41,6 +41,7 @@ pipeline_layout: gpu.Pipeline.Layout,
 desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
 rtp: RenderTarget(.color).Pool,
+moving_avg_blur: bool = false,
 
 storage_buf: UploadBuf(.{ .storage = true }),
 
