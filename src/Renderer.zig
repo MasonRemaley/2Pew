@@ -162,6 +162,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
 
     const color_image_allocator = ImageBumpAllocator(.color).init(gpa, gx, .{
         .name = "Color Images",
+        .initial_pages = 1,
     }) catch |err| @panic(@errorName(err));
 
     const pipeline_layout: gpu.Pipeline.Layout = .init(gx, pipeline_layout_options);
@@ -225,7 +226,10 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         },
         .physical_extent = init_window_extent,
         .capacity = max_render_targets,
-        .allocator = .{ .name = "Render Targets" },
+        .allocator = .{
+            .name = "Render Targets",
+            .initial_pages = 0,
+        },
     }) catch |err| @panic(@errorName(err));
 
     return .{
