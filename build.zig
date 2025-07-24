@@ -21,9 +21,11 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "pew",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     if (force_llvm) {
         exe.use_llvm = true;
@@ -160,9 +162,11 @@ pub fn build(b: *std.Build) void {
 
     const bench_exe = b.addExecutable(.{
         .name = "bench",
-        .root_source_file = b.path("src/bench.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bench.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
         .use_llvm = !force_llvm,
     });
     const bench_step = b.step("bench", "Run benchmarks");

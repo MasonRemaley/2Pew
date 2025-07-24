@@ -1135,17 +1135,17 @@ pub fn setupScenario(game: *Game, es: *Entities, cb: *CmdBuf, scenario: Scenario
             var player_index: u32 = 0;
             var gamepads_len: c_int = 0;
             const gamepads = c.SDL_GetGamepads(&gamepads_len) orelse {
-                log.err("SDL_GetGamepads failed: {?s}", .{c.SDL_GetError()});
+                log.err("SDL_GetGamepads failed: {s}", .{c.SDL_GetError()});
                 break :b;
             };
             defer c.SDL_free(gamepads);
             for (gamepads[0..@intCast(gamepads_len)]) |id| {
                 const gamepad = c.SDL_OpenGamepad(id) orelse {
-                    log.err("SDL_GamepadOpen({}) failed: {?s}\n", .{ id, c.SDL_GetError() });
+                    log.err("SDL_GamepadOpen({}) failed: {s}\n", .{ id, c.SDL_GetError() });
                     continue;
                 };
                 game.controllers[player_index] = gamepad;
-                log.info("Player 1: {?s}", .{c.SDL_GetGamepadName(gamepad)});
+                log.info("Player 1: {s}", .{c.SDL_GetGamepadName(gamepad) orelse "null".ptr});
                 player_index += 1;
                 if (player_index >= game.controllers.len) break;
             }

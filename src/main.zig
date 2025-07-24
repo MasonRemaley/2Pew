@@ -115,10 +115,10 @@ pub fn main() !void {
         "1",
         c.SDL_HINT_OVERRIDE,
     )) {
-        log.err("SDL_SetHintWithPriority failed: {?s}", .{c.SDL_GetError()});
+        log.err("SDL_SetHintWithPriority failed: {s}", .{c.SDL_GetError()});
     }
     if (!c.SDL_Init(c.SDL_INIT_VIDEO | c.SDL_INIT_GAMEPAD | c.SDL_INIT_AUDIO)) {
-        panic("SDL_Init failed: {?s}\n", .{c.SDL_GetError()});
+        panic("SDL_Init failed: {s}\n", .{c.SDL_GetError()});
     }
     defer c.SDL_Quit();
 
@@ -144,7 +144,7 @@ pub fn main() !void {
         var width: c_int = 0;
         var height: c_int = 0;
         if (!c.SDL_GetWindowSizeInPixels(screen, &width, &height)) {
-            std.debug.panic("SDL_GetWindowSizeInPixels failed: {?s}\n", .{c.SDL_GetError()});
+            std.debug.panic("SDL_GetWindowSizeInPixels failed: {s}\n", .{c.SDL_GetError()});
         }
         break :b .{ .width = @intCast(width), .height = @intCast(height) };
     };
@@ -336,53 +336,44 @@ fn createSurface(
 }
 
 const FormatSdlLog = struct {
-    userdata: ?*anyopaque,
     category: c_int,
     message: [*:0]const u8,
-};
 
-fn formatSdlLog(
-    data: FormatSdlLog,
-    comptime _: []const u8,
-    _: std.fmt.FormatOptions,
-    writer: anytype,
-) !void {
-    switch (data.category) {
-        c.SDL_LOG_CATEGORY_APPLICATION => try writer.writeAll("application: "),
-        c.SDL_LOG_CATEGORY_ERROR => try writer.writeAll("error: "),
-        c.SDL_LOG_CATEGORY_ASSERT => try writer.writeAll("assert: "),
-        c.SDL_LOG_CATEGORY_SYSTEM => try writer.writeAll("system: "),
-        c.SDL_LOG_CATEGORY_AUDIO => try writer.writeAll("audio: "),
-        c.SDL_LOG_CATEGORY_VIDEO => try writer.writeAll("video: "),
-        c.SDL_LOG_CATEGORY_RENDER => try writer.writeAll("render: "),
-        c.SDL_LOG_CATEGORY_INPUT => try writer.writeAll("input: "),
-        c.SDL_LOG_CATEGORY_TEST => try writer.writeAll("test: "),
-        c.SDL_LOG_CATEGORY_GPU => try writer.writeAll("gpu: "),
-        c.SDL_LOG_CATEGORY_RESERVED2 => try writer.writeAll("reserved2: "),
-        c.SDL_LOG_CATEGORY_RESERVED3 => try writer.writeAll("reserved3: "),
-        c.SDL_LOG_CATEGORY_RESERVED4 => try writer.writeAll("reserved4: "),
-        c.SDL_LOG_CATEGORY_RESERVED5 => try writer.writeAll("reserved5: "),
-        c.SDL_LOG_CATEGORY_RESERVED6 => try writer.writeAll("reserved6: "),
-        c.SDL_LOG_CATEGORY_RESERVED7 => try writer.writeAll("reserved7: "),
-        c.SDL_LOG_CATEGORY_RESERVED8 => try writer.writeAll("reserved8: "),
-        c.SDL_LOG_CATEGORY_RESERVED9 => try writer.writeAll("reserved9: "),
-        c.SDL_LOG_CATEGORY_RESERVED10 => try writer.writeAll("reserved10: "),
-        else => try writer.print("custom[{}]: ", .{data.category}),
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self.category) {
+            c.SDL_LOG_CATEGORY_APPLICATION => try writer.writeAll("application: "),
+            c.SDL_LOG_CATEGORY_ERROR => try writer.writeAll("error: "),
+            c.SDL_LOG_CATEGORY_ASSERT => try writer.writeAll("assert: "),
+            c.SDL_LOG_CATEGORY_SYSTEM => try writer.writeAll("system: "),
+            c.SDL_LOG_CATEGORY_AUDIO => try writer.writeAll("audio: "),
+            c.SDL_LOG_CATEGORY_VIDEO => try writer.writeAll("video: "),
+            c.SDL_LOG_CATEGORY_RENDER => try writer.writeAll("render: "),
+            c.SDL_LOG_CATEGORY_INPUT => try writer.writeAll("input: "),
+            c.SDL_LOG_CATEGORY_TEST => try writer.writeAll("test: "),
+            c.SDL_LOG_CATEGORY_GPU => try writer.writeAll("gpu: "),
+            c.SDL_LOG_CATEGORY_RESERVED2 => try writer.writeAll("reserved2: "),
+            c.SDL_LOG_CATEGORY_RESERVED3 => try writer.writeAll("reserved3: "),
+            c.SDL_LOG_CATEGORY_RESERVED4 => try writer.writeAll("reserved4: "),
+            c.SDL_LOG_CATEGORY_RESERVED5 => try writer.writeAll("reserved5: "),
+            c.SDL_LOG_CATEGORY_RESERVED6 => try writer.writeAll("reserved6: "),
+            c.SDL_LOG_CATEGORY_RESERVED7 => try writer.writeAll("reserved7: "),
+            c.SDL_LOG_CATEGORY_RESERVED8 => try writer.writeAll("reserved8: "),
+            c.SDL_LOG_CATEGORY_RESERVED9 => try writer.writeAll("reserved9: "),
+            c.SDL_LOG_CATEGORY_RESERVED10 => try writer.writeAll("reserved10: "),
+            else => try writer.print("custom[{}]: ", .{self.category}),
+        }
+
+        try writer.print("{s}", .{self.message});
     }
-
-    try writer.print("{s}", .{data.message});
-}
-
-fn fmtSDlLog(data: FormatSdlLog) std.fmt.Formatter(formatSdlLog) {
-    return .{ .data = data };
-}
+};
 
 fn sdlLogCallback(
     userdata: ?*anyopaque,
     category: c_int,
     priority: c.SDL_LogPriority,
     message: [*c]const u8,
-) callconv(.C) void {
+) callconv(.c) void {
+    _ = userdata;
     const level: std.log.Level = switch (priority) {
         c.SDL_LOG_PRIORITY_INVALID => .err,
         c.SDL_LOG_PRIORITY_TRACE => .debug,
@@ -398,18 +389,16 @@ fn sdlLogCallback(
         },
     };
 
-    const format = "{}";
-    const args = .{fmtSDlLog(.{
+    const msg: FormatSdlLog = .{
         .message = message,
         .category = category,
-        .userdata = userdata,
-    })};
+    };
     const scoped = std.log.scoped(.sdl);
     switch (level) {
-        .err => scoped.err(format, args),
-        .warn => scoped.warn(format, args),
-        .info => scoped.info(format, args),
-        .debug => scoped.debug(format, args),
+        .err => scoped.err("{f}", .{msg}),
+        .warn => scoped.warn("{f}", .{msg}),
+        .info => scoped.info("{f}", .{msg}),
+        .debug => scoped.debug("{f}", .{msg}),
     }
 }
 
