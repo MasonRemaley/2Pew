@@ -4,8 +4,8 @@
 #include <gbms/c.glsl>
 #include <gbms/mod_timer.glsl>
 
-const uint i_tex_none = 0xFFFF;
-const uint i_max_render_targets = 16;
+const u32 i_tex_none = 0xFFFF;
+const u32 i_max_render_targets = 16;
 
 struct Scene {
     mat2x3 world_to_view;
@@ -16,8 +16,8 @@ struct Scene {
 
 struct Entity {
     mat2x3 model_to_world;
-    uint diffuse_recolor;
-    uint color;
+    u32 diffuse_recolor;
+    u32 color;
 };
 
 #if defined(GL_VERTEX_SHADER) || defined(GL_COMPUTE_SHADER)
@@ -46,7 +46,7 @@ struct Entity {
 	layout(binding = 5) uniform texture2D i_rt_texture[i_max_render_targets];
 
 	layout(push_constant) uniform PushConstants {
-	    uint i_push_args[32];
+	    u32 i_push_args[32];
 	};
 #endif
 

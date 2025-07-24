@@ -41,16 +41,16 @@ LINK_VERT_FRAG(location = 1) flat Entity l_entity;
     layout(location = 0) out vec4 l_color_buffer;
 
     void main() {
-        uvec2 diffuse_recolor = unpackShort2x16(l_entity.diffuse_recolor);
-        uint diffuse_id = diffuse_recolor.x;
-        uint recolor_id = diffuse_recolor.y;
+        uvec2 diffuse_recolor = unpackU16x2(l_entity.diffuse_recolor);
+        u32 diffuse_id = diffuse_recolor.x;
+        u32 recolor_id = diffuse_recolor.y;
 
         vec4 diffuse = vec4(1.0);
         if (diffuse_id != i_tex_none) {
             diffuse = texture(SAMPLER(diffuse_id), l_texcoord);
         }
 
-        float recolor = diffuse.a;
+        f32 recolor = diffuse.a;
         if (recolor_id != i_tex_none) {
             recolor *= texture(SAMPLER(recolor_id), l_texcoord).r;
         }

@@ -29,8 +29,8 @@
             .hash = "shader_compiler-1.0.0-bOVsasCeAACmizJ2l7akxRrZI7sRTH5hMylytwAHemZV",
         },
         .gbms = .{
-            .url = "git+https://github.com/Games-By-Mason/gbms#4df2640b79bc9d0f47bf7e5bf3e9e20281dfe5bc",
-            .hash = "gbms-0.0.0-AAAAAGNtAQBEo9dstCq9Kj1qytsHhzECckBgtsQNQCzv",
+            .url = "git+https://github.com/Games-By-Mason/gbms#ce3a319b3377c92f783d95873ad3377caff57318",
+            .hash = "gbms-0.0.0-AAAAAO9oAQASyb6MWezW7zWDFEDf7co7teBHwRhB1_1Z",
         },
         .sdl = .{
             .url = "git+https://github.com/Games-By-Mason/sdl_zig#6bb28ba1ad570fe2f117f0cb2f163543d0062d1f",
