@@ -908,11 +908,6 @@ pub fn init(
                 .value = .{ .sampled_image = texture.view },
             });
         }
-        try desc_set_updates.append(.{
-            .set = set,
-            .binding = Renderer.pipeline_layout_options.binding("linear_sampler"),
-            .value = .{ .sampler = renderer.sampler },
-        });
     }
     gx.updateDescSets(desc_set_updates.items);
 

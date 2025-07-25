@@ -45,7 +45,7 @@ moving_avg_blur: bool = false,
 
 storage_buf: UploadBuf(.{ .storage = true }),
 
-sampler: gpu.Sampler,
+linear_sampler: gpu.Sampler,
 
 entities: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
@@ -165,7 +165,28 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .initial_pages = 1,
     }) catch |err| @panic(@errorName(err));
 
-    const pipeline_layout: gpu.Pipeline.Layout = .init(gx, pipeline_layout_options);
+    const linear_sampler: gpu.Sampler = .init(gx, .{ .str = "Texture" }, .{
+        .mag_filter = .linear,
+        .min_filter = .linear,
+        .mipmap_mode = .linear,
+        .address_mode = .initAll(.clamp_to_border),
+        .mip_lod_bias = 0.0,
+        .max_anisotropy = .@"16",
+        .compare_op = null,
+        .min_lod = 0.0,
+        .max_lod = null,
+        .border_color = .int_transparent_black,
+    });
+
+    const pipeline_layout: gpu.Pipeline.Layout = .init(gx, .{
+        .layout = pipeline_layout_options,
+        .immutable_samplers = &.{
+            .{
+                .binding = pipeline_layout_options.binding("linear_sampler"),
+                .samplers = &.{linear_sampler},
+            },
+        },
+    });
 
     var desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
     var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, desc_sets.len) = .{};
@@ -193,19 +214,6 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
             .init(ubo.Scene, &scene),
             .init([max_render_entities]ubo.Entity, &entities),
         },
-    });
-
-    const sampler: gpu.Sampler = .init(gx, .{ .str = "Texture" }, .{
-        .mag_filter = .linear,
-        .min_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode = .initAll(.clamp_to_border),
-        .mip_lod_bias = 0.0,
-        .max_anisotropy = .@"16",
-        .compare_op = null,
-        .min_lod = 0.0,
-        .max_lod = null,
-        .border_color = .int_transparent_black,
     });
 
     const textures = std.ArrayListUnmanaged(gpu.Image(.color)).initCapacity(
@@ -241,7 +249,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .desc_sets = desc_sets,
         .desc_pool = desc_pool,
         .storage_buf = storage_buf,
-        .sampler = sampler,
+        .linear_sampler = linear_sampler,
         .scene = scene,
         .entities = entities,
         .rtp = rtp,
@@ -262,7 +270,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
 
     self.desc_pool.deinit(gx);
     self.storage_buf.deinit(gx);
-    self.sampler.deinit(gx);
+    self.linear_sampler.deinit(gx);
 
     self.color_image_allocator.deinit(gpa, gx);
 
