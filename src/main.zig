@@ -197,11 +197,9 @@ pub fn main() !void {
             .getWin32Monitor = &getWin32Monitor,
         },
         .surface_format = switch (args.named.surface) {
-            .auto => &.{
-                Renderer.Surface.hdr10.query(),
-                Renderer.Surface.linear_srgb.query(),
-                Renderer.Surface.nonlinear_srgb.query(),
-            },
+            // We can't just list them all here, on some systems it will incorrectly show HDR
+            // formats as available even when HDR is off, leading to incorrect visuals...
+            .auto => &.{Renderer.Surface.linear_srgb.query()},
             .hdr10 => &.{Renderer.Surface.hdr10.query()},
             .@"linear-srgb" => &.{Renderer.Surface.linear_srgb.query()},
             .@"nonlinear-srgb" => &.{Renderer.Surface.nonlinear_srgb.query()},
