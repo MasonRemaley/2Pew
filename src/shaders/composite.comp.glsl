@@ -7,13 +7,33 @@ const uvec3 pp_c_local_size = uvec3(16, 16, 1);
     1 \
 }
 
+struct pp_c_PushConstants {
+    u32 surface_format;
+    u32 color_buffer_index;
+    u32 blurred_index;
+    u32 composite_index;
+};
+
+const u32 pp_c_sf_srgb = 0;
+const u32 pp_c_sf_linear_srgb = 1;
+const u32 pp_c_sf_hdr10 = 2;
+const u32 pp_c_sf_nonlinear_srgb_extended = 3;
+const u32 pp_c_sf_linear_srgb_extended = 4;
+
 #ifdef GL_COMPUTE_SHADER
     #include <gbms/noise.glsl>
     #include <gbms/sd.glsl>
+    #include <gbms/hdr10.glsl>
+    #include <gbms/srgb.glsl>
 
-    #define COLOR_BUFFER i_rt_storage_image_rba8_r[i_push_args[0]]
-    #define BLURRED sampler2D(i_rt_texture[i_push_args[1]], i_linear_sampler)
-    #define COMPOSITE i_rt_storage_image_any_w[i_push_args[2]]
+    layout(scalar, push_constant) uniform PushConstants {
+        pp_c_PushConstants push_constants;
+    };
+
+    #define COLOR_BUFFER i_rt_storage_image_rba8_r[push_constants.color_buffer_index]
+    #define BLURRED sampler2D(i_rt_texture[push_constants.blurred_index], i_linear_sampler)
+    #define COMPOSITE i_rt_storage_image_any_w[push_constants.composite_index]
+    #define HDR10 (push_constants.hdr10 != 0)
 
     layout(
         local_size_x = pp_c_local_size.x,
@@ -65,6 +85,34 @@ const uvec3 pp_c_local_size = uvec3(16, 16, 1);
         f32 crt = mix(1.0, 0.8, step(mod(floor(remap(0, image_size.y, 0, 540/2, coord.y)), 2), 0));
 
         // Final composite
-        imageStore(COMPOSITE, coord, vec4(((center + noise) * crt + bloom * 0.15) * vignette, 1));
+        vec4 color = vec4(((center + noise) * crt + bloom * 0.15) * vignette, 1);
+        color.rgb = clamp(color.rgb, 0, 1); // Gamut clamping would be better!
+
+
+        switch (push_constants.surface_format) {
+            case pp_c_sf_srgb: {
+                color = color;
+            } break;
+            case pp_c_sf_linear_srgb: {
+                color = linearToSrgb(color);
+            } break;
+            case pp_c_sf_hdr10: {
+                color.rgb = pow(color.rgb, vec3(1.5));
+                color = linearToHdr10(color, 350.0); // Paper white may need adjustment, just picked something reasonable
+            } break;
+            case pp_c_sf_nonlinear_srgb_extended: {
+                color = linearToSrgbExtended(color);
+            } break;
+            case pp_c_sf_linear_srgb_extended: {
+                color = color;
+            } break;
+            #if RUNTIME_SAFETY
+                default: {
+                    color = vec4(1, 0, 1, 1);
+                } break;
+            #endif
+        }
+
+        imageStore(COMPOSITE, coord, color);
     }
 #endif

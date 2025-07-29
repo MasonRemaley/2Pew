@@ -44,10 +44,6 @@ struct Entity {
 
 #if defined(GL_COMPUTE_SHADER)
     layout(binding = 5) uniform texture2D i_rt_texture[i_max_render_targets];
-
-    layout(push_constant) uniform PushConstants {
-        u32 i_push_args[32];
-    };
 #endif
 
 #endif

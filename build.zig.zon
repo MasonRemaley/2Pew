@@ -17,8 +17,8 @@
             .hash = "logger-0.0.0-mvc9nvlNAAA_Tc6T5V-y54k6nTneCna37VTdvtNDKkFc",
         },
         .gpu = .{
-            .url = "git+https://github.com/Games-By-Mason/gpu#8f2da1fe60c17c146e4ad587a79032ee774870e2",
-            .hash = "gpu-0.0.0-Wb6aFvq1BAB7ISyI4Fe7G2kmBjKWZqcqqZHzz2bkx_eH",
+            .url = "git+https://github.com/Games-By-Mason/gpu#a56bb874285dfc33138aed85a46bf360fb05d3f7",
+            .hash = "gpu-0.0.0-Wb6aFhHpBAChDlSNJQaX2fx1_VsMF2B3kPov6HSE7BtP",
         },
         .structopt = .{
             .url = "git+https://github.com/Games-By-Mason/structopt#d70897ee3c377511c82a47ff81c887551d6f0573",
@@ -29,8 +29,8 @@
             .hash = "shader_compiler-1.0.0-bOVsasCeAACmizJ2l7akxRrZI7sRTH5hMylytwAHemZV",
         },
         .gbms = .{
-            .url = "git+https://github.com/Games-By-Mason/gbms#778935ef40e50a9951be8dc29609045167c2602c",
-            .hash = "gbms-0.0.0-AAAAAGBvAQCC3baBo-HnNTOXUUmuwNe_VN3ZIrOTQzhv",
+            .url = "git+https://github.com/Games-By-Mason/gbms#5698d0f2519826e46cfdfb555805852c5c85b01b",
+            .hash = "gbms-0.0.0-AAAAAKl6AQC-rm3da5VcM6WpH31qADVeNSkiNZRhsD_h",
         },
         .sdl = .{
             .url = "git+https://github.com/Games-By-Mason/sdl_zig#6bb28ba1ad570fe2f117f0cb2f163543d0062d1f",

@@ -47,6 +47,15 @@ pub const gpu_options: gpu.Options = .{
     .update_desc_sets_buf_len = 1000,
 };
 
+pub const Surface = enum {
+    auto,
+    hdr10,
+    @"linear-srgb",
+    @"nonlinear-srgb",
+    @"linear-srgb-extended",
+    @"nonlinear-srgb-extended",
+};
+
 const command: Command = .{
     .name = @tagName(build.name),
     .named_args = &.{
@@ -74,6 +83,10 @@ const command: Command = .{
         NamedArg.init(bool, .{
             .long = "moving-avg-blur",
             .default = .{ .value = false },
+        }),
+        NamedArg.init(Surface, .{
+            .long = "surface",
+            .default = .{ .value = .auto },
         }),
     },
 };
@@ -181,8 +194,20 @@ pub fn main() !void {
             .getInstanceProcAddress = @ptrCast(c.SDL_Vulkan_GetVkGetInstanceProcAddr()),
             .surface_context = screen,
             .createSurface = &createSurface,
+            .getWin32Monitor = &getWin32Monitor,
         },
-        .surface_format = .srgb4x8,
+        .surface_format = switch (args.named.surface) {
+            .auto => &.{
+                Renderer.Surface.hdr10.query(),
+                Renderer.Surface.linear_srgb.query(),
+                Renderer.Surface.nonlinear_srgb.query(),
+            },
+            .hdr10 => &.{Renderer.Surface.hdr10.query()},
+            .@"linear-srgb" => &.{Renderer.Surface.linear_srgb.query()},
+            .@"nonlinear-srgb" => &.{Renderer.Surface.nonlinear_srgb.query()},
+            .@"nonlinear-srgb-extended" => &.{Renderer.Surface.nonlinear_srgb_extended.query()},
+            .@"linear-srgb-extended" => &.{Renderer.Surface.linear_srgb_extended.query()},
+        },
         .surface_extent = init_window_extent,
         .validation = args.named.@"gpu-validation",
         .device_type_ranks = b: {
@@ -338,6 +363,34 @@ fn createSurface(
         return .null_handle;
     }
     return @enumFromInt(@intFromPtr(surface));
+}
+
+const win32 = struct {
+    const MONITOR_DEFAULTTONULL: u32 = 0x00000000;
+    const MONITOR_DEFAULTTOPRIMARY: u32 = 0x00000001;
+    const MONITOR_DEFAULTTONEAREST: u32 = 0x00000002;
+    extern "user32" fn MonitorFromWindow(hwnd: *const anyopaque, dwflags: u32) callconv(.winapi) ?std.os.windows.HANDLE;
+};
+
+fn getWin32Monitor(context: ?*anyopaque) ?std.os.windows.HANDLE {
+    if (builtin.target.os.tag != .windows) return null;
+
+    const screen: *c.SDL_Window = @ptrCast(@alignCast(context));
+
+    const hwnd = c.SDL_GetPointerProperty(c.SDL_GetWindowProperties(screen), c.SDL_PROP_WINDOW_WIN32_HWND_POINTER, null) orelse {
+        log.err("failed to get HWND", .{});
+        return null;
+    };
+
+    const monitor = win32.MonitorFromWindow(
+        hwnd,
+        win32.MONITOR_DEFAULTTONEAREST,
+    ) orelse {
+        log.err("MonitorFromWindow failed", .{});
+        return null;
+    };
+
+    return monitor;
 }
 
 const FormatSdlLog = struct {

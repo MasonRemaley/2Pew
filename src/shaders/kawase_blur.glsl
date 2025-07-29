@@ -1,5 +1,9 @@
 #include "interface.glsl"
 
+layout(scalar, push_constant) uniform PushConstants {
+    u32 i_push_args[3];
+};
+
 #define INPUT i_rt_texture[i_push_args[0]]
 #define OUTPUT i_rt_storage_image_any_w[i_push_args[1]]
 #define DIST i_push_args[2]

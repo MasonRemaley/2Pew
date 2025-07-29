@@ -502,13 +502,6 @@ pub fn all(game: *Game, delta_s: f32) void {
                     cb.beginZone(game.gx, .{ .name = "Moving Average Gaussian", .src = @src() });
                     defer cb.endZone(game.gx);
 
-                    const BlurArgs = extern struct {
-                        input: gpu.ext.RenderTarget(.color),
-                        output: gpu.ext.RenderTarget(.color),
-                        radius: i32,
-                        dir: enum(i32) { x = 1, y = 0 },
-                    };
-
                     const radius: i32 = @intFromFloat(@round(2 * effect_scale));
                     cb.bindPipeline(game.gx, .{
                         .bind_point = .compute,
@@ -553,14 +546,14 @@ pub fn all(game: *Game, delta_s: f32) void {
                             },
                         });
 
-                        cb.pushConstant(BlurArgs, game.gx, .{
+                        cb.pushConstant(Renderer.interface.pp_bbma_PushConstants, game.gx, .{
                             .pipeline_layout = game.renderer.pipeline_layout.handle,
                             .stages = .{ .compute = true },
                             .data = &.{
-                                .input = game.blurred[blur_in_index],
-                                .output = game.blurred[blur_out_index],
+                                .input_rt_storage_image_rba8_r_index = @intFromEnum(game.blurred[blur_in_index]),
+                                .output_rt_storage_image_any_w = @intFromEnum(game.blurred[blur_out_index]),
                                 .radius = radius,
-                                .dir = .x,
+                                .horizontal = @intFromBool(true),
                             },
                         });
                         cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_BBMA_DSIZE(.{
@@ -597,14 +590,14 @@ pub fn all(game: *Game, delta_s: f32) void {
                             },
                         });
 
-                        cb.pushConstant(BlurArgs, game.gx, .{
+                        cb.pushConstant(Renderer.interface.pp_bbma_PushConstants, game.gx, .{
                             .pipeline_layout = game.renderer.pipeline_layout.handle,
                             .stages = .{ .compute = true },
                             .data = &.{
-                                .input = game.blurred[blur_in_index],
-                                .output = game.blurred[blur_out_index],
+                                .input_rt_storage_image_rba8_r_index = @intFromEnum(game.blurred[blur_in_index]),
+                                .output_rt_storage_image_any_w = @intFromEnum(game.blurred[blur_out_index]),
                                 .radius = radius,
-                                .dir = .y,
+                                .horizontal = @intFromBool(false),
                             },
                         });
                         cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_BBMA_DSIZE(.{
@@ -618,24 +611,16 @@ pub fn all(game: *Game, delta_s: f32) void {
                     cb.beginZone(game.gx, .{ .name = "Linear Gaussian", .src = @src() });
                     defer cb.endZone(game.gx);
 
-                    const BlurArgs = extern struct {
-                        input: gpu.ext.RenderTarget(.color),
-                        output: gpu.ext.RenderTarget(.color),
-                        dir: enum(i32) { x = 1, y = 0 },
-                        radius: i32,
-                        weights: [14]f32,
-                        offsets: [14]f32,
-                    };
-
                     cb.bindPipeline(game.gx, .{
                         .bind_point = .compute,
                         .pipeline = game.renderer.pipelines.linear_convolve,
                     });
-
-                    var blur_args: BlurArgs = .{
-                        .input = game.blurred[blur_in_index],
-                        .output = game.blurred[blur_out_index],
-                        .dir = .x,
+                    var blur_args: Renderer.interface.pp_lc_PushConstants = .{
+                        .pass = .{
+                            .input_rt_texture_index = @intFromEnum(game.blurred[blur_in_index]),
+                            .output_rt_storage_image_any_w_index = @intFromEnum(game.blurred[blur_out_index]),
+                            .horizontal = @intFromBool(true),
+                        },
                         .radius = 0,
                         .weights = undefined,
                         .offsets = undefined,
@@ -670,7 +655,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                             },
                         });
 
-                        cb.pushConstant(BlurArgs, game.gx, .{
+                        cb.pushConstant(Renderer.interface.pp_lc_PushConstants, game.gx, .{
                             .pipeline_layout = game.renderer.pipeline_layout.handle,
                             .stages = .{ .compute = true },
                             .data = &blur_args,
@@ -707,21 +692,15 @@ pub fn all(game: *Game, delta_s: f32) void {
                                 }),
                             },
                         });
-
-                        cb.pushConstantField(BlurArgs, "input", game.gx, .{
+                        blur_args.pass = .{
+                            .input_rt_texture_index = @intFromEnum(game.blurred[blur_in_index]),
+                            .output_rt_storage_image_any_w_index = @intFromEnum(game.blurred[blur_out_index]),
+                            .horizontal = @intFromBool(false),
+                        };
+                        cb.pushConstantField(Renderer.interface.pp_lc_PushConstants, "pass", game.gx, .{
                             .pipeline_layout = game.renderer.pipeline_layout.handle,
                             .stages = .{ .compute = true },
-                            .data = &game.blurred[blur_in_index],
-                        });
-                        cb.pushConstantField(BlurArgs, "output", game.gx, .{
-                            .pipeline_layout = game.renderer.pipeline_layout.handle,
-                            .stages = .{ .compute = true },
-                            .data = &game.blurred[blur_out_index],
-                        });
-                        cb.pushConstantField(BlurArgs, "dir", game.gx, .{
-                            .pipeline_layout = game.renderer.pipeline_layout.handle,
-                            .stages = .{ .compute = true },
-                            .data = &.y,
+                            .data = &blur_args.pass,
                         });
                         cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_LC_DSIZE(.{
                             .x = blurred[0].extent.width,
@@ -769,10 +748,15 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .bind_point = .compute,
                     .pipeline = game.renderer.pipelines.composite,
                 });
-                cb.pushConstant([3]gpu.ext.RenderTarget(.color), game.gx, .{
+                cb.pushConstant(Renderer.interface.pp_c_PushConstants, game.gx, .{
                     .pipeline_layout = game.renderer.pipeline_layout.handle,
                     .stages = .{ .compute = true },
-                    .data = &.{ game.color_buffer, game.blurred[blur_in_index], game.composite },
+                    .data = &.{
+                        .surface_format = game.gx.device.surface_format.userdata,
+                        .color_buffer_index = @intFromEnum(game.color_buffer),
+                        .blurred_index = @intFromEnum(game.blurred[blur_in_index]),
+                        .composite_index = @intFromEnum(game.composite),
+                    },
                 });
                 cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_C_DSIZE(.{
                     .x = composite.extent.width,

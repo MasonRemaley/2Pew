@@ -28,6 +28,24 @@ const Zone = tracy.Zone;
 
 const Allocator = std.mem.Allocator;
 
+pub const Surface = enum(u32) {
+    nonlinear_srgb = interface.pp_c_sf_srgb,
+    linear_srgb = interface.pp_c_sf_linear_srgb,
+    hdr10 = interface.pp_c_sf_hdr10,
+    nonlinear_srgb_extended = interface.pp_c_sf_nonlinear_srgb_extended,
+    linear_srgb_extended = interface.pp_c_sf_linear_srgb_extended,
+
+    pub fn query(comptime self: @This()) gpu.SurfaceFormatQuery {
+        return switch (self) {
+            .nonlinear_srgb => .nonlinearSrgb(@intFromEnum(self)),
+            .linear_srgb => .linearSrgb(@intFromEnum(self)),
+            .hdr10 => .hdr10(@intFromEnum(self)),
+            .linear_srgb_extended => .linearSrgbExtended(@intFromEnum(self)),
+            .nonlinear_srgb_extended => .nonlinearSrgbExtended(@intFromEnum(self)),
+        };
+    }
+};
+
 const assert = std.debug.assert;
 
 delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue(8),

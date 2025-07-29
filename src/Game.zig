@@ -844,7 +844,11 @@ pub fn init(
     const composite = renderer.rtp.alloc(gx, .{
         .name = .{ .str = "Composite" },
         .image = .{
-            .format = Renderer.Pipelines.color_attachment_format,
+            .format = switch (@as(Renderer.Surface, @enumFromInt(gx.device.surface_format.userdata))) {
+                .nonlinear_srgb, .linear_srgb => Renderer.Pipelines.color_attachment_format,
+                .hdr10 => .a2b10g10r10_unorm,
+                .linear_srgb_extended, .nonlinear_srgb_extended => .r16g16b16a16_sfloat,
+            },
             .extent = .{
                 .width = 1920,
                 .height = 1080,
