@@ -194,7 +194,6 @@ pub fn main() !void {
             .getInstanceProcAddress = @ptrCast(c.SDL_Vulkan_GetVkGetInstanceProcAddr()),
             .surface_context = screen,
             .createSurface = &createSurface,
-            .getWin32Monitor = &getWin32Monitor,
         },
         .surface_format = switch (args.named.surface) {
             // We can't just list them all here, on some systems it will incorrectly show HDR
@@ -216,6 +215,23 @@ pub fn main() !void {
             break :b ranks;
         },
         .safe_mode = args.named.@"safe-mode",
+        .window = @enumFromInt(@intFromPtr(switch (builtin.os.tag) {
+            .windows => c.SDL_GetPointerProperty(
+                c.SDL_GetWindowProperties(screen),
+                c.SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+                null,
+            ),
+            .linux => @as(?*anyopaque, @ptrFromInt(@as(usize, @bitCast(c.SDL_GetNumberProperty(
+                c.SDL_GetWindowProperties(screen),
+                c.SDL_PROP_WINDOW_X11_WINDOW_NUMBER,
+                0,
+            ))))) orelse c.SDL_GetPointerProperty(
+                c.SDL_GetWindowProperties(screen),
+                c.SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER,
+                null,
+            ),
+            else => comptime unreachable,
+        })),
     });
     defer {
         gx.waitIdle();
@@ -351,44 +367,16 @@ fn createSurface(
     allocation_callbacks: ?*const VkBackend.vk.AllocationCallbacks,
 ) VkBackend.vk.SurfaceKHR {
     const screen: *c.SDL_Window = @ptrCast(@alignCast(context));
-    var surface: c.VkSurfaceKHR = undefined;
+    var surface: c.VkSurfaceKHR = null;
     if (!c.SDL_Vulkan_CreateSurface(
         screen,
         @ptrFromInt(@intFromEnum(instance)),
         @ptrCast(allocation_callbacks),
         &surface,
     )) {
-        return .null_handle;
+        log.err("SDL_SetHintWithPriority failed: {s}", .{c.SDL_GetError()});
     }
     return @enumFromInt(@intFromPtr(surface));
-}
-
-const win32 = struct {
-    const MONITOR_DEFAULTTONULL: u32 = 0x00000000;
-    const MONITOR_DEFAULTTOPRIMARY: u32 = 0x00000001;
-    const MONITOR_DEFAULTTONEAREST: u32 = 0x00000002;
-    extern "user32" fn MonitorFromWindow(hwnd: *const anyopaque, dwflags: u32) callconv(.winapi) ?std.os.windows.HANDLE;
-};
-
-fn getWin32Monitor(context: ?*anyopaque) ?std.os.windows.HANDLE {
-    if (builtin.target.os.tag != .windows) return null;
-
-    const screen: *c.SDL_Window = @ptrCast(@alignCast(context));
-
-    const hwnd = c.SDL_GetPointerProperty(c.SDL_GetWindowProperties(screen), c.SDL_PROP_WINDOW_WIN32_HWND_POINTER, null) orelse {
-        log.err("failed to get HWND", .{});
-        return null;
-    };
-
-    const monitor = win32.MonitorFromWindow(
-        hwnd,
-        win32.MONITOR_DEFAULTTONEAREST,
-    ) orelse {
-        log.err("MonitorFromWindow failed", .{});
-        return null;
-    };
-
-    return monitor;
 }
 
 const FormatSdlLog = struct {
