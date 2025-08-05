@@ -34,17 +34,21 @@ struct Entity {
 #endif
 
 #if defined(GL_FRAGMENT_SHADER) || defined(GL_COMPUTE_SHADER)
-    layout(binding = 3) uniform sampler i_linear_sampler;
+    layout(binding = 3) uniform sampler i_sprite_sampler;
+#endif
+
+#if defined(GL_FRAGMENT_SHADER) || defined(GL_COMPUTE_SHADER)
+    layout(binding = 4) uniform sampler i_rt_sampler;
 #endif
 
 #if defined(GL_COMPUTE_SHADER)
-    layout(binding = 4, rgba8) uniform image2D i_rt_storage_image_rgba8_rw[i_max_render_targets];
-    layout(binding = 4, rgba8) uniform readonly image2D i_rt_storage_image_rba8_r[i_max_render_targets];
-    layout(binding = 4) uniform writeonly image2D i_rt_storage_image_any_w[i_max_render_targets];
+    layout(binding = 5, rgba8) uniform image2D i_rt_storage_image_rgba8_rw[i_max_render_targets];
+    layout(binding = 5, rgba8) uniform readonly image2D i_rt_storage_image_rba8_r[i_max_render_targets];
+    layout(binding = 5) uniform writeonly image2D i_rt_storage_image_any_w[i_max_render_targets];
 #endif
 
 #if defined(GL_COMPUTE_SHADER)
-    layout(binding = 5) uniform texture2D i_rt_texture[i_max_render_targets];
+    layout(binding = 6) uniform texture2D i_rt_texture[i_max_render_targets];
 #endif
 
 #endif

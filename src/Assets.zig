@@ -143,7 +143,7 @@ pub fn loadSprite(
     assert(a.sprites.items.len < @intFromEnum(Sprite.Index.none));
     const handle: Sprite.Index = @enumFromInt(a.sprites.items.len);
 
-    const diffuse = renderer.loadTexture(gpa, gx, cb, up, .r8g8b8a8_srgb, dir, diffuse_name);
+    const diffuse = renderer.loadTexture(gpa, gx, cb, up, .r8g8b8a8_unorm, dir, diffuse_name);
     const recolor = if (recolor_name) |name| b: {
         const recolor = renderer.loadTexture(gpa, gx, cb, up, .r8_unorm, dir, name);
         assert(recolor.width == diffuse.width);

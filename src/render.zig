@@ -34,25 +34,25 @@ const TeamIndex = Game.TeamIndex;
 const Spring = Game.Spring;
 
 const team_colors: [4]ubo.Color = .{
-    colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{
+    colors.floatToUnorm(ubo.Color, .{
         0.063,
         0.486,
         0.769,
         1.0,
     }),
-    colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{
+    colors.floatToUnorm(ubo.Color, .{
         0.929,
         0.824,
         0.251,
         1.0,
     }),
-    colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{
+    colors.floatToUnorm(ubo.Color, .{
         0.878,
         0.251,
         0.929,
         1.0,
     }),
-    colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{
+    colors.floatToUnorm(ubo.Color, .{
         0.325,
         0.929,
         0.251,
@@ -843,11 +843,11 @@ fn renderHealthBar(
     });
     const hp_percent = health.hp / health.max_hp;
     const color: ubo.Color = if (hp_percent >= health.regen_ratio)
-        colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{ 0.000, 0.580, 0.075, 1 })
+        colors.floatToUnorm(ubo.Color, .{ 0.000, 0.580, 0.075, 1 })
     else if (health.regen_cooldown_s > 0.0)
-        colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{ 0.886, 0.000, 0.012, 1 })
+        colors.floatToUnorm(ubo.Color, .{ 0.886, 0.000, 0.012, 1 })
     else
-        colors.srgbToLinearUnorm(ubo.Color, [4]f32, .{ 1.000, 0.490, 0.012, 1 });
+        colors.floatToUnorm(ubo.Color, .{ 1.000, 0.490, 0.012, 1 });
     ctx.entity_writer.write(.{
         .world_from_model = Mat2x3.identity
             .scaled(health_bar_size.compProd(.{ .x = hp_percent, .y = 1.0 }))

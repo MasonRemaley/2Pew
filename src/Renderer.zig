@@ -67,7 +67,8 @@ moving_avg_blur: bool = false,
 
 storage_buf: UploadBuf(.{ .storage = true }),
 
-linear_sampler: gpu.Sampler,
+rt_sampler: gpu.Sampler,
+sprite_sampler: gpu.Sampler,
 
 entities: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
@@ -151,9 +152,15 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
             .partially_bound = true,
         },
         .{
-            .name = "linear_sampler",
+            .name = "sprite_sampler",
             .kind = .sampler,
-            .stages = .{ .fragment = true, .compute = true },
+            .stages = .{ .fragment = true },
+            .partially_bound = false,
+        },
+        .{
+            .name = "rt_sampler",
+            .kind = .sampler,
+            .stages = .{ .compute = true },
             .partially_bound = false,
         },
         .{
@@ -188,7 +195,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .initial_pages = 1,
     }) catch |err| @panic(@errorName(err));
 
-    const linear_sampler: gpu.Sampler = .init(gx, .{ .str = "Texture" }, .{
+    const rt_sampler: gpu.Sampler = .init(gx, .{ .str = "Render Target" }, .{
         .mag_filter = .linear,
         .min_filter = .linear,
         .mipmap_mode = .linear,
@@ -201,12 +208,29 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .border_color = .int_transparent_black,
     });
 
+    const sprite_sampler: gpu.Sampler = .init(gx, .{ .str = "Sprite" }, .{
+        .mag_filter = .linear,
+        .min_filter = .linear,
+        .mipmap_mode = .linear,
+        .address_mode = .initAll(.clamp_to_edge),
+        .mip_lod_bias = 0.0,
+        .max_anisotropy = .@"16",
+        .compare_op = null,
+        .min_lod = 0.0,
+        .max_lod = null,
+        .border_color = .int_transparent_black,
+    });
+
     const pipeline_layout: gpu.Pipeline.Layout = .init(gx, .{
         .layout = pipeline_layout_options,
         .immutable_samplers = &.{
             .{
-                .binding = pipeline_layout_options.binding("linear_sampler"),
-                .samplers = &.{linear_sampler},
+                .binding = pipeline_layout_options.binding("rt_sampler"),
+                .samplers = &.{rt_sampler},
+            },
+            .{
+                .binding = pipeline_layout_options.binding("sprite_sampler"),
+                .samplers = &.{sprite_sampler},
             },
         },
     });
@@ -285,7 +309,8 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .desc_sets = desc_sets,
         .desc_pool = desc_pool,
         .storage_buf = storage_buf,
-        .linear_sampler = linear_sampler,
+        .rt_sampler = rt_sampler,
+        .sprite_sampler = sprite_sampler,
         .scene = scene,
         .entities = entities,
         .rtp = rtp,
@@ -307,7 +332,8 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
 
     self.desc_pool.deinit(gx);
     self.storage_buf.deinit(gx);
-    self.linear_sampler.deinit(gx);
+    self.rt_sampler.deinit(gx);
+    self.sprite_sampler.deinit(gx);
 
     self.color_image_allocator.deinit(gpa, gx);
 
@@ -479,7 +505,7 @@ const LoadTextureResult = struct {
 };
 
 const TextureFormat = enum(i32) {
-    r8g8b8a8_srgb = @intFromEnum(gpu.ImageFormat.r8g8b8a8_srgb),
+    r8g8b8a8_unorm = @intFromEnum(gpu.ImageFormat.r8g8b8a8_unorm),
     r8_unorm = @intFromEnum(gpu.ImageFormat.r8_unorm),
 
     pub fn asGpuFormat(self: @This()) gpu.ImageFormat {
@@ -488,7 +514,7 @@ const TextureFormat = enum(i32) {
 
     pub fn channels(self: @This()) u8 {
         return switch (self) {
-            .r8g8b8a8_srgb => 4,
+            .r8g8b8a8_unorm => 4,
             .r8_unorm => 1,
         };
     }

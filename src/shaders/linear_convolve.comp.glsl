@@ -43,7 +43,7 @@ struct pp_lc_PushConstants {
     #define OFFSET(i) u32BitsToF32(i_push_args[4 + MAX_RADIUS + i]);
     #define HORIZONTAL (push_constants.pass.horizontal != 0)
 
-    #define SAMPLER(tex) sampler2D(tex, i_linear_sampler)
+    #define SAMPLER(tex) sampler2D(tex, i_rt_sampler)
 
     vec3 load(vec2 coord, vec2 size) {
         return texture(SAMPLER(INPUT), (coord + vec2(0.5)) / size).rgb;

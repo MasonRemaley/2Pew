@@ -31,7 +31,7 @@ const u32 pp_c_sf_linear_srgb_extended = 4;
     };
 
     #define COLOR_BUFFER i_rt_storage_image_rba8_r[push_constants.color_buffer_index]
-    #define BLURRED sampler2D(i_rt_texture[push_constants.blurred_index], i_linear_sampler)
+    #define BLURRED sampler2D(i_rt_texture[push_constants.blurred_index], i_rt_sampler)
     #define COMPOSITE i_rt_storage_image_any_w[push_constants.composite_index]
     #define HDR10 (push_constants.hdr10 != 0)
 
@@ -78,32 +78,34 @@ const u32 pp_c_sf_linear_srgb_extended = 4;
         noise_scale /= image_size;
         f32 noise_hz = 60;
         f32 noise_amp = rand(vec3(floor(noise_scale * coord), round(noise_hz * i_scene.timer.seconds)));
-        vec3 noise = vec3(0.01 * mix(-1, 1, noise_amp));
+        vec3 noise = vec3(0.05 * mix(-1, 1, noise_amp));
         noise.r *= 0.8;
 
         // CRT effect
         f32 crt = mix(1.0, 0.8, step(mod(floor(remap(0, image_size.y, 0, 540/2, coord.y)), 2), 0));
 
         // Final composite
-        vec4 color = vec4(((center + noise) * crt + bloom * 0.15) * vignette, 1);
+        vignette = mix(vignette, 1, 0.5);
+        vec4 color = vec4(((center + noise) * crt + bloom) * vignette, 1);
         color.rgb = clamp(color.rgb, 0, 1); // Gamut clamping would be better!
 
         switch (push_constants.surface_format) {
             case pp_c_sf_srgb: {
-                color = color;
+                color = srgbToLinear(color);
             } break;
             case pp_c_sf_linear_srgb: {
-                color = linearToSrgb(color);
+                color = color;
             } break;
             case pp_c_sf_hdr10: {
+                color = srgbToLinear(color);
                 color.rgb = pow(color.rgb, vec3(1.5));
                 color = linearToHdr10(color, 350.0); // Paper white may need adjustment, just picked something reasonable
             } break;
             case pp_c_sf_nonlinear_srgb_extended: {
-                color = linearToSrgbExtended(color);
+                color = color;
             } break;
             case pp_c_sf_linear_srgb_extended: {
-                color = color;
+                color = srgbToLinearExtended(color);
             } break;
             #if RUNTIME_SAFETY
                 default: {

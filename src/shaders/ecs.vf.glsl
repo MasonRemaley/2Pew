@@ -3,7 +3,7 @@
 
 #include "interface.glsl"
 
-#define SAMPLER(id) sampler2D(i_textures[nonuniform(id)], i_linear_sampler)
+#define SAMPLER(id) sampler2D(i_textures[nonuniform(id)], i_sprite_sampler)
 
 LINK_VERT_FRAG(location = 0) vec2 l_texcoord;
 LINK_VERT_FRAG(location = 1) flat Entity l_entity;
