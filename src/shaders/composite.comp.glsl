@@ -88,7 +88,6 @@ const u32 pp_c_sf_linear_srgb_extended = 4;
         vec4 color = vec4(((center + noise) * crt + bloom * 0.15) * vignette, 1);
         color.rgb = clamp(color.rgb, 0, 1); // Gamut clamping would be better!
 
-
         switch (push_constants.surface_format) {
             case pp_c_sf_srgb: {
                 color = color;

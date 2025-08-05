@@ -30,7 +30,7 @@ LINK_VERT_FRAG(location = 1) flat Entity l_entity;
         vec2 view = vec3(world, 1.0) * i_scene.world_to_view;
         vec2 projection = vec3(view, 1.0) * i_scene.view_to_projection;
 
-        gl_Position = vec4(projection, 0.0, 1.0);
+        gl_Position = vec4(projection, entity.sort, 1.0);
         l_texcoord = texcoords[gl_VertexIndex];
         l_entity = entity;
     }
@@ -49,7 +49,7 @@ LINK_VERT_FRAG(location = 1) flat Entity l_entity;
             diffuse = texture(SAMPLER(diffuse_id), l_texcoord);
         }
 
-        f32 recolor = diffuse.a;
+        f32 recolor = 1.0;
         if (recolor_id != i_tex_none) {
             recolor *= texture(SAMPLER(recolor_id), l_texcoord).r;
         }

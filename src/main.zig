@@ -113,6 +113,9 @@ fn handleResize(userdata: ?*anyopaque, event: [*c]c.SDL_Event) callconv(.c) bool
 pub fn main() !void {
     c.SDL_SetLogPriorities(c.SDL_LOG_PRIORITY_TRACE);
     c.SDL_SetLogOutputFunction(&sdlLogCallback, null);
+    if (!c.SDL_SetAppMetadata(@tagName(build.name), build.version, null)) {
+        panic("SDL_SetAppMetadata failed: {s}\n", .{c.SDL_GetError()});
+    }
 
     // Allocator setup
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};

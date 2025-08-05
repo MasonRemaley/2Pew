@@ -96,6 +96,8 @@ player_trauma: [4]Trauma = @splat(.init(.{})),
 rumble: Rumble = .{},
 
 color_buffer: RenderTarget(.color),
+color_buffer_msaa: RenderTarget(.color),
+depth_buffer: RenderTarget(.{ .depth_stencil = Renderer.depth_format }),
 composite: RenderTarget(.color),
 blurred: [2]RenderTarget(.color),
 window_extent: gpu.Extent2D,
@@ -569,7 +571,7 @@ pub fn init(
     };
 
     const ranger_sprites = .{
-        assets.loadSprite(gpa, gx, renderer, cb, &up, dir, "img/ship/ranger/diffuse.png", "img/ship/ranger/recolor.png"),
+        assets.loadSprite(gpa, gx, renderer, cb, &up, dir, "img/ship/ranger/diffuse.png", null),
         assets.loadSprite(gpa, gx, renderer, cb, &up, dir, "img/ship/ranger/thrusters/0.png", null),
         assets.loadSprite(gpa, gx, renderer, cb, &up, dir, "img/ship/ranger/thrusters/1.png", null),
         assets.loadSprite(gpa, gx, renderer, cb, &up, dir, "img/ship/ranger/thrusters/2.png", null),
@@ -805,9 +807,39 @@ pub fn init(
     const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
     defer zone.end();
 
+    const color_buffer_msaa = renderer.rtp.alloc(gx, .{
+        .name = .{ .str = "Color Buffer MSAA" },
+        .image = .{
+            .format = Renderer.Pipelines.color_attachment_format,
+            .extent = .{
+                .width = 1920,
+                .height = 1080,
+                .depth = 1,
+            },
+            .usage = .{
+                .color_attachment = true,
+            },
+            .samples = Renderer.msaa,
+        },
+    });
+
+    const depth_buffer = renderer.rtp_depth.alloc(gx, .{
+        .name = .{ .str = "Depth Buffer" },
+        .image = .{
+            .extent = .{
+                .width = 1920,
+                .height = 1080,
+                .depth = 1,
+            },
+            .usage = .{ .depth_stencil_attachment = true },
+            .aspect = .{ .depth = true },
+            .samples = Renderer.msaa,
+        },
+    });
+
     var image_barriers: std.BoundedArray(
         gpu.ImageBarrier,
-        Renderer.max_textures,
+        Renderer.max_textures + 1,
     ) = .{};
     for (renderer.textures.items) |texture| {
         image_barriers.appendAssumeCapacity(.transferDstToReadOnly(.{
@@ -997,6 +1029,8 @@ pub fn init(
         .particle = particle,
 
         .color_buffer = color_buffer,
+        .color_buffer_msaa = color_buffer_msaa,
+        .depth_buffer = depth_buffer,
         .composite = composite,
         .blurred = blurred,
         .window_extent = window_extent,

@@ -18,6 +18,7 @@ struct Entity {
     mat2x3 model_to_world;
     u32 diffuse_recolor;
     u32 color;
+    float sort;
 };
 
 #if defined(GL_VERTEX_SHADER) || defined(GL_COMPUTE_SHADER)

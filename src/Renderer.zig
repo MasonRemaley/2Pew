@@ -28,6 +28,9 @@ const Zone = tracy.Zone;
 
 const Allocator = std.mem.Allocator;
 
+pub const msaa: gpu.Samples = .@"8";
+pub const depth_format: gpu.ImageFormat = .d32_sfloat;
+
 pub const Surface = enum(u32) {
     nonlinear_srgb = interface.pp_c_sf_srgb,
     linear_srgb = interface.pp_c_sf_linear_srgb,
@@ -59,6 +62,7 @@ pipeline_layout: gpu.Pipeline.Layout,
 desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
 rtp: RenderTarget(.color).Pool,
+rtp_depth: RenderTarget(.{ .depth_stencil = depth_format }).Pool,
 moving_avg_blur: bool = false,
 
 storage_buf: UploadBuf(.{ .storage = true }),
@@ -116,6 +120,7 @@ pub const ubo = struct {
         diffuse: Texture = .none,
         recolor: Texture = .none,
         color: Color = .white,
+        sort: f32,
 
         comptime {
             assert(@sizeOf(@This()) == @sizeOf(interface.Entity));
@@ -253,7 +258,20 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .physical_extent = init_window_extent,
         .capacity = max_render_targets,
         .allocator = .{
-            .name = "Render Targets",
+            .name = "Color Render Targets",
+            .initial_pages = 0,
+        },
+    }) catch |err| @panic(@errorName(err));
+
+    const rtp_depth = RenderTarget(.{ .depth_stencil = depth_format }).Pool.init(gpa, gx, .{
+        .virtual_extent = .{
+            .width = 1920,
+            .height = 1080,
+        },
+        .physical_extent = init_window_extent,
+        .capacity = max_render_targets,
+        .allocator = .{
+            .name = "Depth Render Targets",
             .initial_pages = 0,
         },
     }) catch |err| @panic(@errorName(err));
@@ -271,6 +289,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .scene = scene,
         .entities = entities,
         .rtp = rtp,
+        .rtp_depth = rtp_depth,
     };
 }
 
@@ -293,6 +312,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     self.color_image_allocator.deinit(gpa, gx);
 
     self.rtp.deinit(gpa, gx);
+    self.rtp_depth.deinit(gpa, gx);
 
     self.* = undefined;
 }
@@ -367,8 +387,19 @@ pub const Pipelines = struct {
                 .color_attachment_formats = &.{
                     color_attachment_format,
                 },
-                .depth_attachment_format = .undefined,
+                .depth_attachment_format = depth_format,
                 .stencil_attachment_format = .undefined,
+                .rasterization_samples = msaa,
+                .alpha_to_coverage = true,
+                .color_write_mask = .all,
+                .blend_state = null,
+                .depth_state = .{
+                    .write = true,
+                    .compare_op = .gt,
+                },
+                .stencil_state = null,
+                .logic_op = null,
+                .blend_constants = @splat(0),
             },
         });
 
