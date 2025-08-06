@@ -71,6 +71,7 @@ rt_sampler: gpu.Sampler,
 sprite_sampler: gpu.Sampler,
 
 entities: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
+entities_len: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View,
 
 pub const max_render_entities = 100000;
@@ -121,7 +122,6 @@ pub const ubo = struct {
         diffuse: Texture = .none,
         recolor: Texture = .none,
         color: Color = .white,
-        sort: f32,
 
         comptime {
             assert(@sizeOf(@This()) == @sizeOf(interface.Entity));
@@ -140,6 +140,12 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
         },
         .{
             .name = "entities",
+            .kind = .storage_buffer,
+            .stages = .{ .vertex = true },
+            .partially_bound = false,
+        },
+        .{
+            .name = "entities_len",
             .kind = .storage_buffer,
             .stages = .{ .vertex = true },
             .partially_bound = false,
@@ -252,6 +258,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
 
     var scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
     var entities: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
+    var entities_len: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
     const storage_buf = bufPart(gx, UploadBuf(.{ .storage = true }), .{
         .buf = .{
             .name = .{ .str = "Storage" },
@@ -260,6 +267,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .frame = &.{
             .init(ubo.Scene, &scene),
             .init([max_render_entities]ubo.Entity, &entities),
+            .init(u32, &entities_len),
         },
     });
 
@@ -313,6 +321,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .sprite_sampler = sprite_sampler,
         .scene = scene,
         .entities = entities,
+        .entities_len = entities_len,
         .rtp = rtp,
         .rtp_depth = rtp_depth,
     };

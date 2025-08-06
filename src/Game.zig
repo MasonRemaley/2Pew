@@ -933,6 +933,13 @@ pub fn init(
                 .storage_buf = renderer.entities[frame].asBuf(.{ .storage = true }),
             },
         });
+        try desc_set_updates.append(.{
+            .set = set,
+            .binding = Renderer.pipeline_layout_options.binding("entities_len"),
+            .value = .{
+                .storage_buf = renderer.entities_len[frame].asBuf(.{ .storage = true }),
+            },
+        });
 
         for (renderer.textures.items, 0..) |texture, texture_index| {
             if (texture_index > Renderer.max_textures) @panic("textures oob");

@@ -262,7 +262,6 @@ pub fn all(game: *Game, delta_s: f32) void {
                         .translated(star.pos),
                     .diffuse = sprite.diffuse,
                     .recolor = sprite.recolor,
-                    .sort = 0.1,
                 });
             }
 
@@ -276,7 +275,6 @@ pub fn all(game: *Game, delta_s: f32) void {
                         .translated(display_center),
                     .diffuse = sprite.diffuse,
                     .recolor = sprite.recolor,
-                    .sort = 0.2,
                 });
             }
 
@@ -319,7 +317,6 @@ pub fn all(game: *Game, delta_s: f32) void {
                             .diffuse = sprite.diffuse,
                             .recolor = sprite.recolor,
                             .color = team_colors[team_index],
-                            .sort = 1.0,
                         });
                     }
                     for (team.ship_progression, 0..) |class, display_prog_index| {
@@ -339,11 +336,13 @@ pub fn all(game: *Game, delta_s: f32) void {
                             .diffuse = sprite.diffuse,
                             .recolor = sprite.recolor,
                             .color = team_colors[team_index],
-                            .sort = 1.0,
                         });
                     }
                 }
             }
+
+            var entities_len_writer = game.renderer.entities_len[game.gx.frame].writer().typed(u32);
+            entities_len_writer.write(@intCast(entity_writer.len));
 
             break :b entity_writer;
         };
@@ -424,7 +423,7 @@ pub fn all(game: *Game, delta_s: f32) void {
             cb.beginRendering(game.gx, .{
                 .color_attachments = &.{
                     .init(.{
-                        .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 1.0 } },
+                        .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 0.0 } },
                         .view = color_buffer_msaa.image.view,
                         .resolve_view = color_buffer.image.view,
                         .resolve_mode = .average,
@@ -839,7 +838,6 @@ fn renderHealthBar(
             .scaled(health_bar_size.plus(.splat(2)))
             .translated(start.minus(.splat(1))),
         .color = .white,
-        .sort = 0.9,
     });
     const hp_percent = health.hp / health.max_hp;
     const color: ubo.Color = if (hp_percent >= health.regen_ratio)
@@ -853,7 +851,6 @@ fn renderHealthBar(
             .scaled(health_bar_size.compProd(.{ .x = hp_percent, .y = 1.0 }))
             .translated(start),
         .color = color,
-        .sort = 0.9,
     });
 }
 
@@ -882,7 +879,6 @@ fn renderSprite(
         .diffuse = sprite.diffuse,
         .recolor = sprite.recolor,
         .color = if (team_index) |ti| team_colors[@intFromEnum(ti.*)] else .white,
-        .sort = 0.5,
     });
 }
 
@@ -964,7 +960,6 @@ fn renderAnimations(
             .diffuse = sprite.diffuse,
             .recolor = sprite.recolor,
             .color = color,
-            .sort = 0.5,
         });
     }
 }
