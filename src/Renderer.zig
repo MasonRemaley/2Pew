@@ -135,7 +135,11 @@ pub const pipeline_layout_options: gpu.Pipeline.Layout.Options = .{
         .{
             .name = "scene",
             .kind = .storage_buffer,
-            .stages = .{ .vertex = true, .compute = true },
+            .stages = .{
+                .vertex = true,
+                .fragment = true,
+                .compute = true,
+            },
             .partially_bound = false,
         },
         .{

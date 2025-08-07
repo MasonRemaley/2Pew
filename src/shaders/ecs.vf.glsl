@@ -34,16 +34,13 @@ LINK_VERT_FRAG(location = 1) flat Entity l_entity;
         vec2 view = vec3(world, 1.0) * i_scene.world_to_view;
         vec2 projection = vec3(view, 1.0) * i_scene.view_to_projection;
 
-        gl_Position = vec4(projection, float(index + 1) / float(i_entities_len + 1), 1.0);
+        gl_Position = vec4(projection, 0.5, 1.0);
         l_texcoord = texcoords[gl_VertexIndex];
         l_entity = entity;
     }
 #endif
 
 #ifdef GL_FRAGMENT_SHADER 
-    // We can't enable this because a2c disables early depth test on some cards
-    // layout(early_fragment_tests) in;
-
     layout(location = 0) out vec4 l_color_buffer; 
 
 

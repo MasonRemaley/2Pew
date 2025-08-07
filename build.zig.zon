@@ -17,8 +17,8 @@
             .hash = "logger-0.0.0-mvc9nvlNAAA_Tc6T5V-y54k6nTneCna37VTdvtNDKkFc",
         },
         .gpu = .{
-            .url = "git+https://github.com/Games-By-Mason/gpu#183d82bd3cc937f4b60fc635ad3da2ab5badac56",
-            .hash = "gpu-0.0.0-Wb6aFq0XBQCHi-Qiwsug2J7gWysklJEqpyOk7TmDImt2",
+            .url = "git+https://github.com/Games-By-Mason/gpu#3b0857c857861aa261ee867e3570ca91b3427899",
+            .hash = "gpu-0.0.0-Wb6aFq0XBQDGlQ3X5CZDVHPpSv6QYBlT18ZNCLV1aIBd",
         },
         .structopt = .{
             .url = "git+https://github.com/Games-By-Mason/structopt#d70897ee3c377511c82a47ff81c887551d6f0573",

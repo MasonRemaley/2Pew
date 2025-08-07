@@ -20,7 +20,7 @@ struct Entity {
     u32 color;
 };
 
-#if defined(GL_VERTEX_SHADER) || defined(GL_COMPUTE_SHADER)
+#if defined(GL_VERTEX_SHADER) || defined(GL_COMPUTE_SHADER) || defined(GL_FRAGMENT_SHADER)
     layout(scalar, binding = 0) readonly buffer SceneUbo { Scene i_scene; };
 #endif
 
