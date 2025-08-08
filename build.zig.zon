@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.15.0-dev.388+05e217607",
     .dependencies = .{
         .zcs = .{
-            .url = "git+https://github.com/Games-By-Mason/ZCS#04bd758ce5118645256f18466a8089d921520098",
-            .hash = "zcs-0.1.0-WhLQ_CXqAgCqa04Md0cAlli_skim4JJT66nZkAaIk4dA",
+            .url = "git+https://github.com/Games-By-Mason/ZCS#cf7593d4d6148b6c5b222af3771ec56dc5b8bfa4",
+            .hash = "zcs-0.1.0-WhLQ_MTsAgCGbFe1bJOYMUoz8vCh3AU_VK1dlDaIuOLt",
         },
         .tracy = .{
             .url = "git+https://github.com/Games-By-Mason/tracy_zig#876c5c5371a46af5af8d4dd88904bccbf6eeae04",
