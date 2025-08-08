@@ -51,7 +51,7 @@ pub const Surface = enum(u32) {
 
 const assert = std.debug.assert;
 
-delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue(8),
+delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue,
 
 color_image_allocator: ImageBumpAllocator(.color),
 
@@ -249,7 +249,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
     var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, desc_sets.len) = .{};
     for (&desc_sets, 0..) |*desc_set, i| {
         create_descs.appendAssumeCapacity(.{
-            .name = .{ .str = "Entities", .index = i },
+            .name = .{ .str = "Main", .index = i },
             .result = desc_set,
             .layout = pipeline_layout.desc_set,
             .layout_options = &pipeline_layout_options,
@@ -312,8 +312,13 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         },
     }) catch |err| @panic(@errorName(err));
 
+    var delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue = undefined;
+    for (&delete_queues) |*dq| {
+        dq.* = DeleteQueue.initCapacity(gpa, 32) catch @panic("OOM");
+    }
+
     return .{
-        .delete_queues = @splat(.{}),
+        .delete_queues = delete_queues,
         .color_image_allocator = color_image_allocator,
         .textures = textures,
         .pipelines = pipelines,
@@ -335,7 +340,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     const zone: Zone = .begin(.{ .src = @src() });
     defer zone.end();
 
-    for (&self.delete_queues) |*dq| dq.reset(gx);
+    for (&self.delete_queues) |*dq| dq.deinit(gpa, gx);
 
     for (self.textures.items) |*t| t.deinit(gx);
     self.textures.deinit(gpa);

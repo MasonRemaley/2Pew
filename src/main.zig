@@ -44,7 +44,6 @@ pub const std_options: std.Options = .{
 
 pub const gpu_options: gpu.Options = .{
     .Backend = VkBackend,
-    .update_desc_sets_buf_len = 1000,
 };
 
 pub const Surface = enum {
@@ -119,6 +118,7 @@ pub fn main() !void {
 
     // Allocator setup
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
+    defer if (gpa.deinit() != .ok) @panic("leak detected");
     var tracy_allocator: tracy.Allocator = .{
         .pool_name = "gpa",
         .parent = gpa.allocator(),
@@ -235,6 +235,7 @@ pub fn main() !void {
             ),
             else => comptime unreachable,
         })),
+        .arena = allocator,
     });
     defer {
         gx.waitIdle();
