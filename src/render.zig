@@ -349,10 +349,11 @@ pub fn all(game: *Game, delta_s: f32) void {
 
         // Update the render targets
         {
-            var updates: std.BoundedArray(gpu.DescSet.Update, Renderer.max_render_targets) = .{};
+            var updates: std.ArrayListUnmanaged(gpu.DescSet.Update) = .initBuffer(game.renderer.rt_update_buf);
 
             for (game.renderer.rtp.images.items, game.renderer.rtp.info.items, 0..) |image, info, i| {
                 if (info.image.usage.storage) {
+                    if (updates.items.len >= updates.capacity) @panic("OOB");
                     updates.appendAssumeCapacity(.{
                         .set = game.renderer.desc_sets[game.gx.frame],
                         .binding = Renderer.pipeline_layout_options.binding("rt_storage"),
@@ -364,6 +365,7 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             for (game.renderer.rtp.images.items, game.renderer.rtp.info.items, 0..) |image, info, i| {
                 if (info.image.usage.sampled) {
+                    if (updates.items.len >= updates.capacity) @panic("OOB");
                     updates.appendAssumeCapacity(.{
                         .set = game.renderer.desc_sets[game.gx.frame],
                         .binding = Renderer.pipeline_layout_options.binding("rt_sampled"),
@@ -373,7 +375,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                 }
             }
 
-            game.gx.updateDescSets(updates.constSlice());
+            game.gx.updateDescSets(updates.items);
         }
 
         const cb: CmdBuf = .init(game.gx, .{ .name = "Render", .src = @src() });

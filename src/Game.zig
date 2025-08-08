@@ -837,10 +837,8 @@ pub fn init(
         },
     });
 
-    var image_barriers: std.BoundedArray(
-        gpu.ImageBarrier,
-        Renderer.max_textures + 1,
-    ) = .{};
+    var image_barriers = std.ArrayListUnmanaged(gpu.ImageBarrier).initCapacity(gpa, Renderer.max_textures) catch @panic("OOM");
+    defer image_barriers.deinit(gpa);
     for (renderer.textures.items) |texture| {
         image_barriers.appendAssumeCapacity(.transferDstToReadOnly(.{
             .handle = texture.handle,
@@ -849,7 +847,7 @@ pub fn init(
             .aspect = .{ .color = true },
         }));
     }
-    cb.barriers(gx, .{ .image = image_barriers.constSlice() });
+    cb.barriers(gx, .{ .image = image_barriers.items });
 
     cb.end(gx);
     gx.submit(&.{cb});

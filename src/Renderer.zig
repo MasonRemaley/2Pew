@@ -63,6 +63,7 @@ desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
 rtp: RenderTarget(.color).Pool,
 rtp_depth: RenderTarget(.{ .depth_stencil = depth_format }).Pool,
+rt_update_buf: []gpu.DescSet.Update,
 moving_avg_blur: bool = false,
 
 storage_buf: UploadBuf(.{ .storage = true }),
@@ -246,18 +247,18 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
     });
 
     var desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet = undefined;
-    var create_descs: std.BoundedArray(gpu.DescPool.Options.Cmd, desc_sets.len) = .{};
-    for (&desc_sets, 0..) |*desc_set, i| {
-        create_descs.appendAssumeCapacity(.{
+    var create_descs: [gpu.global_options.max_frames_in_flight]gpu.DescPool.Options.Cmd = undefined;
+    for (&create_descs, &desc_sets, 0..) |*create, *desc_set, i| {
+        create.* = .{
             .name = .{ .str = "Main", .index = i },
             .result = desc_set,
             .layout = pipeline_layout.desc_set,
             .layout_options = &pipeline_layout_options,
-        });
+        };
     }
     const desc_pool: gpu.DescPool = .init(gx, .{
         .name = .{ .str = "Game" },
-        .cmds = create_descs.constSlice(),
+        .cmds = &create_descs,
     });
 
     var scene: [gpu.global_options.max_frames_in_flight]UploadBuf(.{ .storage = true }).View = undefined;
@@ -317,6 +318,8 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         dq.* = DeleteQueue.initCapacity(gpa, 32) catch @panic("OOM");
     }
 
+    const rt_update_buf = gpa.alloc(gpu.DescSet.Update, max_render_targets * 2) catch @panic("OOM");
+
     return .{
         .delete_queues = delete_queues,
         .color_image_allocator = color_image_allocator,
@@ -333,6 +336,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .entities_len = entities_len,
         .rtp = rtp,
         .rtp_depth = rtp_depth,
+        .rt_update_buf = rt_update_buf,
     };
 }
 
@@ -357,6 +361,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
 
     self.rtp.deinit(gpa, gx);
     self.rtp_depth.deinit(gpa, gx);
+    gpa.free(self.rt_update_buf);
 
     self.* = undefined;
 }
