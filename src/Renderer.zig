@@ -28,7 +28,6 @@ const Zone = tracy.Zone;
 
 const Allocator = std.mem.Allocator;
 
-pub const msaa: gpu.Samples = .@"8";
 pub const depth_format: gpu.ImageFormat = .d32_sfloat;
 
 pub const Surface = enum(u32) {
@@ -438,14 +437,21 @@ pub const Pipelines = struct {
                 },
                 .depth_attachment_format = depth_format,
                 .stencil_attachment_format = .undefined,
-                .rasterization_samples = msaa,
-                .alpha_to_coverage = true,
+                .rasterization_samples = .@"1",
+                .alpha_to_coverage = false,
                 .color_write_mask = .all,
-                .blend_state = null,
+                .blend_state = .{
+                    .src_color_factor = .src_alpha,
+                    .dst_color_factor = .one_minus_src_alpha,
+                    .color_op = .add,
+                    .src_alpha_factor = .src_alpha,
+                    .dst_alpha_factor = .one_minus_src_alpha,
+                    .alpha_op = .add,
+                },
                 .depth_state = .{
-                    .@"test" = true,
-                    .write = true,
-                    .compare_op = .gt,
+                    .@"test" = false,
+                    .write = false,
+                    .compare_op = .always,
                 },
                 .stencil_state = null,
                 .logic_op = null,

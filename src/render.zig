@@ -183,8 +183,6 @@ pub fn all(game: *Game, delta_s: f32) void {
     if (game.window_extent.width == 0 or game.window_extent.height == 0) return;
 
     const color_buffer = game.color_buffer.get(&game.renderer.rtp);
-    const color_buffer_msaa = game.color_buffer_msaa.get(&game.renderer.rtp);
-    const depth_buffer = game.depth_buffer.get(&game.renderer.rtp_depth);
     const blurred: [2]gpu.ext.RenderTarget(.color).State = .{
         game.blurred[0].get(&game.renderer.rtp),
         game.blurred[1].get(&game.renderer.rtp),
@@ -404,20 +402,6 @@ pub fn all(game: *Game, delta_s: f32) void {
             cb.barriers(game.gx, .{
                 .image = &.{
                     .{
-                        .image = color_buffer_msaa.image.handle,
-                        .range = .first(.{ .color = true }),
-                        .src = .{
-                            .stages = .{ .color_attachment_output = true },
-                            .access = .{ .color_attachment_write = true },
-                            .layout = .undefined,
-                        },
-                        .dst = .{
-                            .stages = .{ .color_attachment_output = true },
-                            .access = .{ .color_attachment_write = true },
-                            .layout = .attachment,
-                        },
-                    },
-                    .{
                         .image = color_buffer.image.handle,
                         .range = .first(.{ .color = true }),
                         .src = .{
@@ -431,54 +415,16 @@ pub fn all(game: *Game, delta_s: f32) void {
                             .layout = .attachment,
                         },
                     },
-                    .{
-                        .image = depth_buffer.image.handle,
-                        .range = .first(.{ .depth = true }),
-                        .src = .{
-                            .stages = .{
-                                .early_fragment_tests = true,
-                                .late_fragment_tests = true,
-                            },
-                            .access = .{
-                                .depth_stencil_attachment_read = true,
-                                .depth_stencil_attachment_write = true,
-                            },
-                            .layout = .undefined,
-                        },
-                        .dst = .{
-                            .stages = .{
-                                .early_fragment_tests = true,
-                                .late_fragment_tests = true,
-                            },
-                            .access = .{
-                                .depth_stencil_attachment_read = true,
-                                .depth_stencil_attachment_write = true,
-                            },
-                            .layout = .attachment,
-                        },
-                    },
                 },
             });
             cb.beginRendering(game.gx, .{
                 .color_attachments = &.{.{
                     .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 0.0 } },
-                    .view = color_buffer_msaa.image.view,
-                    .resolve_view = color_buffer.image.view,
-                    .resolve_mode = .average,
-                    .store_op = .dont_care,
-                }},
-                .depth_attachment = .{
-                    .load_op = .{
-                        .clear_depth_stencil = .{
-                            .depth = 0.0,
-                            .stencil = 0.0,
-                        },
-                    },
-                    .view = depth_buffer.image.view,
+                    .view = color_buffer.image.view,
                     .resolve_view = null,
                     .resolve_mode = .none,
                     .store_op = .dont_care,
-                },
+                }},
                 .viewport = .{
                     .x = 0,
                     .y = 0,

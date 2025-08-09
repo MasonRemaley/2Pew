@@ -96,8 +96,6 @@ player_trauma: [4]Trauma = @splat(.init(.{})),
 rumble: Rumble = .{},
 
 color_buffer: RenderTarget(.color),
-color_buffer_msaa: RenderTarget(.color),
-depth_buffer: RenderTarget(.{ .depth_stencil = Renderer.depth_format }),
 composite: RenderTarget(.color),
 blurred: [2]RenderTarget(.color),
 window_extent: gpu.Extent2D,
@@ -807,36 +805,6 @@ pub fn init(
     const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
     defer zone.end();
 
-    const color_buffer_msaa = renderer.rtp.alloc(gx, .{
-        .name = .{ .str = "Color Buffer MSAA" },
-        .image = .{
-            .format = Renderer.Pipelines.color_attachment_format,
-            .extent = .{
-                .width = 1920,
-                .height = 1080,
-                .depth = 1,
-            },
-            .usage = .{
-                .color_attachment = true,
-            },
-            .samples = Renderer.msaa,
-        },
-    });
-
-    const depth_buffer = renderer.rtp_depth.alloc(gx, .{
-        .name = .{ .str = "Depth Buffer" },
-        .image = .{
-            .extent = .{
-                .width = 1920,
-                .height = 1080,
-                .depth = 1,
-            },
-            .usage = .{ .depth_stencil_attachment = true },
-            .aspect = .{ .depth = true },
-            .samples = Renderer.msaa,
-        },
-    });
-
     var image_barriers = std.ArrayListUnmanaged(gpu.ImageBarrier).initCapacity(gpa, Renderer.max_textures) catch @panic("OOM");
     defer image_barriers.deinit(gpa);
     for (renderer.textures.items) |texture| {
@@ -1042,8 +1010,6 @@ pub fn init(
         .particle = particle,
 
         .color_buffer = color_buffer,
-        .color_buffer_msaa = color_buffer_msaa,
-        .depth_buffer = depth_buffer,
         .composite = composite,
         .blurred = blurred,
         .window_extent = window_extent,

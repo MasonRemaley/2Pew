@@ -24,11 +24,7 @@ LINK_VERT_FRAG(location = 1) flat Entity l_entity;
             vec2(1, 0)
         );
 
-        // We reverse the draw order to allow the game to render in painter's order which is
-        // intuitive, but minimize overdraw in practice.
-        u32 index = i_entities_len - gl_InstanceIndex - 1;
-
-        Entity entity = i_entities[index];
+        Entity entity = i_entities[gl_InstanceIndex];
         vec2 model = vertices[gl_VertexIndex];
         vec2 world = vec3(model, 1.0) * entity.model_to_world;
         vec2 view = vec3(world, 1.0) * i_scene.world_to_view;
