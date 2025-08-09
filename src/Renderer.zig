@@ -315,7 +315,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
 
     var delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue = undefined;
     for (&delete_queues) |*dq| {
-        dq.* = DeleteQueue.initCapacity(gpa, 32) catch @panic("OOM");
+        dq.* = DeleteQueue.initCapacity(gpa, 16) catch @panic("OOM");
     }
 
     const rt_update_buf = gpa.alloc(gpu.DescSet.Update, max_render_targets * 2) catch @panic("OOM");

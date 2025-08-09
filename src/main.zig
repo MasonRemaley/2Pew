@@ -235,7 +235,7 @@ pub fn main() !void {
             ),
             else => comptime unreachable,
         })),
-        .arena = allocator,
+        .arena_capacity_log2 = 16,
     });
     defer {
         gx.waitIdle();
