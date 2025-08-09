@@ -353,25 +353,23 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             for (game.renderer.rtp.images.items, game.renderer.rtp.info.items, 0..) |image, info, i| {
                 if (info.image.usage.storage) {
-                    if (updates.items.len >= updates.capacity) @panic("OOB");
-                    updates.appendAssumeCapacity(.{
+                    updates.appendBounded(.{
                         .set = game.renderer.desc_sets[game.gx.frame],
                         .binding = Renderer.pipeline_layout_options.binding("rt_storage"),
                         .value = .{ .storage_image = image.view },
                         .index = @intCast(i),
-                    });
+                    }) catch @panic("OOB");
                 }
             }
 
             for (game.renderer.rtp.images.items, game.renderer.rtp.info.items, 0..) |image, info, i| {
                 if (info.image.usage.sampled) {
-                    if (updates.items.len >= updates.capacity) @panic("OOB");
-                    updates.appendAssumeCapacity(.{
+                    updates.appendBounded(.{
                         .set = game.renderer.desc_sets[game.gx.frame],
                         .binding = Renderer.pipeline_layout_options.binding("rt_sampled"),
                         .value = .{ .sampled_image = image.view },
                         .index = @intCast(i),
-                    });
+                    }) catch @panic("OOB");
                 }
             }
 
