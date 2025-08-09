@@ -840,12 +840,20 @@ pub fn init(
     var image_barriers = std.ArrayListUnmanaged(gpu.ImageBarrier).initCapacity(gpa, Renderer.max_textures) catch @panic("OOM");
     defer image_barriers.deinit(gpa);
     for (renderer.textures.items) |texture| {
-        image_barriers.appendAssumeCapacity(.transferDstToReadOnly(.{
-            .handle = texture.handle,
-            .range = .first,
-            .dst_stages = .{ .fragment = true },
-            .aspect = .{ .color = true },
-        }));
+        image_barriers.appendAssumeCapacity(.{
+            .image = texture.handle,
+            .range = .first(.{ .color = true }),
+            .src = .{
+                .stages = .{ .copy = true },
+                .access = .{ .transfer_write = true },
+                .layout = .transfer_dst,
+            },
+            .dst = .{
+                .stages = .{ .fragment = true },
+                .access = .{ .shader_read = true },
+                .layout = .read_only,
+            },
+        });
     }
     cb.barriers(gx, .{ .image = image_barriers.items });
 

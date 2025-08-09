@@ -403,34 +403,71 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             cb.barriers(game.gx, .{
                 .image = &.{
-                    .undefinedToColorAttachment(.{
-                        .handle = color_buffer.image.handle,
-                        .src_stages = .{ .top_of_pipe = true },
-                        .range = .first,
-                    }),
-                    .undefinedToColorAttachment(.{
-                        .handle = color_buffer.image.handle,
-                        .src_stages = .{ .top_of_pipe = true },
-                        .range = .first,
-                    }),
-                    .undefinedToDepthStencilAttachmentAfterWrite(.{
-                        .handle = depth_buffer.image.handle,
-                        .range = .first,
-                        .aspect = .{ .depth = true },
-                    }),
+                    .{
+                        .image = color_buffer_msaa.image.handle,
+                        .range = .first(.{ .color = true }),
+                        .src = .{
+                            .stages = .{ .color_attachment_output = true },
+                            .access = .{ .color_attachment_write = true },
+                            .layout = .undefined,
+                        },
+                        .dst = .{
+                            .stages = .{ .color_attachment_output = true },
+                            .access = .{ .color_attachment_write = true },
+                            .layout = .attachment,
+                        },
+                    },
+                    .{
+                        .image = color_buffer.image.handle,
+                        .range = .first(.{ .color = true }),
+                        .src = .{
+                            .stages = .{ .top_of_pipe = true },
+                            .access = .{},
+                            .layout = .undefined,
+                        },
+                        .dst = .{
+                            .stages = .{ .color_attachment_output = true },
+                            .access = .{ .color_attachment_write = true },
+                            .layout = .attachment,
+                        },
+                    },
+                    .{
+                        .image = depth_buffer.image.handle,
+                        .range = .first(.{ .depth = true }),
+                        .src = .{
+                            .stages = .{
+                                .early_fragment_tests = true,
+                                .late_fragment_tests = true,
+                            },
+                            .access = .{
+                                .depth_stencil_attachment_read = true,
+                                .depth_stencil_attachment_write = true,
+                            },
+                            .layout = .undefined,
+                        },
+                        .dst = .{
+                            .stages = .{
+                                .early_fragment_tests = true,
+                                .late_fragment_tests = true,
+                            },
+                            .access = .{
+                                .depth_stencil_attachment_read = true,
+                                .depth_stencil_attachment_write = true,
+                            },
+                            .layout = .attachment,
+                        },
+                    },
                 },
             });
             cb.beginRendering(game.gx, .{
-                .color_attachments = &.{
-                    .init(.{
-                        .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 0.0 } },
-                        .view = color_buffer_msaa.image.view,
-                        .resolve_view = color_buffer.image.view,
-                        .resolve_mode = .average,
-                        .store_op = .dont_care,
-                    }),
-                },
-                .depth_attachment = .init(.{
+                .color_attachments = &.{.{
+                    .load_op = .{ .clear_color = .{ 0.0, 0.0, 0.0, 0.0 } },
+                    .view = color_buffer_msaa.image.view,
+                    .resolve_view = color_buffer.image.view,
+                    .resolve_mode = .average,
+                    .store_op = .dont_care,
+                }},
+                .depth_attachment = .{
                     .load_op = .{
                         .clear_depth_stencil = .{
                             .depth = 0.0,
@@ -441,7 +478,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .resolve_view = null,
                     .resolve_mode = .none,
                     .store_op = .dont_care,
-                }),
+                },
                 .viewport = .{
                     .x = 0,
                     .y = 0,
@@ -491,16 +528,34 @@ pub fn all(game: *Game, delta_s: f32) void {
 
                     cb.barriers(game.gx, .{
                         .image = &.{
-                            .colorAttachmentToBlitSrc(.{
-                                .handle = color_buffer.image.handle,
-                                .range = .first,
-                            }),
-                            .undefinedToBlitDst(.{
-                                .handle = blurred[blur_out_index].image.handle,
-                                .range = .first,
-                                .src_stages = .{ .top_of_pipe = true },
-                                .aspect = .{ .color = true },
-                            }),
+                            .{
+                                .image = color_buffer.image.handle,
+                                .range = .first(.{ .color = true }),
+                                .src = .{
+                                    .stages = .{ .color_attachment_output = true },
+                                    .access = .{ .color_attachment_write = true },
+                                    .layout = .attachment,
+                                },
+                                .dst = .{
+                                    .stages = .{ .blit = true },
+                                    .access = .{ .transfer_read = true },
+                                    .layout = .transfer_src,
+                                },
+                            },
+                            .{
+                                .image = blurred[blur_out_index].image.handle,
+                                .range = .first(.{ .color = true }),
+                                .src = .{
+                                    .stages = .{ .top_of_pipe = true },
+                                    .access = .{},
+                                    .layout = .undefined,
+                                },
+                                .dst = .{
+                                    .stages = .{ .blit = true },
+                                    .access = .{ .transfer_write = true },
+                                    .layout = .transfer_dst,
+                                },
+                            },
                         },
                     });
 
@@ -508,7 +563,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                         .src = color_buffer.image.handle,
                         .dst = blurred[blur_out_index].image.handle,
                         .regions = &.{
-                            .init(.{
+                            .{
                                 .src = .{
                                     .mip_level = 0,
                                     .base_array_layer = 0,
@@ -522,7 +577,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                                     .volume = .fromExtent2D(blurred[blur_out_index].extent),
                                 },
                                 .aspect = .{ .color = true },
-                            }),
+                            },
                         },
                         .filter = .linear,
                     });
@@ -548,33 +603,51 @@ pub fn all(game: *Game, delta_s: f32) void {
                             .image = &.{
                                 b: {
                                     if (i == 0) {
-                                        break :b .blitDstToGeneral(.{
-                                            .handle = blurred[blur_in_index].image.handle,
-                                            .dst_stages = .{ .compute = true },
-                                            .dst_access = .{ .read = true },
-                                            .range = .first,
-                                            .aspect = .{ .color = true },
-                                        });
+                                        break :b .{
+                                            .image = blurred[blur_in_index].image.handle,
+                                            .range = .first(.{ .color = true }),
+                                            .src = .{
+                                                .stages = .{ .blit = true },
+                                                .access = .{ .transfer_write = true },
+                                                .layout = .transfer_dst,
+                                            },
+                                            .dst = .{
+                                                .stages = .{ .compute = true },
+                                                .access = .{ .shader_read = true },
+                                                .layout = .general,
+                                            },
+                                        };
                                     } else {
-                                        break :b .generalToGeneral(.{
-                                            .handle = blurred[blur_in_index].image.handle,
-                                            .src_stages = .{ .compute = true },
-                                            .src_access = .{ .write = true },
-                                            .dst_stages = .{ .compute = true },
-                                            .dst_access = .{ .read = true },
-                                            .range = .first,
-                                            .aspect = .{ .color = true },
-                                        });
+                                        break :b .{
+                                            .image = blurred[blur_in_index].image.handle,
+                                            .range = .first(.{ .color = true }),
+                                            .src = .{
+                                                .stages = .{ .compute = true },
+                                                .access = .{ .shader_write = true },
+                                                .layout = .general,
+                                            },
+                                            .dst = .{
+                                                .stages = .{ .compute = true },
+                                                .access = .{ .shader_read = true },
+                                                .layout = .general,
+                                            },
+                                        };
                                     }
                                 },
-                                .undefinedToGeneral(.{
-                                    .handle = blurred[blur_out_index].image.handle,
-                                    .src_stages = .{ .top_of_pipe = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .write = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
+                                .{
+                                    .image = blurred[blur_out_index].image.handle,
+                                    .range = .first(.{ .color = true }),
+                                    .src = .{
+                                        .stages = .{ .top_of_pipe = true },
+                                        .access = .{},
+                                        .layout = .undefined,
+                                    },
+                                    .dst = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_write = true },
+                                        .layout = .general,
+                                    },
+                                },
                             },
                         });
 
@@ -602,23 +675,34 @@ pub fn all(game: *Game, delta_s: f32) void {
 
                         cb.barriers(game.gx, .{
                             .image = &.{
-                                .generalToGeneral(.{
-                                    .handle = blurred[blur_in_index].image.handle,
-                                    .src_stages = .{ .compute = true },
-                                    .src_access = .{ .write = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .read = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
-                                .undefinedToGeneral(.{
-                                    .handle = blurred[blur_out_index].image.handle,
-                                    .src_stages = .{ .top_of_pipe = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .write = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
+                                .{
+                                    .image = blurred[blur_in_index].image.handle,
+                                    .range = .first(.{ .color = true }),
+                                    .src = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_write = true },
+                                        .layout = .general,
+                                    },
+                                    .dst = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_read = true },
+                                        .layout = .general,
+                                    },
+                                },
+                                .{
+                                    .image = blurred[blur_out_index].image.handle,
+                                    .range = .first(.{ .color = true }),
+                                    .src = .{
+                                        .stages = .{ .top_of_pipe = true },
+                                        .access = .{},
+                                        .layout = .undefined,
+                                    },
+                                    .dst = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_write = true },
+                                        .layout = .general,
+                                    },
+                                },
                             },
                         });
 
@@ -670,20 +754,34 @@ pub fn all(game: *Game, delta_s: f32) void {
 
                         cb.barriers(game.gx, .{
                             .image = &.{
-                                .blitDstToReadOnly(.{
-                                    .handle = blurred[blur_in_index].image.handle,
-                                    .dst_stages = .{ .compute = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
-                                .undefinedToGeneral(.{
-                                    .handle = blurred[blur_out_index].image.handle,
-                                    .src_stages = .{ .top_of_pipe = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .write = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
+                                .{
+                                    .image = blurred[blur_in_index].image.handle,
+                                    .range = .first(.{ .color = true }),
+                                    .src = .{
+                                        .stages = .{ .blit = true },
+                                        .access = .{ .transfer_write = true },
+                                        .layout = .transfer_dst,
+                                    },
+                                    .dst = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_read = true },
+                                        .layout = .read_only,
+                                    },
+                                },
+                                .{
+                                    .image = blurred[blur_out_index].image.handle,
+                                    .range = .first(.{ .color = true }),
+                                    .src = .{
+                                        .stages = .{ .top_of_pipe = true },
+                                        .access = .{},
+                                        .layout = .undefined,
+                                    },
+                                    .dst = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_write = true },
+                                        .layout = .general,
+                                    },
+                                },
                             },
                         });
 
@@ -706,22 +804,34 @@ pub fn all(game: *Game, delta_s: f32) void {
 
                         cb.barriers(game.gx, .{
                             .image = &.{
-                                .generalToReadOnly(.{
-                                    .handle = blurred[blur_in_index].image.handle,
-                                    .src_stages = .{ .compute = true },
-                                    .src_access = .{ .write = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
-                                .undefinedToGeneral(.{
-                                    .handle = blurred[blur_out_index].image.handle,
-                                    .src_stages = .{ .compute = true },
-                                    .dst_stages = .{ .compute = true },
-                                    .dst_access = .{ .write = true },
-                                    .range = .first,
-                                    .aspect = .{ .color = true },
-                                }),
+                                .{
+                                    .image = blurred[blur_in_index].image.handle,
+                                    .range = .first(.{ .color = true }),
+                                    .src = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_write = true },
+                                        .layout = .general,
+                                    },
+                                    .dst = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_read = true },
+                                        .layout = .read_only,
+                                    },
+                                },
+                                .{
+                                    .image = blurred[blur_out_index].image.handle,
+                                    .range = .first(.{ .color = true }),
+                                    .src = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{},
+                                        .layout = .undefined,
+                                    },
+                                    .dst = .{
+                                        .stages = .{ .compute = true },
+                                        .access = .{ .shader_write = true },
+                                        .layout = .general,
+                                    },
+                                },
                             },
                         });
                         blur_args.pass = .{
@@ -751,29 +861,48 @@ pub fn all(game: *Game, delta_s: f32) void {
 
                 cb.barriers(game.gx, .{
                     .image = &.{
-                        .blitSrcToGeneral(.{
-                            .handle = color_buffer.image.handle,
-                            .dst_stages = .{ .compute = true },
-                            .dst_access = .{ .read = true },
-                            .range = .first,
-                            .aspect = .{ .color = true },
-                        }),
-                        .generalToGeneral(.{
-                            .handle = blurred[blur_in_index].image.handle,
-                            .src_stages = .{ .compute = true },
-                            .src_access = .{ .write = true },
-                            .dst_stages = .{ .compute = true },
-                            .dst_access = .{ .read = true },
-                            .range = .first,
-                            .aspect = .{ .color = true },
-                        }),
-                        .undefinedToGeneralAfterBlit(.{
-                            .handle = composite.image.handle,
-                            .dst_stages = .{ .compute = true },
-                            .dst_access = .{ .write = true },
-                            .range = .first,
-                            .aspect = .{ .color = true },
-                        }),
+                        .{
+                            .image = color_buffer.image.handle,
+                            .range = .first(.{ .color = true }),
+                            .src = .{
+                                .stages = .{ .blit = true },
+                                .access = .{},
+                                .layout = .transfer_src,
+                            },
+                            .dst = .{
+                                .stages = .{ .compute = true },
+                                .access = .{ .shader_read = true },
+                                .layout = .general,
+                            },
+                        },
+                        .{
+                            .image = blurred[blur_in_index].image.handle,
+                            .range = .first(.{ .color = true }),
+                            .src = .{
+                                .stages = .{ .compute = true },
+                                .access = .{ .shader_write = true },
+                                .layout = .general,
+                            },
+                            .dst = .{
+                                .stages = .{ .compute = true },
+                                .access = .{ .shader_read = true },
+                                .layout = .general,
+                            },
+                        },
+                        .{
+                            .image = composite.image.handle,
+                            .range = .first(.{ .color = true }),
+                            .src = .{
+                                .stages = .{ .blit = true },
+                                .access = .{},
+                                .layout = .undefined,
+                            },
+                            .dst = .{
+                                .stages = .{ .compute = true },
+                                .access = .{ .shader_write = true },
+                                .layout = .general,
+                            },
+                        },
                     },
                 });
                 cb.bindPipeline(game.gx, .{
@@ -798,12 +927,20 @@ pub fn all(game: *Game, delta_s: f32) void {
 
             // Get ready for presentation
             cb.barriers(game.gx, .{ .image = &.{
-                .generalToBlitSrc(.{
-                    .handle = composite.image.handle,
-                    .src_stages = .{ .compute = true },
-                    .range = .first,
-                    .aspect = .{ .color = true },
-                }),
+                .{
+                    .src = .{
+                        .stages = .{ .compute = true },
+                        .access = .{ .shader_write = true },
+                        .layout = .general,
+                    },
+                    .dst = .{
+                        .stages = .{ .blit = true },
+                        .access = .{ .transfer_read = true },
+                        .layout = .transfer_src,
+                    },
+                    .image = composite.image.handle,
+                    .range = .first(.{ .color = true }),
+                },
             } });
         }
 

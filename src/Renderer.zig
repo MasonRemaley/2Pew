@@ -443,6 +443,7 @@ pub const Pipelines = struct {
                 .color_write_mask = .all,
                 .blend_state = null,
                 .depth_state = .{
+                    .@"test" = true,
                     .write = true,
                     .compare_op = .gt,
                 },
