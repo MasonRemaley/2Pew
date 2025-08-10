@@ -895,12 +895,9 @@ pub fn all(game: *Game, delta_s: f32) void {
         game.gx.submit(&.{cb});
     }
 
-    if (game.renderer.rtp.suboptimal(&game.resize_timer, game.window_extent) or
-        game.renderer.rtp_depth.suboptimal(&game.resize_timer, game.window_extent))
-    {
+    if (game.renderer.rtp.suboptimal(&game.resize_timer, game.window_extent)) {
         game.gx.waitIdle();
         game.renderer.rtp.recreate(game.gx, game.window_extent);
-        game.renderer.rtp_depth.recreate(game.gx, game.window_extent);
     }
 }
 

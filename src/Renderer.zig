@@ -28,8 +28,6 @@ const Zone = tracy.Zone;
 
 const Allocator = std.mem.Allocator;
 
-pub const depth_format: gpu.ImageFormat = .d32_sfloat;
-
 pub const Surface = enum(u32) {
     nonlinear_srgb = interface.pp_c_sf_srgb,
     linear_srgb = interface.pp_c_sf_linear_srgb,
@@ -61,7 +59,6 @@ pipeline_layout: gpu.Pipeline.Layout,
 desc_sets: [gpu.global_options.max_frames_in_flight]gpu.DescSet,
 desc_pool: gpu.DescPool,
 rtp: RenderTarget(.color).Pool,
-rtp_depth: RenderTarget(.{ .depth_stencil = depth_format }).Pool,
 rt_update_buf: []gpu.DescSet.Update,
 moving_avg_blur: bool = false,
 
@@ -299,19 +296,6 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         },
     }) catch |err| @panic(@errorName(err));
 
-    const rtp_depth = RenderTarget(.{ .depth_stencil = depth_format }).Pool.init(gpa, gx, .{
-        .virtual_extent = .{
-            .width = 1920,
-            .height = 1080,
-        },
-        .physical_extent = init_window_extent,
-        .capacity = max_render_targets,
-        .allocator = .{
-            .name = "Depth Render Targets",
-            .initial_pages = 0,
-        },
-    }) catch |err| @panic(@errorName(err));
-
     var delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue = undefined;
     for (&delete_queues) |*dq| {
         dq.* = DeleteQueue.initCapacity(gpa, 16) catch @panic("OOM");
@@ -334,7 +318,6 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         .entities = entities,
         .entities_len = entities_len,
         .rtp = rtp,
-        .rtp_depth = rtp_depth,
         .rt_update_buf = rt_update_buf,
     };
 }
@@ -359,7 +342,6 @@ pub fn deinit(self: *@This(), gpa: Allocator, gx: *Gx) void {
     self.color_image_allocator.deinit(gpa, gx);
 
     self.rtp.deinit(gpa, gx);
-    self.rtp_depth.deinit(gpa, gx);
     gpa.free(self.rt_update_buf);
 
     self.* = undefined;
@@ -435,8 +417,8 @@ pub const Pipelines = struct {
                 .color_attachment_formats = &.{
                     color_attachment_format,
                 },
-                .depth_attachment_format = depth_format,
                 .stencil_attachment_format = .undefined,
+                .depth_attachment_format = .undefined,
                 .rasterization_samples = .@"1",
                 .alpha_to_coverage = false,
                 .color_write_mask = .all,
