@@ -443,7 +443,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .view = color_buffer.image.view,
                     .resolve_view = null,
                     .resolve_mode = .none,
-                    .store_op = .dont_care,
+                    .store_op = .store,
                 }},
                 .viewport = .{
                     .x = 0,
