@@ -44,6 +44,7 @@ pub const std_options: std.Options = .{
 
 pub const gpu_options: gpu.Options = .{
     .Backend = VkBackend,
+    .max_frames_in_flight = 16, // XXX: ...
 };
 
 pub const Surface = enum {
@@ -145,10 +146,14 @@ pub fn main() !void {
     std.log.scoped(.sdl).info("video driver: {s}", .{c.SDL_GetCurrentVideoDriver() orelse @as([*c]const u8, "null")});
     std.log.scoped(.sdl).info("audio driver: {s}", .{c.SDL_GetCurrentAudioDriver() orelse @as([*c]const u8, "null")});
 
-    const window_mode = switch (builtin.mode) {
-        .Debug => c.SDL_WINDOW_RESIZABLE,
-        else => c.SDL_WINDOW_FULLSCREEN,
-    };
+    // XXX: ...
+    // const window_mode = switch (builtin.mode) {
+    //     .Debug => c.SDL_WINDOW_RESIZABLE,
+    //     else => c.SDL_WINDOW_FULLSCREEN,
+    // };
+    // XXX: check both
+    // const window_mode = c.SDL_WINDOW_FULLSCREEN;
+    const window_mode = c.SDL_WINDOW_RESIZABLE;
 
     const screen = c.SDL_CreateWindow(
         @tagName(build.name),
@@ -235,7 +240,8 @@ pub fn main() !void {
             ),
             else => comptime unreachable,
         })),
-        .arena_capacity_log2 = 16,
+        .arena_capacity_log2 = 32,
+        .max_swapchain_images = 256, // XXX: ...
     });
     defer {
         gx.waitIdle();
@@ -290,6 +296,8 @@ pub fn main() !void {
     }
 
     while (true) {
+        gx.sleepBeforeInput();
+
         if (poll(&es, &cb, &game)) {
             std.process.cleanExit();
             return;

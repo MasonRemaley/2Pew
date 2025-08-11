@@ -65,6 +65,9 @@ planet_red: Sprite.Index,
 bullet_small: Sprite.Index,
 bullet_shiny: Sprite.Index,
 
+// XXX: ...
+flash: bool = false,
+
 rock_sprites: [rock_sprite_names.len]Sprite.Index,
 
 ranger_animations: ShipAnimations,
@@ -887,7 +890,8 @@ pub fn init(
         });
     }
 
-    var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 128);
+    // XXX: temp change cap
+    var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 8192);
     defer desc_set_updates.deinit();
 
     for (renderer.desc_sets, 0..) |set, frame| {
@@ -917,7 +921,8 @@ pub fn init(
 
         for (renderer.textures.items, 0..) |texture, texture_index| {
             if (texture_index > Renderer.max_textures) @panic("textures oob");
-            if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
+            // XXX: why?
+            // if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
             try desc_set_updates.append(.{
                 .set = set,
                 .binding = Renderer.pipeline_layout_options.binding("textures"),

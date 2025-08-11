@@ -276,6 +276,25 @@ pub fn all(game: *Game, delta_s: f32) void {
                 });
             }
 
+            // XXX: ...
+            var x: f32 = 0;
+            var y: f32 = 0;
+            const buttons = c.SDL_GetMouseState(&x, &y);
+
+            // XXX: just testing
+            // Draw the ring
+            {
+                const sprite = game.assets.sprite(game.rock_sprites[0]);
+                entity_writer.write(.{
+                    .world_from_model = Mat2x3.identity
+                        .translated(.splat(-0.5))
+                        .scaled(.splat(50.0))
+                        .translated(.{ .x = x, .y = display_size.y - y }),
+                    .diffuse = sprite.diffuse,
+                    .recolor = sprite.recolor,
+                });
+            }
+
             game.es.forEach("renderAnimations", renderAnimations, .{
                 .assets = game.assets,
                 .es = game.es,
@@ -295,7 +314,8 @@ pub fn all(game: *Game, delta_s: f32) void {
             });
 
             // Draw the ships in the bank.
-            {
+            // XXX: just testing latency
+            if (buttons != 0) {
                 const row_height = 64;
                 const col_width = 64;
                 const top_left: Vec2 = .splat(20);
