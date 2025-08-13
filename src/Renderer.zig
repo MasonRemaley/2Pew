@@ -103,11 +103,16 @@ pub const ubo = struct {
         }
     };
 
+    pub const Mouse = extern struct {
+        position: Vec2,
+        buttons: u32,
+    };
+
     pub const Scene = extern struct {
         view_from_world: Mat2x3,
         projection_from_view: Mat2x3,
         timer: ModTimer,
-        mouse: Vec2,
+        mouse: Mouse,
 
         comptime {
             assert(@sizeOf(@This()) == @sizeOf(interface.Scene));

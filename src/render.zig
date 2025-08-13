@@ -176,7 +176,7 @@ fn handheld(game: *const Game) Mat2x3 {
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-pub fn all(game: *Game, delta_s: f32) void {
+pub fn all(game: *Game, delta_s: f32, latency_test: bool) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
@@ -191,20 +191,13 @@ pub fn all(game: *Game, delta_s: f32) void {
 
     {
         game.renderer.beginFrame(game.gx);
-        defer game.gx.endFrame(.{ .present = .{
-            .handle = composite.image.handle,
-            .src_extent = composite.extent,
-            .surface_extent = game.window_extent,
-            .range = .first,
-            .filter = .linear,
-        } });
 
         // Write the entity data
         var effect_scale: f32 = 1.0;
         const entity_writer = b: {
             var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
-            var mouse: Vec2 = .zero;
-            _ = c.SDL_GetMouseState(&mouse.x, &mouse.y);
+            var mouse_pos: Vec2 = .zero;
+            const mouse_state = c.SDL_GetMouseState(&mouse_pos.x, &mouse_pos.y);
 
             const projection_from_view = pfv: {
                 // Project the scene so that the 1920x1080 virtual coordinates are centered and
@@ -241,7 +234,10 @@ pub fn all(game: *Game, delta_s: f32) void {
                     .applied(handheld(game)),
                 .projection_from_view = projection_from_view,
                 .timer = game.timer,
-                .mouse = mouse,
+                .mouse = .{
+                    .position = mouse_pos,
+                    .buttons = mouse_state,
+                },
             });
 
             var entity_writer = game.renderer.entities[game.gx.frame].writer().typed(ubo.Entity);
@@ -276,25 +272,6 @@ pub fn all(game: *Game, delta_s: f32) void {
                 });
             }
 
-            // XXX: ...
-            var x: f32 = 0;
-            var y: f32 = 0;
-            const buttons = c.SDL_GetMouseState(&x, &y);
-
-            // XXX: just testing
-            // Draw the ring
-            {
-                const sprite = game.assets.sprite(game.rock_sprites[0]);
-                entity_writer.write(.{
-                    .world_from_model = Mat2x3.identity
-                        .translated(.splat(-0.5))
-                        .scaled(.splat(50.0))
-                        .translated(.{ .x = x, .y = display_size.y - y }),
-                    .diffuse = sprite.diffuse,
-                    .recolor = sprite.recolor,
-                });
-            }
-
             game.es.forEach("renderAnimations", renderAnimations, .{
                 .assets = game.assets,
                 .es = game.es,
@@ -314,8 +291,7 @@ pub fn all(game: *Game, delta_s: f32) void {
             });
 
             // Draw the ships in the bank.
-            // XXX: just testing latency
-            if (buttons != 0) {
+            {
                 const row_height = 64;
                 const col_width = 64;
                 const top_left: Vec2 = .splat(20);
@@ -883,6 +859,7 @@ pub fn all(game: *Game, delta_s: f32) void {
                         .color_buffer_index = @intFromEnum(game.color_buffer),
                         .blurred_index = @intFromEnum(game.blurred[blur_in_index]),
                         .composite_index = @intFromEnum(game.composite),
+                        .latency_test = @intFromBool(latency_test),
                     },
                 });
                 cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_C_DSIZE(.{
@@ -913,6 +890,14 @@ pub fn all(game: *Game, delta_s: f32) void {
         // Submit all the work at once to reduce driver overhead
         cb.end(game.gx);
         game.gx.submit(&.{cb});
+
+        game.gx.endFrame(.{ .present = .{
+            .handle = composite.image.handle,
+            .src_extent = composite.extent,
+            .surface_extent = game.window_extent,
+            .range = .first,
+            .filter = .linear,
+        } });
     }
 
     if (game.renderer.rtp.suboptimal(&game.resize_timer, game.window_extent)) {

@@ -65,9 +65,6 @@ planet_red: Sprite.Index,
 bullet_small: Sprite.Index,
 bullet_shiny: Sprite.Index,
 
-// XXX: ...
-flash: bool = false,
-
 rock_sprites: [rock_sprite_names.len]Sprite.Index,
 
 ranger_animations: ShipAnimations,
@@ -830,7 +827,7 @@ pub fn init(
 
     cb.end(gx);
     gx.submit(&.{cb});
-    gx.endFrame(.{ .present = null });
+    _ = gx.endFrame(.{ .present = null });
 
     const color_buffer = renderer.rtp.alloc(gx, .{
         .name = .{ .str = "Color Buffer" },
@@ -890,8 +887,7 @@ pub fn init(
         });
     }
 
-    // XXX: temp change cap
-    var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 8192);
+    var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 128);
     defer desc_set_updates.deinit();
 
     for (renderer.desc_sets, 0..) |set, frame| {
@@ -921,8 +917,6 @@ pub fn init(
 
         for (renderer.textures.items, 0..) |texture, texture_index| {
             if (texture_index > Renderer.max_textures) @panic("textures oob");
-            // XXX: why?
-            // if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
             try desc_set_updates.append(.{
                 .set = set,
                 .binding = Renderer.pipeline_layout_options.binding("textures"),

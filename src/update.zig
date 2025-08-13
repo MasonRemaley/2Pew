@@ -244,12 +244,10 @@ fn updateInput(cb: *CmdBuf, game: *Game) void {
         input_state.applyControlScheme(control_scheme, &game.controllers);
     }
 
-    game.flash = false;
     for (&game.input_state) |*input_state| {
         if (input_state.isAction(.start, .positive, .activated)) {
             game.setupScenario(game.es, cb, .deathmatch_1v1_one_rock);
         }
-        game.flash |= input_state.isAction(.thrust_forward, .positive, .activated);
     }
 
     game.es.forEach("blockInvulnerableFire", blockInvulnerableFire, .{ .game = game });
