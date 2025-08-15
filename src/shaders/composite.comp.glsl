@@ -56,7 +56,15 @@ const u32 pp_c_sf_linear_srgb_extended = 4;
         if (coord.x >= image_size.x || coord.y >= image_size.y) return;
 
         if (push_constants.latency_test != 0) {
-            imageStore(COMPOSITE, coord, debugLatency(coord, image_size, i_scene.mouse.position, i_scene.mouse.buttons, i_scene.timer.seconds, 0.5));
+            imageStore(COMPOSITE, coord, debugLatency(
+                coord,
+                image_size,
+                i_scene.mouse.position,
+                i_scene.mouse.buttons,
+                i_scene.timer.seconds,
+                0.5,
+                push_constants.latency_test == 1
+            ));
             return;
         }
 

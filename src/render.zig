@@ -176,7 +176,7 @@ fn handheld(game: *const Game) Mat2x3 {
 }
 
 // TODO(mason): allow passing in const for rendering to make sure no modifications
-pub fn all(game: *Game, delta_s: f32, latency_test: bool) void {
+pub fn all(game: *Game, delta_s: f32) void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
@@ -859,7 +859,7 @@ pub fn all(game: *Game, delta_s: f32, latency_test: bool) void {
                         .color_buffer_index = @intFromEnum(game.color_buffer),
                         .blurred_index = @intFromEnum(game.blurred[blur_in_index]),
                         .composite_index = @intFromEnum(game.composite),
-                        .latency_test = @intFromBool(latency_test),
+                        .latency_test = @intFromEnum(game.latency_test),
                     },
                 });
                 cb.dispatch(game.gx, @bitCast(Renderer.interface.PP_C_DSIZE(.{

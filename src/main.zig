@@ -102,7 +102,7 @@ fn handleResize(userdata: ?*anyopaque, event: [*c]c.SDL_Event) callconv(.c) bool
     const game: *Game = @alignCast(@ptrCast(userdata));
     switch (event.*.type) {
         c.SDL_EVENT_WINDOW_EXPOSED => {
-            render.all(game, 0, false);
+            render.all(game, 0);
             return false;
         },
         c.SDL_EVENT_WINDOW_RESIZED => {
@@ -281,7 +281,16 @@ pub fn main() !void {
     var es: Entities = try .init(.{ .gpa = allocator });
     defer es.deinit(allocator);
 
-    var game = try Game.init(allocator, random, &es, &assets, &renderer, &gx, init_window_extent);
+    var game = try Game.init(
+        allocator,
+        random,
+        &es,
+        &assets,
+        &renderer,
+        &gx,
+        init_window_extent,
+        if (args.named.@"latency-test") .a else .off,
+    );
 
     game.hot_swap = args.named.@"hot-swap";
 
@@ -311,7 +320,7 @@ pub fn main() !void {
         }
 
         update.all(&cb, &game, pacer.smoothed_delta_s);
-        render.all(&game, pacer.smoothed_delta_s, args.named.@"latency-test");
+        render.all(&game, pacer.smoothed_delta_s);
 
         tracy.frameMark(null);
 
@@ -323,7 +332,7 @@ pub fn main() !void {
                 .color = gpu_options.blocking_zone_color,
             });
             defer zone.end();
-            c.SDL_DelayPrecise(sleep_ns);
+            if (game.latency_test != .b) c.SDL_DelayPrecise(sleep_ns);
         }
 
         game.timer.update(pacer.smoothed_delta_s);
@@ -367,6 +376,14 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game, screen: *c.SDL_Window, pacer: *
                 },
                 c.SDL_SCANCODE_6 => {
                     game.setupScenario(es, cb, .royale_4p);
+                },
+                c.SDL_SCANCODE_A => if (game.latency_test != .off) {
+                    game.latency_test = .a;
+                    game.gx.setLowLatency(true);
+                },
+                c.SDL_SCANCODE_B => if (game.latency_test != .off) {
+                    game.latency_test = .b;
+                    game.gx.setLowLatency(false);
                 },
                 else => {},
             },
