@@ -5,12 +5,12 @@
     .minimum_zig_version = "0.15.0-dev.1422+d8cecffe3",
     .dependencies = .{
         .zcs = .{
-            .url = "git+https://github.com/Games-By-Mason/ZCS#cf7593d4d6148b6c5b222af3771ec56dc5b8bfa4",
-            .hash = "zcs-0.1.0-WhLQ_MTsAgCGbFe1bJOYMUoz8vCh3AU_VK1dlDaIuOLt",
+            .url = "git+https://github.com/Games-By-Mason/ZCS#9e6fe149339c0aa0933385db8042c9222fecc074",
+            .hash = "zcs-0.1.0-WhLQ_MTsAgCe74UAH3kUC9fKk8KbqKSpgF0Hh0Oneuw7",
         },
         .tracy = .{
-            .url = "git+https://github.com/Games-By-Mason/tracy_zig#876c5c5371a46af5af8d4dd88904bccbf6eeae04",
-            .hash = "tracy-0.0.0-R7l8BV1DAQCm4AvfCxJirPmRXFtkf8eoNp55jPqX1jEL",
+            .url = "git+https://github.com/Games-By-Mason/tracy_zig#1cb0471b169637ebfc0a4f5ce827a3502412e564",
+            .hash = "tracy-0.0.0-R7l8BVxEAQDC2E_f6SlQZy5_4BAI2klvP5equvriL47a",
         },
         .logger = .{
             .url = "git+https://github.com/Games-By-Mason/Logger#38181376b75c8b04c2914c18e97a9ebd892a6c6f",
@@ -33,8 +33,8 @@
             .hash = "sdl-0.0.0-i4QD0RNgqADl67J5AVgtGOT-Gh8_jvTFN7RThtF1V5bT",
         },
         .gpu = .{
-            .url = "git+https://github.com/Games-By-Mason/gpu#f5882813dd987f7aed96b5a4a5d1d480ea47888d",
-            .hash = "gpu-0.0.0-Wb6aFtgbBQATnlaCZX8P78uuGrKl5pYFpA7EUv3WY2YS",
+            .url = "git+https://github.com/Games-By-Mason/gpu#a57d85c4db94b3285809516faa4d072a60293374",
+            .hash = "gpu-0.0.0-Wb6aFtgbBQAOtz0oXbX_P6Q7Rj4RXA5iWPxvwLQC9J1u",
         },
     },
     .paths = .{

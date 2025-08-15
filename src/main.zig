@@ -314,7 +314,7 @@ pub fn main() !void {
             const zone = Zone.begin(.{ .name = "poll input", .src = @src() });
             defer zone.end();
             if (poll(&es, &cb, &game, screen, &pacer)) {
-                std.process.cleanExit();
+                tracy.cleanExit();
                 return;
             }
         }
