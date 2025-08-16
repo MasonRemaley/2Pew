@@ -400,7 +400,7 @@ pub const Pipelines = struct {
         const blur_moving_average_spv = initSpv(gpa, "shaders/box_blur_moving_avg.comp.spv");
         defer gpa.free(blur_moving_average_spv);
         const blur_moving_average_comp_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "linear_convolve.comp.spv" },
+            .name = .{ .str = "box_blur_moving_avg.comp.spv" },
             .ir = blur_moving_average_spv,
         });
         defer blur_moving_average_comp_module.deinit(gx);
