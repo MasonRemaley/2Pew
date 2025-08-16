@@ -898,41 +898,39 @@ pub fn init(
     }
 
     var desc_set_updates: std.ArrayList(gpu.DescSet.Update) = try .initCapacity(gpa, 128);
-    defer desc_set_updates.deinit();
+    defer desc_set_updates.deinit(gpa);
 
     for (renderer.desc_sets, 0..) |set, frame| {
-        if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
-        try desc_set_updates.append(.{
+        desc_set_updates.appendBounded(.{
             .set = set,
             .binding = Renderer.pipeline_layout_options.binding("scene"),
             .value = .{
                 .storage_buf = renderer.scene[frame].asBuf(.{ .storage = true }),
             },
-        });
-        if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
-        try desc_set_updates.append(.{
+        }) catch @panic("OOB");
+        desc_set_updates.appendBounded(.{
             .set = set,
             .binding = Renderer.pipeline_layout_options.binding("entities"),
             .value = .{
                 .storage_buf = renderer.entities[frame].asBuf(.{ .storage = true }),
             },
-        });
-        try desc_set_updates.append(.{
+        }) catch @panic("OOB");
+        desc_set_updates.appendBounded(.{
             .set = set,
             .binding = Renderer.pipeline_layout_options.binding("entities_len"),
             .value = .{
                 .storage_buf = renderer.entities_len[frame].asBuf(.{ .storage = true }),
             },
-        });
+        }) catch @panic("OOB");
 
         for (renderer.textures.items, 0..) |texture, texture_index| {
             if (texture_index > Renderer.max_textures) @panic("textures oob");
-            try desc_set_updates.append(.{
+            desc_set_updates.appendBounded(.{
                 .set = set,
                 .binding = Renderer.pipeline_layout_options.binding("textures"),
                 .index = @intCast(texture_index),
                 .value = .{ .sampled_image = texture.view },
-            });
+            }) catch @panic("OOB");
         }
     }
     gx.updateDescSets(desc_set_updates.items);
