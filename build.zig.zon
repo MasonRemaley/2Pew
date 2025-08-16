@@ -33,8 +33,8 @@
             .hash = "sdl-0.0.0-i4QD0RNgqADl67J5AVgtGOT-Gh8_jvTFN7RThtF1V5bT",
         },
         .gpu = .{
-            .url = "git+https://github.com/Games-By-Mason/gpu#be834fa38bb2feef913af850b2c45e76ea79cc01",
-            .hash = "gpu-0.0.0-Wb6aFowdBQBrIcP2wTIK69Q2_wAHdwDTPTrO7XWbQlbU",
+            .url = "git+https://github.com/Games-By-Mason/gpu#1955cc41b297583760d7dd3205c74be918c57bc7",
+            .hash = "gpu-0.0.0-Wb6aFsYdBQCM8q59MWeUYehO60ZzP3Ml8NHOABekZBIb",
         },
     },
     .paths = .{
