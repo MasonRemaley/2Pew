@@ -63,10 +63,10 @@ struct pp_lc_PushConstants {
         vec2 dir = HORIZONTAL ? vec2(1, 0) : vec2(0, 1);
         vec3 color = load(coord, size) * push_constants.weights[0];
         for (u32 i = 1; i < MAX_RADIUS; ++i) {
+            if (i >= push_constants.radius) break;
             f32 offset = push_constants.offsets[i];
             color += load(coord + offset * dir, size) * push_constants.weights[i];
             color += load(coord - offset * dir, size) * push_constants.weights[i];
-            if (i >= push_constants.radius) break;
         }
 
         imageStore(OUTPUT, coord, vec4(color, 1));
