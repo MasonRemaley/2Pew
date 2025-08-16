@@ -290,6 +290,7 @@ pub fn main() !void {
         &gx,
         init_window_extent,
         if (args.named.@"latency-test") .a else .off,
+        screen,
     );
 
     game.hot_swap = args.named.@"hot-swap";
@@ -313,7 +314,7 @@ pub fn main() !void {
         {
             const zone = Zone.begin(.{ .name = "poll input", .src = @src() });
             defer zone.end();
-            if (poll(&es, &cb, &game, screen, &pacer)) {
+            if (poll(&es, &cb, &game, &pacer)) {
                 tracy.cleanExit();
                 return;
             }
@@ -339,7 +340,7 @@ pub fn main() !void {
     }
 }
 
-fn poll(es: *Entities, cb: *CmdBuf, game: *Game, screen: *c.SDL_Window, pacer: *gpu.ext.FramePacer) bool {
+fn poll(es: *Entities, cb: *CmdBuf, game: *Game, pacer: *gpu.ext.FramePacer) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event)) {
         if (!handleResize(game, &event)) continue;
@@ -389,7 +390,7 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game, screen: *c.SDL_Window, pacer: *
             },
             c.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED => {
                 log.debug("SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED", .{});
-                pacer.refresh_rate_hz = getRefreshRate(screen);
+                pacer.refresh_rate_hz = getRefreshRate(game.screen);
             },
             else => {},
         }

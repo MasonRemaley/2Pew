@@ -198,6 +198,7 @@ pub fn all(game: *Game, delta_s: f32) void {
             var scene_writer = game.renderer.scene[game.gx.frame].writer().typed(ubo.Scene);
             var mouse_pos: Vec2 = .zero;
             const mouse_state = c.SDL_GetMouseState(&mouse_pos.x, &mouse_pos.y);
+            mouse_pos.scale(c.SDL_GetWindowPixelDensity(game.screen));
 
             const projection_from_view = pfv: {
                 // Project the scene so that the 1920x1080 virtual coordinates are centered and

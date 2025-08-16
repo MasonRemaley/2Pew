@@ -107,6 +107,7 @@ blurred: [2]RenderTarget(.color),
 window_extent: gpu.Extent2D,
 resize_timer: std.time.Timer,
 latency_test: LatencyTest,
+screen: *c.SDL_Window,
 
 const ShipAnimations = struct {
     still: Animation.Index,
@@ -529,6 +530,7 @@ pub fn init(
     gx: *Gx,
     window_extent: gpu.Extent2D,
     latency_test: LatencyTest,
+    screen: *c.SDL_Window,
 ) !Game {
     const init_zone = Zone.begin(.{ .src = @src() });
     defer init_zone.end();
@@ -1022,6 +1024,7 @@ pub fn init(
         .window_extent = window_extent,
         .resize_timer = std.time.Timer.start() catch |err| @panic(@errorName(err)),
         .latency_test = latency_test,
+        .screen = screen,
     };
 }
 
