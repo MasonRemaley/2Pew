@@ -103,11 +103,16 @@ pub const ubo = struct {
         }
     };
 
+    pub const Mouse = extern struct {
+        position: Vec2,
+        buttons: u32,
+    };
+
     pub const Scene = extern struct {
         view_from_world: Mat2x3,
         projection_from_view: Mat2x3,
         timer: ModTimer,
-        mouse: Vec2,
+        mouse: Mouse,
 
         comptime {
             assert(@sizeOf(@This()) == @sizeOf(interface.Scene));
@@ -395,7 +400,7 @@ pub const Pipelines = struct {
         const blur_moving_average_spv = initSpv(gpa, "shaders/box_blur_moving_avg.comp.spv");
         defer gpa.free(blur_moving_average_spv);
         const blur_moving_average_comp_module: gpu.ShaderModule = .init(gx, .{
-            .name = .{ .str = "linear_convolve.comp.spv" },
+            .name = .{ .str = "box_blur_moving_avg.comp.spv" },
             .ir = blur_moving_average_spv,
         });
         defer blur_moving_average_comp_module.deinit(gx);

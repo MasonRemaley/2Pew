@@ -87,6 +87,14 @@ const command: Command = .{
             .long = "surface",
             .default = .{ .value = .auto },
         }),
+        NamedArg.init(bool, .{
+            .long = "latency-test",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "fullscreen",
+            .default = .{ .value = false },
+        }),
     },
 };
 
@@ -107,6 +115,13 @@ fn handleResize(userdata: ?*anyopaque, event: [*c]c.SDL_Event) callconv(.c) bool
         },
         else => return true,
     }
+}
+
+fn getRefreshRate(window: *c.SDL_Window) f32 {
+    const display = c.SDL_GetDisplayForWindow(window);
+    if (display == 0) return 0.0;
+    const display_mode = c.SDL_GetCurrentDisplayMode(display) orelse return 0.0;
+    return display_mode[0].refresh_rate;
 }
 
 pub fn main() !void {
@@ -145,10 +160,10 @@ pub fn main() !void {
     std.log.scoped(.sdl).info("video driver: {s}", .{c.SDL_GetCurrentVideoDriver() orelse @as([*c]const u8, "null")});
     std.log.scoped(.sdl).info("audio driver: {s}", .{c.SDL_GetCurrentAudioDriver() orelse @as([*c]const u8, "null")});
 
-    const window_mode = switch (builtin.mode) {
-        .Debug => c.SDL_WINDOW_RESIZABLE,
-        else => c.SDL_WINDOW_FULLSCREEN,
-    };
+    const window_mode = if (args.named.fullscreen)
+        c.SDL_WINDOW_FULLSCREEN
+    else
+        c.SDL_WINDOW_RESIZABLE;
 
     const screen = c.SDL_CreateWindow(
         @tagName(build.name),
@@ -235,7 +250,7 @@ pub fn main() !void {
             ),
             else => comptime unreachable,
         })),
-        .arena_capacity_log2 = 16,
+        .arena_capacity_log2 = 32,
     });
     defer {
         gx.waitIdle();
@@ -266,7 +281,17 @@ pub fn main() !void {
     var es: Entities = try .init(.{ .gpa = allocator });
     defer es.deinit(allocator);
 
-    var game = try Game.init(allocator, random, &es, &assets, &renderer, &gx, init_window_extent);
+    var game = try Game.init(
+        allocator,
+        random,
+        &es,
+        &assets,
+        &renderer,
+        &gx,
+        init_window_extent,
+        if (args.named.@"latency-test") .a else .off,
+        screen,
+    );
 
     game.hot_swap = args.named.@"hot-swap";
 
@@ -274,12 +299,6 @@ pub fn main() !void {
     defer cb.deinit(allocator, &es);
 
     game.setupScenario(&es, &cb, .deathmatch_2v2);
-
-    // Run the simulation
-    var delta_s: f32 = 1.0 / 60.0;
-    var timer = try std.time.Timer.start();
-
-    // var warned_memory_usage = false;
 
     if (builtin.target.os.tag == .windows) {
         // Windows blocks the whole app during resizes, but you can still get the resize events
@@ -289,37 +308,39 @@ pub fn main() !void {
         c.SDL_SetEventFilter(&handleResize, &game);
     }
 
+    // Run the simulation
+    var pacer: gpu.ext.FramePacer = .init(getRefreshRate(screen));
     while (true) {
-        if (poll(&es, &cb, &game)) {
-            std.process.cleanExit();
-            return;
+        {
+            const zone = Zone.begin(.{ .name = "poll input", .src = @src() });
+            defer zone.end();
+            if (poll(&es, &cb, &game, &pacer)) {
+                tracy.cleanExit();
+                return;
+            }
         }
 
-        game.timer.update(delta_s);
-        update.all(&cb, &game, delta_s);
-        render.all(&game, delta_s);
-
-        // TODO(mason): we also want a min frame time so we don't get surprising floating point
-        // results if it's too close to zero!
-        // Adjust our expectd delta time a little every frame. We cap it at `max_frame_time` to
-        // prevent e.g. a slow alt tab from messing things up too much.
-        const delta_rwa_bias = 0.05;
-        const max_frame_time = 1.0 / 30.0;
-        const t: f32 = @floatFromInt(timer.lap());
-        const last_delta_s = t / std.time.ns_per_s;
-        delta_s = lerp(delta_s, @min(last_delta_s, max_frame_time), delta_rwa_bias);
-
-        // TODO: ...
-        // if (fba.end_index >= fba.buffer.len / 4 and !warned_memory_usage) {
-        //     std.log.warn(">= 25% of entity memory has been used, consider increasing the size of the fixed buffer allocator", .{});
-        //     warned_memory_usage = true;
-        // }
+        update.all(&cb, &game, pacer.smoothed_delta_s);
+        render.all(&game, pacer.smoothed_delta_s);
 
         tracy.frameMark(null);
+
+        {
+            const sleep_ns = pacer.update(game.gx.slop_ns);
+            const zone = Zone.begin(.{
+                .name = "frame pacer sleep",
+                .src = @src(),
+                .color = gpu_options.blocking_zone_color,
+            });
+            defer zone.end();
+            if (game.latency_test != .b) c.SDL_DelayPrecise(sleep_ns);
+        }
+
+        game.timer.update(pacer.smoothed_delta_s);
     }
 }
 
-fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
+fn poll(es: *Entities, cb: *CmdBuf, game: *Game, pacer: *gpu.ext.FramePacer) bool {
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event)) {
         if (!handleResize(game, &event)) continue;
@@ -357,7 +378,19 @@ fn poll(es: *Entities, cb: *CmdBuf, game: *Game) bool {
                 c.SDL_SCANCODE_6 => {
                     game.setupScenario(es, cb, .royale_4p);
                 },
+                c.SDL_SCANCODE_A => if (game.latency_test != .off) {
+                    game.latency_test = .a;
+                    game.gx.setLowLatency(true);
+                },
+                c.SDL_SCANCODE_B => if (game.latency_test != .off) {
+                    game.latency_test = .b;
+                    game.gx.setLowLatency(false);
+                },
                 else => {},
+            },
+            c.SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED => {
+                log.debug("SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED", .{});
+                pacer.refresh_rate_hz = getRefreshRate(game.screen);
             },
             else => {},
         }

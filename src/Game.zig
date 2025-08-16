@@ -39,6 +39,12 @@ const SymmetricMatrix = @import("symmetric_matrix.zig").SymmetricMatrix;
 
 const Game = @This();
 
+pub const LatencyTest = enum(u32) {
+    off = 0,
+    a = 1,
+    b = 2,
+};
+
 gx: *Gx,
 es: *Entities,
 assets: *Assets,
@@ -100,6 +106,8 @@ composite: RenderTarget(.color),
 blurred: [2]RenderTarget(.color),
 window_extent: gpu.Extent2D,
 resize_timer: std.time.Timer,
+latency_test: LatencyTest,
+screen: *c.SDL_Window,
 
 const ShipAnimations = struct {
     still: Animation.Index,
@@ -521,6 +529,8 @@ pub fn init(
     renderer: *Renderer,
     gx: *Gx,
     window_extent: gpu.Extent2D,
+    latency_test: LatencyTest,
+    screen: *c.SDL_Window,
 ) !Game {
     const init_zone = Zone.begin(.{ .src = @src() });
     defer init_zone.end();
@@ -917,7 +927,6 @@ pub fn init(
 
         for (renderer.textures.items, 0..) |texture, texture_index| {
             if (texture_index > Renderer.max_textures) @panic("textures oob");
-            if (desc_set_updates.items.len >= desc_set_updates.capacity) @panic("OOB");
             try desc_set_updates.append(.{
                 .set = set,
                 .binding = Renderer.pipeline_layout_options.binding("textures"),
@@ -1014,6 +1023,8 @@ pub fn init(
         .blurred = blurred,
         .window_extent = window_extent,
         .resize_timer = std.time.Timer.start() catch |err| @panic(@errorName(err)),
+        .latency_test = latency_test,
+        .screen = screen,
     };
 }
 

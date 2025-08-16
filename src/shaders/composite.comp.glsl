@@ -12,6 +12,7 @@ struct pp_c_PushConstants {
     u32 color_buffer_index;
     u32 blurred_index;
     u32 composite_index;
+    u32 latency_test;
 };
 
 const u32 pp_c_sf_srgb = 0;
@@ -25,6 +26,7 @@ const u32 pp_c_sf_linear_srgb_extended = 4;
     #include <gbms/sd.glsl>
     #include <gbms/hdr10.glsl>
     #include <gbms/srgb.glsl>
+    #include <gbms/debug.glsl>
 
     layout(scalar, push_constant) uniform PushConstants {
         pp_c_PushConstants push_constants;
@@ -52,6 +54,19 @@ const u32 pp_c_sf_linear_srgb_extended = 4;
             }
         #endif
         if (coord.x >= image_size.x || coord.y >= image_size.y) return;
+
+        if (push_constants.latency_test != 0) {
+            imageStore(COMPOSITE, coord, debugLatency(
+                coord,
+                image_size,
+                i_scene.mouse.position,
+                i_scene.mouse.buttons,
+                i_scene.timer.seconds,
+                0.5,
+                push_constants.latency_test == 1
+            ));
+            return;
+        }
 
         // Render target info
         f32 ar = f32(image_size.x) / f32(image_size.y);

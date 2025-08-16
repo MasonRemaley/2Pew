@@ -7,11 +7,17 @@
 const u32 i_tex_none = 0xFFFF;
 const u32 i_max_render_targets = 16;
 
+struct Mouse {
+    vec2 position;
+    u32 buttons;
+};
+TYPEDEF_STRUCT(Mouse);
+
 struct Scene {
     mat2x3 world_to_view;
     mat2x3 view_to_projection;
     ModTimer timer;
-    vec2 mouse;
+    Mouse mouse;
 };
 
 struct Entity {
