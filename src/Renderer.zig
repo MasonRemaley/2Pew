@@ -52,7 +52,7 @@ delete_queues: [gpu.global_options.max_frames_in_flight]DeleteQueue,
 
 color_image_allocator: ImageBumpAllocator(.color),
 
-textures: std.ArrayListUnmanaged(gpu.Image(.color)),
+textures: std.ArrayList(gpu.Image(.color)),
 
 pipelines: Pipelines,
 pipeline_layout: gpu.Pipeline.Layout,
@@ -277,7 +277,7 @@ pub fn init(gpa: Allocator, gx: *Gx, init_window_extent: gpu.Extent2D) @This() {
         },
     });
 
-    const textures = std.ArrayListUnmanaged(gpu.Image(.color)).initCapacity(
+    const textures = std.ArrayList(gpu.Image(.color)).initCapacity(
         gpa,
         max_textures,
     ) catch @panic("OOM");

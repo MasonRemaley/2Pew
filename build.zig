@@ -1,10 +1,37 @@
 const std = @import("std");
+const oven = @import("oven");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const build_step_target = b.resolveTargetQuery(.{});
+
+    const oven_dep = b.dependency("oven", .{
+        .optimize = .ReleaseSafe,
+        .target = b.resolveTargetQuery(.{}),
+    });
+    // XXX: ...
+    var shader_compiler_options: oven.ShaderCompilerOptions = try .init(b, optimize);
+    {
+        const gbms = b.dependency("gbms", .{});
+        try shader_compiler_options.include.append(b.allocator, gbms.path("include"));
+        try shader_compiler_options.preamble.append(b.allocator, b.path(b.pathJoin(&.{
+            "src",
+            "shaders",
+            "preamble.glsl",
+        })));
+        try shader_compiler_options.include.append(b.allocator, b.path("data/shaders"));
+    }
+    const baked = try oven.bake(b, oven_dep, .{
+        .dirname = "data",
+        .shader_compiler = shader_compiler_options,
+    });
+    b.installDirectory(.{
+        .source_dir = baked.getDirectory(),
+        .install_dir = .prefix,
+        .install_subdir = "results",
+    });
 
     // Allow the user to enable or disable Tracy support with a build flag
     const tracy_enabled = b.option(

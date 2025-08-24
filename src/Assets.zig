@@ -15,9 +15,9 @@ const Vec2 = zcs.ext.geom.Vec2;
 
 const Assets = @This();
 
-sprites: std.ArrayListUnmanaged(Sprite),
-frames: std.ArrayListUnmanaged(Sprite.Index) = .{},
-animations: std.ArrayListUnmanaged(Animation) = .{},
+sprites: std.ArrayList(Sprite),
+frames: std.ArrayList(Sprite.Index) = .{},
+animations: std.ArrayList(Animation) = .{},
 
 pub const Sprite = struct {
     size: Vec2,
@@ -85,7 +85,7 @@ pub const Animation = struct {
 
 pub fn init(gpa: Allocator) Assets {
     return .{
-        .sprites = std.ArrayListUnmanaged(Sprite).initCapacity(
+        .sprites = std.ArrayList(Sprite).initCapacity(
             gpa,
             Renderer.max_textures,
         ) catch @panic("OOM"),

@@ -344,7 +344,7 @@ pub fn all(game: *Game, delta_s: f32) void {
 
         // Update the render targets
         {
-            var updates: std.ArrayListUnmanaged(gpu.DescSet.Update) = .initBuffer(game.renderer.rt_update_buf);
+            var updates: std.ArrayList(gpu.DescSet.Update) = .initBuffer(game.renderer.rt_update_buf);
 
             for (game.renderer.rtp.images.items, game.renderer.rtp.info.items, 0..) |image, info, i| {
                 if (info.image.usage.storage) {

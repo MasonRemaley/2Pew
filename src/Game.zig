@@ -815,7 +815,7 @@ pub fn init(
     const zone: Zone = .begin(.{ .name = "Upload Images", .src = @src() });
     defer zone.end();
 
-    var image_barriers = std.ArrayListUnmanaged(gpu.ImageBarrier).initCapacity(gpa, Renderer.max_textures) catch @panic("OOM");
+    var image_barriers = std.ArrayList(gpu.ImageBarrier).initCapacity(gpa, Renderer.max_textures) catch @panic("OOM");
     defer image_barriers.deinit(gpa);
     for (renderer.textures.items) |texture| {
         image_barriers.appendAssumeCapacity(.{

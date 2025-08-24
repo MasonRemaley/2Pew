@@ -21,8 +21,8 @@
             .hash = "structopt-1.0.0-OgtKAhg4AQC5xTowzNxQ0rbTeZKvmsVSBuvhzWgJkgE_",
         },
         .shader_compiler = .{
-            .url = "git+https://github.com/Games-By-Mason/shader_compiler#f1c0c775996f50a5c1d0025579dbb4d592934239",
-            .hash = "shader_compiler-1.0.0-bOVsasGeAACrENWag3hjbWAekPpxX9gbRzQAgO6bvCJz",
+            .url = "git+https://github.com/Games-By-Mason/shader_compiler#ceaf646b22438891babde81f56b41b53a63f2eba",
+            .hash = "shader_compiler-1.0.0-bOVsalq8AAAgTY9IPdjo7NEDxqBiAdch2RFAmWA5pJmb",
         },
         .gbms = .{
             .url = "git+https://github.com/Games-By-Mason/gbms#d8d31307002dac414370b73b5fa6ea636a2158cf",
@@ -35,6 +35,10 @@
         .gpu = .{
             .url = "git+https://github.com/Games-By-Mason/gpu#8f5c1ed898d8fbd137f037c55602b62527649170",
             .hash = "gpu-0.0.0-Wb6aFkIlBQCgXz24Y2RxqvLki1QxdVZNkV0GSmWGrXFK",
+        },
+        // XXX: ...
+        .oven = .{
+            .path = "../Oven",
         },
     },
     .paths = .{
